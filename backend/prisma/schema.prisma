@@ -1,0 +1,184 @@
+// Prisma schema for the College Bus Tracking System.
+// Provider is MySQL; connection string comes from process.env.DATABASE_URL
+// (backend/.env — the real URL is supplied by the developer).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Routes and stops ----
+
+model Route {
+  id          Int          @id @default(autoincrement())
+  routeNo     String       @unique
+  name        String
+  areaCovered String
+
+  routeStops RouteStop[]
+  buses      Bus[]
+  students   Student[]
+}
+
+model Stop {
+  id        Int     @id @default(autoincrement())
+  name      String
+  latitude  Float
+  longitude Float
+
+  routeStops     RouteStop[]
+  boardingStudents Student[] @relation("BoardingStop")
+}
+
+model RouteStop {
+  id             Int      @id @default(autoincrement())
+  routeId        Int
+  stopId         Int
+  sequenceOrder  Int
+  scheduledTime  String // e.g. "07:45"
+
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stop  Stop  @relation(fields: [stopId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, stopId])
+  @@index([routeId, sequenceOrder])
+  @@index([stopId])
+}
+
+// ---- People ----
+
+model Driver {
+  id           Int      @id @default(autoincrement())
+  name         String
+  phone        String   @unique
+  licenseNo    String
+  passwordHash String // drivers log in with phone + password (bcrypt hash)
+
+  buses Bus[]
+}
+
+model ClassAdvisor {
+  id         Int     @id @default(autoincrement())
+  name       String
+  phone      String
+  email      String  @unique // must match their college Google account email
+  department String
+  year       Int
+  section    String
+  googleId   String? @unique // filled in on first Google login
+}
+
+model Student {
+  id            Int     @id @default(autoincrement())
+  rollNo        String  @unique
+  name          String
+  email         String  @unique // must match their college Google account email
+  routeId       Int
+  year          Int
+  department    String
+  section       String
+  boardingStopId Int
+  googleId      String? @unique // filled in on first Google login
+
+  route        Route @relation(fields: [routeId], references: [id])
+  boardingStop Stop  @relation("BoardingStop", fields: [boardingStopId], references: [id])
+
+  boardingRecords BoardingRecord[]
+
+  @@index([routeId])
+  @@index([boardingStopId])
+}
+
+// ---- Buses and trips ----
+
+model Bus {
+  id          Int     @id @default(autoincrement())
+  busNo       String  @unique
+  routeId     Int
+  driverId    Int?
+  capacity    Int
+  plateNumber String
+
+  route  Route  @relation(fields: [routeId], references: [id])
+  driver Driver? @relation(fields: [driverId], references: [id])
+
+  trips Trip[]
+
+  @@index([routeId])
+  @@index([driverId])
+}
+
+enum TripStatus {
+  SCHEDULED
+  RUNNING
+  COMPLETED
+}
+
+model Trip {
+  id         Int        @id @default(autoincrement())
+  busId      Int
+  date       DateTime
+  startTime  DateTime?
+  status     TripStatus @default(SCHEDULED)
+  filledCount Int       @default(0)
+
+  bus            Bus             @relation(fields: [busId], references: [id])
+  liveLocations  LiveLocation[]
+  boardingRecords BoardingRecord[]
+  lateAlerts     LateAlert[]
+
+  @@index([busId])
+  @@index([status])
+}
+
+model LiveLocation {
+  id              Int      @id @default(autoincrement())
+  tripId          Int
+  latitude        Float
+  longitude       Float
+  timestamp       DateTime @default(now())
+  currentStopIndex Int     @default(0)
+
+  trip Trip @relation(fields: [tripId], references: [id])
+
+  @@index([tripId, timestamp])
+}
+
+model BoardingRecord {
+  id        Int      @id @default(autoincrement())
+  tripId    Int
+  studentId Int
+  boardedAt DateTime @default(now())
+
+  trip    Trip    @relation(fields: [tripId], references: [id])
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@unique([tripId, studentId])
+  @@index([studentId])
+}
+
+// ---- Late-alert hash chain ----
+// Each LateAlert stores a recordHash = SHA-256 of its own data plus the previous
+// row's recordHash (in previousHash). This forms a hash chain: editing any past
+// row changes its recomputed hash, which then no longer matches what the next
+// row's recordHash was computed against — so tampering is detectable.
+
+model LateAlert {
+  id              Int      @id @default(autoincrement())
+  tripId          Int
+  predictedEta    DateTime
+  triggeredAt     DateTime @default(now())
+  studentsAffected Json
+  advisorsNotified Json
+  previousHash    String?
+  recordHash      String
+
+  trip Trip @relation(fields: [tripId], references: [id])
+
+  @@index([tripId])
+  @@index([triggeredAt])
+}
