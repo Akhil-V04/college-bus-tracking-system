@@ -1,5 +1,7 @@
 # College Bus Tracking System — Team Project Plan
 
+> **Superseded:** This historical plan contains the original student-login and boarding assumptions. Use [`PRD.md`](./PRD.md) as the current source of truth.
+
 ## 1. What we're building
 
 A live bus tracking platform for our college (located in Aushapur, Hyderabad) covering all **31 bus routes** across the city. Every bus must reach college before **9:50 AM** (first period start). The system has three user-facing parts sharing one backend:

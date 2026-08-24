@@ -1,6 +1,8 @@
 # Build Guide — OpenCode + Nemotron 3 Ultra Prompt Sequence
 ### College Bus Tracking System
 
+> **Superseded:** Do not execute these historical prompts against the current codebase. They contain removed requirements such as passenger Google login, QR boarding, physical bus records, and scan-based occupancy. Use [`PRD.md`](./PRD.md) and the current phased implementation instead.
+
 **How to use this doc:** Work top to bottom. Copy one prompt block into OpenCode, let it finish, run the "Test before moving on" step, then move to the next prompt. Don't skip the test steps — catching a broken phase early is 10x cheaper than debugging three phases later. Commit to git after every phase (`git add -A && git commit -m "phase X done"`).
 
 ---

@@ -30,6 +30,19 @@ function computeRecordHash(data) {
   return sha256(canonicalize(data));
 }
 
+// Only immutable alert evidence is chained. Delivery/recovery status can
+// change later without invalidating the historical trigger record.
+function alertHashData(row) {
+  return {
+    tripId: row.tripId,
+    predictedEta: row.predictedEta,
+    triggeredAt: row.triggeredAt,
+    studentsAffected: row.studentsAffected,
+    advisorsNotified: row.advisorsNotified,
+    previousHash: row.previousHash,
+  };
+}
+
 // Verifies a chain of rows. Each row must link to the previous row's
 // recordHash and re-hash to its own stored recordHash.
 function verifyChain(rows) {
@@ -38,13 +51,12 @@ function verifyChain(rows) {
     if (row.previousHash !== prevHash) {
       return { valid: false, id: row.id, reason: 'broken link to previous alert' };
     }
-    const { id, recordHash, ...data } = row;
-    if (computeRecordHash(data) !== recordHash) {
-      return { valid: false, id, reason: 'recordHash does not match row data' };
+    if (!row.recordHash || computeRecordHash(alertHashData(row)) !== row.recordHash) {
+      return { valid: false, id: row.id, reason: 'recordHash does not match immutable alert data' };
     }
-    prevHash = recordHash;
+    prevHash = row.recordHash;
   }
   return { valid: true, count: rows.length };
 }
 
-module.exports = { sha256, canonicalize, computeRecordHash, verifyChain };
+module.exports = { sha256, canonicalize, computeRecordHash, alertHashData, verifyChain };

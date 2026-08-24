@@ -1,5 +1,5 @@
 const express = require('express');
-const { idParam, routeSchema } = require('./schemas');
+const { idParam } = require('./schemas');
 const { requireAuth } = require('./middleware/auth');
 
 function parsePagination(query) {
@@ -31,13 +31,15 @@ function validate(schema, data, res) {
 function crudRouter(options) {
   const {
     delegate,
-    createSchema = routeSchema,
+    createSchema,
     updateSchema = createSchema.partial(),
     select,
     include,
     idSchema = idParam,
     publicGet = false,
   } = options;
+
+  if (!createSchema) throw new Error('crudRouter requires createSchema');
 
   const router = express.Router();
 

@@ -1,6 +1,9 @@
-// Prisma schema for the College Bus Tracking System.
-// Provider is MySQL; connection string comes from process.env.DATABASE_URL
-// (backend/.env — the real URL is supplied by the developer).
+// College Bus Tracking System domain model.
+//
+// RouteService is the operational bus/route identity shown to passengers.
+// Physical vehicle registration is deliberately not stored because vehicles
+// can be replaced while the route number, roster, timings, and driver workflow
+// remain stable.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,174 +14,303 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ---- Routes and stops ----
-
-model Route {
-  id          Int          @id @default(autoincrement())
-  routeNo     String       @unique
-  name        String
-  areaCovered String
-
-  routeStops RouteStop[]
-  buses      Bus[]
-  students   Student[]
+enum PassengerType {
+  STUDENT
+  FACULTY
 }
 
-model Stop {
-  id        Int     @id @default(autoincrement())
-  name      String
-  latitude  Float
-  longitude Float
-
-  routeStops     RouteStop[]
-  boardingStudents Student[] @relation("BoardingStop")
+enum RosterStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
 }
 
-model RouteStop {
-  id             Int      @id @default(autoincrement())
-  routeId        Int
-  stopId         Int
-  sequenceOrder  Int
-  scheduledTime  String // e.g. "07:45"
-
-  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  stop  Stop  @relation(fields: [stopId], references: [id], onDelete: Cascade)
-
-  @@unique([routeId, stopId])
-  @@index([routeId, sequenceOrder])
-  @@index([stopId])
-}
-
-// ---- People ----
-
-model Driver {
-  id           Int      @id @default(autoincrement())
-  name         String
-  phone        String   @unique
-  licenseNo    String
-  passwordHash String // drivers log in with phone + password (bcrypt hash)
-
-  buses Bus[]
-}
-
-model ClassAdvisor {
-  id         Int     @id @default(autoincrement())
-  name       String
-  phone      String
-  email      String  @unique // must match their college Google account email
-  department String
-  year       Int
-  section    String
-  googleId   String? @unique // filled in on first Google login
-}
-
-model Student {
-  id            Int     @id @default(autoincrement())
-  rollNo        String  @unique
-  name          String
-  email         String  @unique // must match their college Google account email
-  routeId       Int
-  year          Int
-  department    String
-  section       String
-  boardingStopId Int
-  googleId      String? @unique // filled in on first Google login
-
-  route        Route @relation(fields: [routeId], references: [id])
-  boardingStop Stop  @relation("BoardingStop", fields: [boardingStopId], references: [id])
-
-  boardingRecords BoardingRecord[]
-
-  @@index([routeId])
-  @@index([boardingStopId])
-}
-
-// ---- Buses and trips ----
-
-model Bus {
-  id          Int     @id @default(autoincrement())
-  busNo       String  @unique
-  routeId     Int
-  driverId    Int?
-  capacity    Int
-  plateNumber String
-
-  route  Route  @relation(fields: [routeId], references: [id])
-  driver Driver? @relation(fields: [driverId], references: [id])
-
-  trips Trip[]
-
-  @@index([routeId])
-  @@index([driverId])
+enum ScheduleStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
 }
 
 enum TripStatus {
   SCHEDULED
   RUNNING
   COMPLETED
+  CANCELLED
 }
 
-model Trip {
-  id         Int        @id @default(autoincrement())
-  busId      Int
-  date       DateTime
-  startTime  DateTime?
-  status     TripStatus @default(SCHEDULED)
-  filledCount Int       @default(0)
+enum StopEventStatus {
+  REACHED
+  PASSED
+  POSSIBLY_SKIPPED
+}
 
-  bus            Bus             @relation(fields: [busId], references: [id])
-  liveLocations  LiveLocation[]
-  boardingRecords BoardingRecord[]
-  lateAlerts     LateAlert[]
+enum LateAlertStatus {
+  ACTIVE
+  RECOVERED
+}
 
-  @@index([busId])
+enum NotificationChannel {
+  EMAIL
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model RouteService {
+  id          Int      @id @default(autoincrement())
+  routeNo     String   @unique
+  name        String
+  areaCovered String   @db.Text
+  capacity    Int
+  driverId    Int?     @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  driver           Driver?           @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  schedules        ScheduleVersion[]
+  rosterPassengers RosterPassenger[]
+  trips            Trip[]
+
+  @@index([name])
+}
+
+model Stop {
+  id        Int      @id @default(autoincrement())
+  name      String
+  latitude  Float
+  longitude Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scheduleStops    ScheduleStop[]
+  rosterPassengers RosterPassenger[]
+
+  @@index([name])
+}
+
+model ScheduleVersion {
+  id             Int            @id @default(autoincrement())
+  routeServiceId Int
+  name           String
+  direction      String         @default("MORNING")
+  status         ScheduleStatus @default(DRAFT)
+  version        Int            @default(1)
+  effectiveFrom  DateTime?
+  publishedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  routeService RouteService   @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  stops        ScheduleStop[]
+  trips        Trip[]
+
+  @@unique([routeServiceId, direction, version])
+  @@index([routeServiceId, status])
+}
+
+model ScheduleStop {
+  id                Int      @id @default(autoincrement())
+  scheduleVersionId Int
+  stopId            Int
+  sequenceOrder     Int
+  scheduledTime     String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  scheduleVersion ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Cascade)
+  stop            Stop            @relation(fields: [stopId], references: [id], onDelete: Restrict)
+  tripEvents      TripStopEvent[]
+
+  @@unique([scheduleVersionId, stopId])
+  @@unique([scheduleVersionId, sequenceOrder])
+  @@index([stopId])
+}
+
+model Driver {
+  id             Int      @id @default(autoincrement())
+  driverCode     String   @unique
+  name           String
+  phone          String   @unique
+  licenseNo      String
+  passwordHash   String
+  sessionVersion Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  assignedRoute RouteService?
+  trips         Trip[]
+}
+
+model TransportRoster {
+  id           Int          @id @default(autoincrement())
+  name         String
+  academicYear String
+  status       RosterStatus @default(DRAFT)
+  version      Int          @default(1)
+  publishedAt  DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  passengers RosterPassenger[]
+  trips      Trip[]
+
+  @@unique([academicYear, version])
   @@index([status])
 }
 
+model RosterPassenger {
+  id             Int           @id @default(autoincrement())
+  rosterId       Int
+  routeServiceId Int
+  boardingStopId Int
+  passengerType  PassengerType
+  name           String
+  busPassId      String
+  rollNo         String?
+  facultyId      String?
+  department     String?
+  year           Int?
+  section        String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  roster       TransportRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  routeService RouteService    @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  boardingStop Stop            @relation(fields: [boardingStopId], references: [id], onDelete: Restrict)
+
+  @@unique([rosterId, busPassId])
+  @@unique([rosterId, rollNo])
+  @@unique([rosterId, facultyId])
+  @@index([rosterId, routeServiceId])
+  @@index([boardingStopId])
+  @@index([passengerType])
+  @@index([department, year, section])
+}
+
+model ClassAdvisor {
+  id         Int      @id @default(autoincrement())
+  name       String
+  phone      String
+  email      String   @unique
+  department String
+  year       Int
+  section    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([department, year, section])
+}
+
+model Trip {
+  id                Int        @id @default(autoincrement())
+  routeServiceId    Int
+  driverId          Int
+  rosterId          Int
+  scheduleVersionId Int
+  date              DateTime
+  startTime         DateTime?
+  endTime           DateTime?
+  status            TripStatus @default(SCHEDULED)
+  currentStopIndex  Int        @default(0)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  routeService    RouteService    @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  driver          Driver          @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  roster          TransportRoster @relation(fields: [rosterId], references: [id], onDelete: Restrict)
+  scheduleVersion ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Restrict)
+  liveLocations   LiveLocation[]
+  stopEvents      TripStopEvent[]
+  lateAlerts      LateAlert[]
+
+  @@index([routeServiceId, status])
+  @@index([driverId, status])
+  @@index([date])
+}
+
 model LiveLocation {
-  id              Int      @id @default(autoincrement())
+  id              Int       @id @default(autoincrement())
   tripId          Int
   latitude        Float
   longitude       Float
-  timestamp       DateTime @default(now())
-  currentStopIndex Int     @default(0)
+  deviceTimestamp DateTime?
+  receivedAt      DateTime  @default(now())
+  acceptedForEta  Boolean   @default(true)
+  rejectionReason String?
 
-  trip Trip @relation(fields: [tripId], references: [id])
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
 
-  @@index([tripId, timestamp])
+  @@index([tripId, receivedAt])
+  @@index([tripId, acceptedForEta, receivedAt])
 }
 
-model BoardingRecord {
-  id        Int      @id @default(autoincrement())
-  tripId    Int
-  studentId Int
-  boardedAt DateTime @default(now())
+model TripStopEvent {
+  id             Int             @id @default(autoincrement())
+  tripId         Int
+  scheduleStopId Int
+  status         StopEventStatus
+  detectedAt     DateTime        @default(now())
+  latitude       Float?
+  longitude      Float?
 
-  trip    Trip    @relation(fields: [tripId], references: [id])
-  student Student @relation(fields: [studentId], references: [id])
+  trip         Trip         @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  scheduleStop ScheduleStop @relation(fields: [scheduleStopId], references: [id], onDelete: Restrict)
 
-  @@unique([tripId, studentId])
-  @@index([studentId])
+  @@unique([tripId, scheduleStopId])
+  @@index([tripId, detectedAt])
 }
-
-// ---- Late-alert hash chain ----
-// Each LateAlert stores a recordHash = SHA-256 of its own data plus the previous
-// row's recordHash (in previousHash). This forms a hash chain: editing any past
-// row changes its recomputed hash, which then no longer matches what the next
-// row's recordHash was computed against — so tampering is detectable.
 
 model LateAlert {
-  id              Int      @id @default(autoincrement())
-  tripId          Int
-  predictedEta    DateTime
-  triggeredAt     DateTime @default(now())
+  id               Int             @id @default(autoincrement())
+  tripId           Int
+  predictedEta     DateTime
+  status           LateAlertStatus @default(ACTIVE)
+  triggeredAt      DateTime        @default(now())
+  recoveredAt      DateTime?
   studentsAffected Json
   advisorsNotified Json
-  previousHash    String?
-  recordHash      String
+  previousHash     String?
+  recordHash       String?
 
-  trip Trip @relation(fields: [tripId], references: [id])
+  trip          Trip                 @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  notifications NotificationOutbox[]
 
-  @@index([tripId])
+  @@index([tripId, status])
   @@index([triggeredAt])
+}
+
+model NotificationOutbox {
+  id          Int                 @id @default(autoincrement())
+  lateAlertId Int
+  recipient   String
+  channel     NotificationChannel @default(EMAIL)
+  payload     Json
+  status      NotificationStatus  @default(PENDING)
+  attempts    Int                 @default(0)
+  lastError   String?
+  sentAt      DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  lateAlert LateAlert @relation(fields: [lateAlertId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([lateAlertId])
+}
+
+model AdminAuditLog {
+  id              Int      @id @default(autoincrement())
+  adminIdentifier String
+  action          String
+  entityType      String
+  entityId        String?
+  beforeSummary   Json?
+  afterSummary    Json?
+  createdAt       DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
 }

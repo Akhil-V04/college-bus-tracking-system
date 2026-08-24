@@ -1,131 +1,197 @@
 const prisma = require('./prisma');
 const haversineDistance = require('./haversine');
 
-// Default assumed bus speed (km/h) when there isn't enough history to measure.
-// 25 km/h ≈ average urban bus speed including stops at signals/stops.
 const DEFAULT_SPEED_KMH = 25;
-// Cap measured speed to reject GPS spikes (e.g. a one-off 200 km/h glitch).
 const MAX_SPEED_KMH = 90;
-// How many recent fixes to use when estimating the rolling average speed.
 const LOCATION_HISTORY = 10;
+const AT_STOP_METERS = 150;
+const STALE_AFTER_MS = 2 * 60 * 1000;
 
-// Predicts the arrival time at every remaining stop of a running trip.
-//
-// The model: a bus travels along a route made of ordered stops. We know the
-// bus's current position (latest LiveLocation) and we estimate its average
-// speed from the most recent GPS fixes (total distance travelled / total time
-// elapsed — this automatically absorbs dwell time at stops and traffic). The
-// distance from the current position to each remaining stop is measured along
-// the route (straight line between consecutive stops), and ETA = distance /
-// speed. No machine learning needed — a moving average is accurate enough for
-// "your bus arrives in ~12 minutes".
-async function estimateArrival(tripId) {
+async function estimateSpeed(tripId) {
+  const newestFirst = await prisma.liveLocation.findMany({
+    where: { tripId, acceptedForEta: true },
+    orderBy: { receivedAt: 'desc' },
+    take: LOCATION_HISTORY,
+  });
+  const fixes = newestFirst.reverse();
+  if (fixes.length < 2) return { speedKmh: DEFAULT_SPEED_KMH, confidence: 'LOW' };
+
+  let totalMeters = 0;
+  let totalMs = 0;
+  for (let index = 1; index < fixes.length; index += 1) {
+    const distance = haversineDistance(
+      fixes[index - 1].latitude,
+      fixes[index - 1].longitude,
+      fixes[index].latitude,
+      fixes[index].longitude
+    );
+    const elapsed = new Date(fixes[index].receivedAt) - new Date(fixes[index - 1].receivedAt);
+    if (elapsed <= 0 || distance < 5) continue;
+    const segmentKmh = distance / 1000 / (elapsed / 3600000);
+    if (segmentKmh > MAX_SPEED_KMH) continue;
+    totalMeters += distance;
+    totalMs += elapsed;
+  }
+
+  if (!totalMeters || !totalMs) return { speedKmh: DEFAULT_SPEED_KMH, confidence: 'LOW' };
+  const speedKmh = Math.min(totalMeters / 1000 / (totalMs / 3600000), MAX_SPEED_KMH);
+  return { speedKmh, confidence: fixes.length >= 5 ? 'HIGH' : 'MEDIUM' };
+}
+
+function etaRange(minutes, confidence) {
+  const ratio = confidence === 'HIGH' ? 0.15 : confidence === 'MEDIUM' ? 0.25 : 0.4;
+  const margin = Math.max(2, Math.ceil(minutes * ratio));
+  return { min: Math.max(0, Math.floor(minutes - margin)), max: Math.ceil(minutes + margin) };
+}
+
+async function estimateArrival(tripId, selectedStopId = null) {
   const trip = await prisma.trip.findUnique({
     where: { id: tripId },
     include: {
-      bus: {
+      scheduleVersion: {
         include: {
-          route: {
-            include: {
-              routeStops: {
-                orderBy: { sequenceOrder: 'asc' },
-                include: { stop: true },
-              },
-            },
-          },
+          stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
         },
       },
+      stopEvents: true,
     },
   });
   if (!trip) return null;
 
+  const stops = trip.scheduleVersion.stops;
+  const selectedIndex =
+    selectedStopId == null ? null : stops.findIndex((item) => item.stopId === Number(selectedStopId));
+  if (selectedStopId != null && selectedIndex < 0) {
+    return { status: 'INVALID_STOP', message: 'Selected stop does not belong to this route' };
+  }
+
+  if (trip.status === 'COMPLETED' || trip.status === 'CANCELLED') {
+    return {
+      tripId,
+      status: 'TRIP_ENDED',
+      message: trip.status === 'COMPLETED' ? 'Today\'s trip has ended' : 'Today\'s trip was cancelled',
+      updatedAt: trip.endTime || trip.updatedAt,
+    };
+  }
+  if (trip.status !== 'RUNNING') {
+    return { tripId, status: 'NOT_STARTED', message: 'The driver has not started this trip' };
+  }
+
   const latest = await prisma.liveLocation.findFirst({
-    where: { tripId },
-    orderBy: { timestamp: 'desc' },
+    where: { tripId, acceptedForEta: true },
+    orderBy: { receivedAt: 'desc' },
   });
-  const routeStops = trip.bus.route.routeStops;
-
   if (!latest) {
-    return { tripId, currentStopIndex: -1, speedKmh: null, atDestination: false, stops: [] };
+    return { tripId, status: 'NO_LIVE_DATA', message: 'Live location is not available yet' };
   }
 
-  const currentStopIndex = latest.currentStopIndex ?? 0;
-
-  // The bus has passed the last stop — it is at (or past) the destination.
-  if (currentStopIndex >= routeStops.length) {
-    return { tripId, currentStopIndex, speedKmh: null, atDestination: true, stops: [] };
+  const stale = Date.now() - new Date(latest.receivedAt).getTime() > STALE_AFTER_MS;
+  if (stale) {
+    return {
+      tripId,
+      status: 'NO_LIVE_DATA',
+      message: 'Live location is temporarily unavailable',
+      updatedAt: latest.receivedAt,
+    };
   }
 
-  const speedKmh = await estimateSpeed(tripId);
+  const currentIndex = Math.min(trip.currentStopIndex, stops.length);
+  if (selectedIndex != null && selectedIndex < currentIndex) {
+    const event = trip.stopEvents.find((item) => item.scheduleStopId === stops[selectedIndex].id);
+    return {
+      tripId,
+      stopId: Number(selectedStopId),
+      status: event?.status === 'POSSIBLY_SKIPPED' ? 'POSSIBLY_SKIPPED' : 'PASSED',
+      message:
+        event?.status === 'POSSIBLY_SKIPPED'
+          ? 'Bus appears to have passed this stop without a confirmed stop'
+          : 'Bus has already passed this stop',
+      passedAt: event?.detectedAt || null,
+      updatedAt: latest.receivedAt,
+      etaMinutes: null,
+    };
+  }
 
-  // Walking the route from the bus's current position, accumulate the distance
-  // to each remaining stop.
-  const stops = [];
+  if (currentIndex >= stops.length) {
+    return { tripId, status: 'TRIP_ENDED', message: 'Bus has reached the final stop', updatedAt: latest.receivedAt };
+  }
+
+  if (selectedIndex === currentIndex) {
+    const selected = stops[selectedIndex].stop;
+    const distance = haversineDistance(latest.latitude, latest.longitude, selected.latitude, selected.longitude);
+    if (distance <= AT_STOP_METERS) {
+      return {
+        tripId,
+        stopId: selected.id,
+        status: 'AT_STOP',
+        message: 'Bus is currently at or near this stop',
+        distanceMeters: Math.round(distance),
+        updatedAt: latest.receivedAt,
+      };
+    }
+  }
+
+  const { speedKmh, confidence } = await estimateSpeed(tripId);
+  const stopResults = [];
   let cumulativeKm =
     haversineDistance(
       latest.latitude,
       latest.longitude,
-      routeStops[currentStopIndex].stop.latitude,
-      routeStops[currentStopIndex].stop.longitude
+      stops[currentIndex].stop.latitude,
+      stops[currentIndex].stop.longitude
     ) / 1000;
 
-  for (let i = currentStopIndex; i < routeStops.length; i++) {
-    if (i > currentStopIndex) {
+  for (let index = currentIndex; index < stops.length; index += 1) {
+    if (index > currentIndex) {
       cumulativeKm +=
         haversineDistance(
-          routeStops[i - 1].stop.latitude,
-          routeStops[i - 1].stop.longitude,
-          routeStops[i].stop.latitude,
-          routeStops[i].stop.longitude
+          stops[index - 1].stop.latitude,
+          stops[index - 1].stop.longitude,
+          stops[index].stop.latitude,
+          stops[index].stop.longitude
         ) / 1000;
     }
-    const etaMinutes = speedKmh > 0 ? Math.round((cumulativeKm / speedKmh) * 60) : null;
-    stops.push({
-      index: i,
-      stopId: routeStops[i].stop.id,
-      name: routeStops[i].stop.name,
-      latitude: routeStops[i].stop.latitude,
-      longitude: routeStops[i].stop.longitude,
-      scheduledTime: routeStops[i].scheduledTime,
+    const minutes = Math.max(0, Math.round((cumulativeKm / speedKmh) * 60));
+    stopResults.push({
+      stopId: stops[index].stop.id,
+      name: stops[index].stop.name,
+      scheduledTime: stops[index].scheduledTime,
+      status: index === currentIndex ? 'ARRIVING' : 'UPCOMING',
       distanceKm: Math.round(cumulativeKm * 100) / 100,
-      etaMinutes,
+      etaMinutes: minutes,
+      etaRangeMinutes: etaRange(minutes, confidence),
     });
   }
 
-  return { tripId, currentStopIndex, speedKmh, atDestination: false, stops };
-}
-
-// Rolling average speed from the last few GPS fixes (distance / time). Falls
-// back to DEFAULT_SPEED_KMH when there isn't enough clean data.
-async function estimateSpeed(tripId) {
-  const fixes = await prisma.liveLocation.findMany({
-    where: { tripId },
-    orderBy: { timestamp: 'asc' },
-    take: LOCATION_HISTORY,
-  });
-  if (fixes.length < 2) return DEFAULT_SPEED_KMH;
-
-  let totalMeters = 0;
-  let totalMs = 0;
-  for (let i = 1; i < fixes.length; i++) {
-    const d = haversineDistance(
-      fixes[i - 1].latitude,
-      fixes[i - 1].longitude,
-      fixes[i].latitude,
-      fixes[i].longitude
-    );
-    const t =
-      new Date(fixes[i].timestamp).getTime() - new Date(fixes[i - 1].timestamp).getTime();
-    if (t <= 0) continue; // duplicate timestamps
-    if (d < 5) continue; // GPS jitter while stationary
-    totalMeters += d;
-    totalMs += t;
+  if (selectedIndex != null) {
+    const selected = stopResults.find((item) => item.stopId === Number(selectedStopId));
+    return {
+      tripId,
+      status: selected.status,
+      message: 'Estimated arrival is based on recent live movement',
+      confidence,
+      speedKmh: Math.round(speedKmh * 10) / 10,
+      updatedAt: latest.receivedAt,
+      ...selected,
+    };
   }
-  if (totalMeters <= 0 || totalMs <= 0) return DEFAULT_SPEED_KMH;
 
-  const kmh = totalMeters / 1000 / (totalMs / 3600000);
-  if (!Number.isFinite(kmh) || kmh <= 0) return DEFAULT_SPEED_KMH;
-  return Math.min(kmh, MAX_SPEED_KMH);
+  return {
+    tripId,
+    status: 'UPCOMING',
+    currentStopIndex: currentIndex,
+    confidence,
+    speedKmh: Math.round(speedKmh * 10) / 10,
+    updatedAt: latest.receivedAt,
+    stops: stopResults,
+  };
 }
 
-module.exports = { estimateArrival, estimateSpeed };
+module.exports = {
+  estimateArrival,
+  estimateSpeed,
+  etaRange,
+  DEFAULT_SPEED_KMH,
+  MAX_SPEED_KMH,
+  STALE_AFTER_MS,
+};

@@ -1,94 +1,173 @@
 const prisma = require('./lib/prisma');
 const haversineDistance = require('./lib/haversine');
+const { verifyToken } = require('./middleware/auth');
+const { locationPayloadSchema } = require('./schemas');
+const { estimateArrival } = require('./lib/eta');
+const { observeTripEta } = require('./lib/lateAlert');
 
-// Distance (meters) under which a bus is considered "at" the next stop.
 const STOP_REACHED_METERS = 150;
+const MAX_ACCEPTED_SPEED_KMH = 120;
 
-// Attaches all real-time tracking behavior to the Socket.io server.
 function setupSocket(io) {
-  io.on('connection', (socket) => {
-    console.log(`[socket] client connected: ${socket.id}`);
+  // Passenger sockets may connect without a token. A valid driver token is
+  // mandatory before the socket can emit driver:location.
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next();
+    try {
+      socket.user = verifyToken(token);
+      return next();
+    } catch (_error) {
+      return next(new Error('Invalid or expired token'));
+    }
+  });
 
-    // Join a trip's broadcast room so this client receives bus:update /
-    // occupancy:update events for that trip.
-    socket.on('join:trip', ({ tripId }) => {
-      if (!tripId) return;
-      socket.join(`trip:${tripId}`);
-      console.log(`[socket] ${socket.id} joined trip:${tripId}`);
+  io.on('connection', (socket) => {
+    socket.on('join:trip', async ({ tripId } = {}) => {
+      const id = Number(tripId);
+      if (!Number.isInteger(id) || id <= 0) return;
+      const exists = await prisma.trip.findUnique({ where: { id }, select: { id: true, routeServiceId: true } });
+      if (!exists) return;
+      socket.join(`trip:${id}`);
+      socket.join(`route:${exists.routeServiceId}`);
     });
 
-    // Driver streams a GPS fix for a running trip.
-    socket.on('driver:location', async ({ tripId, latitude, longitude }) => {
-      if (!tripId || typeof latitude !== 'number' || typeof longitude !== 'number') return;
+    socket.on('driver:location', async (payload, acknowledge) => {
+      const parsed = locationPayloadSchema.safeParse(payload);
+      if (!parsed.success) {
+        acknowledge?.({ ok: false, error: 'Invalid location payload' });
+        return;
+      }
+      if (socket.user?.role !== 'driver') {
+        acknowledge?.({ ok: false, error: 'Driver authentication is required' });
+        return;
+      }
+
+      const { tripId, latitude, longitude, deviceTimestamp } = parsed.data;
       try {
         const trip = await prisma.trip.findUnique({
           where: { id: tripId },
           include: {
-            bus: {
-              include: {
-                route: {
-                  include: {
-                    routeStops: {
-                      orderBy: { sequenceOrder: 'asc' },
-                      include: { stop: true },
-                    },
-                  },
-                },
-              },
+            driver: { select: { sessionVersion: true } },
+            scheduleVersion: {
+              include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
             },
           },
         });
-        if (!trip || trip.status !== 'RUNNING') return;
+        if (!trip || trip.status !== 'RUNNING') {
+          acknowledge?.({ ok: false, error: 'Trip is not running' });
+          return;
+        }
+        if (
+          trip.driverId !== Number(socket.user.id) ||
+          trip.driver.sessionVersion !== socket.user.sessionVersion
+        ) {
+          acknowledge?.({ ok: false, error: 'This trip belongs to another driver or the session was revoked' });
+          return;
+        }
 
-        // 1. Load the current stop index from the latest LiveLocation (defaults 0).
         const latest = await prisma.liveLocation.findFirst({
-          where: { tripId },
-          orderBy: { timestamp: 'desc' },
+          where: { tripId, acceptedForEta: true },
+          orderBy: { receivedAt: 'desc' },
         });
-        let currentStopIndex = latest ? latest.currentStopIndex : 0;
-
-        const routeStops = trip.bus.route.routeStops;
-
-        // 2. Stop detection: if the next unreached stop is within STOP_REACHED_METERS,
-        //    mark it reached by incrementing currentStopIndex.
-        if (routeStops.length > 0) {
-          const nextStop = routeStops[currentStopIndex];
-          if (nextStop) {
-            const d = haversineDistance(
-              latitude,
-              longitude,
-              nextStop.stop.latitude,
-              nextStop.stop.longitude
-            );
-            if (d < STOP_REACHED_METERS) {
-              currentStopIndex = Math.min(currentStopIndex + 1, routeStops.length);
-            }
+        let acceptedForEta = true;
+        let rejectionReason = null;
+        if (latest) {
+          const distanceMeters = haversineDistance(
+            latest.latitude,
+            latest.longitude,
+            latitude,
+            longitude
+          );
+          const elapsedMs = Math.max(1, Date.now() - new Date(latest.receivedAt).getTime());
+          const speedKmh = distanceMeters / 1000 / (elapsedMs / 3600000);
+          if (speedKmh > MAX_ACCEPTED_SPEED_KMH) {
+            acceptedForEta = false;
+            rejectionReason = 'IMPOSSIBLE_SPEED';
           }
         }
 
-        // 3. Persist the fix with the (possibly advanced) stop index.
-        await prisma.liveLocation.create({
-          data: { tripId, latitude, longitude, currentStopIndex },
+        const result = await prisma.$transaction(async (tx) => {
+          const location = await tx.liveLocation.create({
+            data: {
+              tripId,
+              latitude,
+              longitude,
+              deviceTimestamp: deviceTimestamp || null,
+              acceptedForEta,
+              rejectionReason,
+            },
+          });
+          let currentStopIndex = trip.currentStopIndex;
+          if (acceptedForEta) {
+            const next = trip.scheduleVersion.stops[currentStopIndex];
+            if (next) {
+              const distance = haversineDistance(
+                latitude,
+                longitude,
+                next.stop.latitude,
+                next.stop.longitude
+              );
+              if (distance <= STOP_REACHED_METERS) {
+                const advanced = await tx.trip.updateMany({
+                  where: { id: tripId, currentStopIndex },
+                  data: { currentStopIndex: { increment: 1 } },
+                });
+                if (advanced.count) {
+                  currentStopIndex += 1;
+                  await tx.tripStopEvent.upsert({
+                    where: { tripId_scheduleStopId: { tripId, scheduleStopId: next.id } },
+                    update: {
+                      status: 'REACHED',
+                      detectedAt: location.receivedAt,
+                      latitude,
+                      longitude,
+                    },
+                    create: {
+                      tripId,
+                      scheduleStopId: next.id,
+                      status: 'REACHED',
+                      detectedAt: location.receivedAt,
+                      latitude,
+                      longitude,
+                    },
+                  });
+                }
+              }
+            }
+          }
+          return { location, currentStopIndex };
         });
 
-        // 4. Broadcast to everyone watching this trip.
-        io.to(`trip:${tripId}`).emit('bus:update', {
+        if (!acceptedForEta) {
+          acknowledge?.({ ok: false, error: 'Location was stored but rejected from live ETA', reason: rejectionReason });
+          return;
+        }
+
+        const eta = await estimateArrival(tripId);
+        const update = {
           tripId,
+          routeServiceId: trip.routeServiceId,
           latitude,
           longitude,
-          currentStopIndex,
-          timestamp: Date.now(),
+          currentStopIndex: result.currentStopIndex,
+          timestamp: result.location.receivedAt,
+          eta,
+        };
+        io.to(`trip:${tripId}`).emit('bus:update', update);
+        io.to(`route:${trip.routeServiceId}`).emit('bus:update', update);
+        observeTripEta(tripId, eta).catch((error) => {
+          console.error('[late-alert/observe]', error);
         });
-      } catch (err) {
-        console.error('[socket] driver:location error', err);
+        acknowledge?.({ ok: true, timestamp: result.location.receivedAt });
+      } catch (error) {
+        console.error('[socket/driver:location]', error);
+        acknowledge?.({ ok: false, error: 'Location update failed' });
       }
-    });
-
-    socket.on('disconnect', () => {
-      console.log(`[socket] client disconnected: ${socket.id}`);
     });
   });
 }
 
 module.exports = setupSocket;
 module.exports.STOP_REACHED_METERS = STOP_REACHED_METERS;
+module.exports.MAX_ACCEPTED_SPEED_KMH = MAX_ACCEPTED_SPEED_KMH;

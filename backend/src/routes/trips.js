@@ -2,180 +2,172 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { estimateArrival } = require('../lib/eta');
+const { clearTripObservation } = require('../lib/lateAlert');
 
 const router = express.Router();
 
-// POST /trips/start — { busId } — create a RUNNING trip for today.
+async function assertDriverSession(user) {
+  if (user.role !== 'driver') return null;
+  const driver = await prisma.driver.findUnique({
+    where: { id: Number(user.id) },
+    select: { id: true, sessionVersion: true },
+  });
+  if (!driver || driver.sessionVersion !== user.sessionVersion) return false;
+  return driver;
+}
+
 router.post('/start', requireAuth(['driver', 'admin']), async (req, res) => {
   try {
-    const { busId } = req.body || {};
-    if (!busId) return res.status(400).json({ error: 'busId is required' });
-
-    const bus = await prisma.bus.findUnique({ where: { id: Number(busId) } });
-    if (!bus) return res.status(404).json({ error: 'Bus not found' });
-
-    // Close any previous RUNNING trip for this bus (defensive).
-    await prisma.trip.updateMany({
-      where: { busId: bus.id, status: 'RUNNING' },
-      data: { status: 'COMPLETED' },
-    });
-
-    const trip = await prisma.trip.create({
-      data: {
-        busId: bus.id,
-        date: new Date(),
-        startTime: new Date(),
-        status: 'RUNNING',
-        filledCount: 0,
-      },
-    });
-
-    res.status(201).json({ tripId: trip.id });
-  } catch (err) {
-    console.error('[trips/start]', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// POST /trips/:id/end — mark the trip COMPLETED.
-router.post('/:id/end', requireAuth(['driver', 'admin']), async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const trip = await prisma.trip.update({
-      where: { id },
-      data: { status: 'COMPLETED' },
-    });
-    res.json({ tripId: trip.id, status: trip.status });
-  } catch (err) {
-    if (err.code === 'P2025') return res.status(404).json({ error: 'Trip not found' });
-    console.error('[trips/:id/end]', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// POST /trips/:id/board — { rollNo } — driver QR scan.
-router.post('/:id/board', requireAuth(['driver', 'admin']), async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const { rollNo } = req.body || {};
-    if (!rollNo) return res.status(400).json({ error: 'rollNo is required' });
-
-    const trip = await prisma.trip.findUnique({
-      where: { id },
-      include: { bus: { include: { route: true } } },
-    });
-    if (!trip) return res.status(404).json({ error: 'Trip not found' });
-
-    const student = await prisma.student.findUnique({ where: { rollNo } });
-    if (!student) return res.status(404).json({ error: `No student found with rollNo ${rollNo}` });
-
-    if (student.routeId !== trip.bus.routeId) {
-      return res.status(404).json({
-        error: `Student ${rollNo} is not on route ${trip.bus.route.routeNo} — they board a different bus`,
-      });
+    if (req.user.role === 'driver' && !(await assertDriverSession(req.user))) {
+      return res.status(401).json({ error: 'Driver session has been revoked' });
     }
 
-    const existing = await prisma.boardingRecord.findUnique({
-      where: { tripId_studentId: { tripId: trip.id, studentId: student.id } },
+    const driverId = req.user.role === 'driver' ? Number(req.user.id) : Number(req.body?.driverId);
+    const route = await prisma.routeService.findFirst({
+      where:
+        req.user.role === 'driver'
+          ? { driverId }
+          : { id: Number(req.body?.routeServiceId), driverId },
+      select: { id: true, routeNo: true, driverId: true },
+    });
+    if (!route) return res.status(404).json({ error: 'No matching route assignment was found' });
+
+    const existing = await prisma.trip.findFirst({
+      where: { routeServiceId: route.id, status: 'RUNNING' },
+      select: { id: true, driverId: true, startTime: true },
     });
     if (existing) {
-      return res.status(409).json({
-        error: `Student ${rollNo} (${student.name}) already boarded this trip`,
-      });
+      if (existing.driverId !== driverId) {
+        return res.status(409).json({ error: 'This route already has a running trip controlled by another driver' });
+      }
+      return res.json({ tripId: existing.id, resumed: true, startTime: existing.startTime });
     }
 
-    await prisma.boardingRecord.create({
-      data: { tripId: trip.id, studentId: student.id },
-    });
+    const [roster, schedule] = await Promise.all([
+      prisma.transportRoster.findFirst({
+        where: { status: 'PUBLISHED' },
+        orderBy: { publishedAt: 'desc' },
+        select: { id: true },
+      }),
+      prisma.scheduleVersion.findFirst({
+        where: { routeServiceId: route.id, status: 'PUBLISHED' },
+        orderBy: { publishedAt: 'desc' },
+        select: { id: true },
+      }),
+    ]);
+    if (!roster) return res.status(409).json({ error: 'A passenger roster must be published before starting trips' });
+    if (!schedule) return res.status(409).json({ error: 'A route schedule must be published before starting this trip' });
 
-    const updated = await prisma.trip.update({
-      where: { id: trip.id },
-      data: { filledCount: { increment: 1 } },
+    const now = new Date();
+    const trip = await prisma.trip.create({
+      data: {
+        routeServiceId: route.id,
+        driverId,
+        rosterId: roster.id,
+        scheduleVersionId: schedule.id,
+        date: now,
+        startTime: now,
+        status: 'RUNNING',
+      },
     });
-
-    // Notify the trip room that occupancy changed.
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`trip:${trip.id}`).emit('occupancy:update', {
-        tripId: trip.id,
-        filledCount: updated.filledCount,
-        lastBoarded: { rollNo: student.rollNo, name: student.name },
-      });
-    }
-
-    res.status(201).json({
-      boarded: true,
-      rollNo: student.rollNo,
-      name: student.name,
-      filledCount: updated.filledCount,
+    req.app.get('io')?.to(`route:${route.id}`).emit('trip:started', {
+      tripId: trip.id,
+      routeServiceId: route.id,
+      startTime: trip.startTime,
     });
-  } catch (err) {
-    console.error('[trips/:id/board]', err);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(201).json({ tripId: trip.id, resumed: false, routeNo: route.routeNo });
+  } catch (error) {
+    console.error('[trips/start]', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// GET /trips/:id/eta — arrival-time prediction for each remaining stop (public).
-router.get('/:id/eta', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const eta = await estimateArrival(id);
-    if (!eta) return res.status(404).json({ error: 'Trip not found' });
-    res.json(eta);
-  } catch (err) {
-    console.error('[trips/:id/eta]', err);
-    res.status(500).json({ error: 'Internal server error' });
+router.post('/:id/end', requireAuth(['driver', 'admin']), async (req, res) => {
+  const id = Number(req.params.id);
+  const trip = await prisma.trip.findUnique({
+    where: { id },
+    select: { id: true, driverId: true, routeServiceId: true, status: true },
+  });
+  if (!trip) return res.status(404).json({ error: 'Trip not found' });
+  if (req.user.role === 'driver') {
+    if (!(await assertDriverSession(req.user))) {
+      return res.status(401).json({ error: 'Driver session has been revoked' });
+    }
+    if (trip.driverId !== Number(req.user.id)) {
+      return res.status(403).json({ error: 'This trip belongs to another driver' });
+    }
   }
+  if (trip.status !== 'RUNNING') return res.status(409).json({ error: 'Trip is not running' });
+
+  const updated = await prisma.trip.update({
+    where: { id },
+    data: { status: 'COMPLETED', endTime: new Date() },
+  });
+  clearTripObservation(id);
+  req.app.get('io')?.to(`trip:${id}`).emit('trip:ended', {
+    tripId: id,
+    endedAt: updated.endTime,
+  });
+  return res.json({ tripId: id, status: updated.status, endedAt: updated.endTime });
 });
 
-// GET /trips/active — all RUNNING trips with route + latest location (public).
-router.get('/active', async (req, res) => {
-  try {
-    const trips = await prisma.trip.findMany({
-      where: { status: 'RUNNING' },
-      include: {
-        bus: {
-          include: {
-            route: true,
-            driver: { select: { id: true, name: true, phone: true } },
-          },
+router.get('/mine', requireAuth(['driver']), async (req, res) => {
+  if (!(await assertDriverSession(req.user))) {
+    return res.status(401).json({ error: 'Driver session has been revoked' });
+  }
+  const trip = await prisma.trip.findFirst({
+    where: { driverId: Number(req.user.id), status: 'RUNNING' },
+    include: {
+      routeService: { select: { id: true, routeNo: true, name: true, areaCovered: true, capacity: true } },
+      scheduleVersion: {
+        include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
+      },
+    },
+  });
+  return res.json({ trip });
+});
+
+router.get('/active', async (_req, res) => {
+  const trips = await prisma.trip.findMany({
+    where: { status: 'RUNNING' },
+    select: {
+      id: true,
+      startTime: true,
+      currentStopIndex: true,
+      routeService: {
+        select: {
+          id: true,
+          routeNo: true,
+          name: true,
+          areaCovered: true,
+          capacity: true,
+          driver: { select: { name: true } },
         },
       },
-      orderBy: { startTime: 'asc' },
-    });
+    },
+    orderBy: { startTime: 'asc' },
+  });
+  const result = await Promise.all(
+    trips.map(async (trip) => ({
+      tripId: trip.id,
+      startTime: trip.startTime,
+      currentStopIndex: trip.currentStopIndex,
+      route: trip.routeService,
+      latestLocation: await prisma.liveLocation.findFirst({
+        where: { tripId: trip.id, acceptedForEta: true },
+        orderBy: { receivedAt: 'desc' },
+        select: { latitude: true, longitude: true, receivedAt: true },
+      }),
+    }))
+  );
+  return res.json(result);
+});
 
-    const tripsWithLocation = await Promise.all(
-      trips.map(async (trip) => {
-        const latest = await prisma.liveLocation.findFirst({
-          where: { tripId: trip.id },
-          orderBy: { timestamp: 'desc' },
-        });
-        return {
-          tripId: trip.id,
-          date: trip.date,
-          startTime: trip.startTime,
-          status: trip.status,
-          filledCount: trip.filledCount,
-          route: trip.bus.route,
-          driver: trip.bus.driver,
-          bus: { id: trip.bus.id, busNo: trip.bus.busNo, capacity: trip.bus.capacity, plateNumber: trip.bus.plateNumber },
-          latestLocation: latest
-            ? {
-                latitude: latest.latitude,
-                longitude: latest.longitude,
-                currentStopIndex: latest.currentStopIndex,
-                timestamp: latest.timestamp,
-              }
-            : null,
-        };
-      })
-    );
-
-    res.json(tripsWithLocation);
-  } catch (err) {
-    console.error('[trips/active]', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+router.get('/:id/eta', async (req, res) => {
+  const result = await estimateArrival(Number(req.params.id));
+  if (!result) return res.status(404).json({ error: 'Trip not found' });
+  return res.json(result);
 });
 
 module.exports = router;
+module.exports.assertDriverSession = assertDriverSession;
