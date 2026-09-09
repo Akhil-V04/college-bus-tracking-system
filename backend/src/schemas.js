@@ -93,6 +93,8 @@ const locationPayloadSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   deviceTimestamp: z.coerce.date().optional(),
+  accuracyMeters: z.number().nonnegative().max(10000).optional(),
+  deviceSpeedKmh: z.number().nonnegative().max(500).optional(),
 });
 
 module.exports = {

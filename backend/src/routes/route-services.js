@@ -3,8 +3,14 @@ const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { routeServiceSchema } = require('../schemas');
 const { parsePagination, validate } = require('../crud');
+const { changedFields, writeAdminAudit } = require('../lib/adminAudit');
 
 const router = express.Router();
+
+const routeAuditFields = ['routeNo', 'name', 'areaCovered', 'capacity', 'driverId'];
+function routeAuditSummary(route) {
+  return Object.fromEntries(routeAuditFields.map((field) => [field, route?.[field] ?? null]));
+}
 
 const publicSelect = {
   id: true,
@@ -72,7 +78,16 @@ router.post('/', requireAuth(['admin']), async (req, res) => {
   const data = validate(routeServiceSchema, req.body, res);
   if (!data) return;
   try {
-    const created = await prisma.routeService.create({ data });
+    const created = await prisma.$transaction(async (tx) => {
+      const route = await tx.routeService.create({ data });
+      await writeAdminAudit(tx, req, {
+        action: 'ROUTE_CREATED',
+        entityType: 'RouteService',
+        entityId: route.id,
+        afterSummary: routeAuditSummary(route),
+      });
+      return route;
+    });
     return res.status(201).json(created);
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Route number or driver assignment already exists' });
@@ -86,7 +101,22 @@ router.put('/:id', requireAuth(['admin']), async (req, res) => {
   const data = validate(routeServiceSchema.partial(), req.body, res);
   if (!Number.isInteger(id) || !data) return;
   try {
-    return res.json(await prisma.routeService.update({ where: { id }, data }));
+const updated = await prisma.$transaction(async (tx) => {
+      const before = await tx.routeService.findUnique({ where: { id } });
+      const route = await tx.routeService.update({ where: { id }, data });
+      await writeAdminAudit(tx, req, {
+        action: 'ROUTE_UPDATED',
+        entityType: 'RouteService',
+        entityId: id,
+        beforeSummary: routeAuditSummary(before),
+        afterSummary: {
+          ...routeAuditSummary(route),
+          changedFields: changedFields(before, route, routeAuditFields),
+        },
+      });
+      return route;
+    });
+    return res.json(updated);
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Route not found' });
     if (error.code === 'P2002') return res.status(409).json({ error: 'Route number or driver assignment already exists' });
@@ -96,7 +126,17 @@ router.put('/:id', requireAuth(['admin']), async (req, res) => {
 
 router.delete('/:id', requireAuth(['admin']), async (req, res) => {
   try {
-    await prisma.routeService.delete({ where: { id: Number(req.params.id) } });
+    const id = Number(req.params.id);
+    await prisma.$transaction(async (tx) => {
+      const before = await tx.routeService.findUnique({ where: { id } });
+      await tx.routeService.delete({ where: { id } });
+      await writeAdminAudit(tx, req, {
+        action: 'ROUTE_DELETED',
+        entityType: 'RouteService',
+        entityId: id,
+        beforeSummary: routeAuditSummary(before),
+      });
+    });
     return res.json({ deleted: true });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Route not found' });

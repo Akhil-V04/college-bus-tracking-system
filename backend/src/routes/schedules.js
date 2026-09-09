@@ -3,8 +3,28 @@ const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { scheduleVersionSchema, scheduleStopSchema } = require('../schemas');
 const { validate } = require('../crud');
+const { writeAdminAudit } = require('../lib/adminAudit');
 
 const router = express.Router();
+
+function scheduleAuditSummary(schedule) {
+  return {
+    routeServiceId: schedule?.routeServiceId ?? null,
+    name: schedule?.name ?? null,
+    direction: schedule?.direction ?? null,
+    version: schedule?.version ?? null,
+    status: schedule?.status ?? null,
+  };
+}
+
+function scheduleStopAuditSummary(entry) {
+  return {
+    scheduleVersionId: entry?.scheduleVersionId ?? null,
+    stopId: entry?.stopId ?? null,
+    sequenceOrder: entry?.sequenceOrder ?? null,
+    scheduledTime: entry?.scheduledTime ?? null,
+  };
+}
 
 function timeToMinutes(value) {
   const [hours, minutes] = value.split(':').map(Number);
@@ -74,8 +94,17 @@ router.post('/', async (req, res) => {
     select: { version: true },
   });
   try {
-    const schedule = await prisma.scheduleVersion.create({
-      data: { ...input, version: (latest?.version || 0) + 1 },
+    const schedule = await prisma.$transaction(async (tx) => {
+      const created = await tx.scheduleVersion.create({
+        data: { ...input, version: (latest?.version || 0) + 1 },
+      });
+      await writeAdminAudit(tx, req, {
+        action: 'SCHEDULE_CREATED',
+        entityType: 'ScheduleVersion',
+        entityId: created.id,
+        afterSummary: scheduleAuditSummary(created),
+      });
+      return created;
     });
     return res.status(201).json(schedule);
   } catch (error) {
@@ -101,9 +130,20 @@ router.post('/:id/stops', async (req, res) => {
   if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
   if (schedule.status !== 'DRAFT') return res.status(409).json({ error: 'Only draft schedules can be edited' });
   try {
-    return res.status(201).json(
-      await prisma.scheduleStop.create({ data: { scheduleVersionId: scheduleId, ...input }, include: { stop: true } })
-    );
+    const entry = await prisma.$transaction(async (tx) => {
+      const created = await tx.scheduleStop.create({
+        data: { scheduleVersionId: scheduleId, ...input },
+        include: { stop: true },
+      });
+      await writeAdminAudit(tx, req, {
+        action: 'SCHEDULE_STOP_ADDED',
+        entityType: 'ScheduleStop',
+        entityId: created.id,
+        afterSummary: scheduleStopAuditSummary(created),
+      });
+      return created;
+    });
+    return res.status(201).json(entry);
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Stop or sequence already exists in this schedule' });
     if (error.code === 'P2003') return res.status(400).json({ error: 'Stop does not exist' });
@@ -118,14 +158,26 @@ router.put('/:id/stops/:stopEntryId', async (req, res) => {
   const schedule = await prisma.scheduleVersion.findUnique({ where: { id: scheduleId } });
   if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
   if (schedule.status !== 'DRAFT') return res.status(409).json({ error: 'Only draft schedules can be edited' });
+  const stopEntryId = Number(req.params.stopEntryId);
+  const existing = await prisma.scheduleStop.findFirst({ where: { id: stopEntryId, scheduleVersionId: scheduleId } });
+  if (!existing) return res.status(404).json({ error: 'Schedule stop not found' });
   try {
-    return res.json(
-      await prisma.scheduleStop.update({
-        where: { id: Number(req.params.stopEntryId) },
+    const entry = await prisma.$transaction(async (tx) => {
+      const updated = await tx.scheduleStop.update({
+        where: { id: stopEntryId },
         data: input,
         include: { stop: true },
-      })
-    );
+      });
+      await writeAdminAudit(tx, req, {
+        action: 'SCHEDULE_STOP_UPDATED',
+        entityType: 'ScheduleStop',
+        entityId: stopEntryId,
+        beforeSummary: scheduleStopAuditSummary(existing),
+        afterSummary: scheduleStopAuditSummary(updated),
+      });
+      return updated;
+    });
+    return res.json(entry);
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Schedule stop not found' });
     if (error.code === 'P2002') return res.status(409).json({ error: 'Stop or sequence already exists in this schedule' });
@@ -137,7 +189,20 @@ router.delete('/:id/stops/:stopEntryId', async (req, res) => {
   const schedule = await prisma.scheduleVersion.findUnique({ where: { id: Number(req.params.id) } });
   if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
   if (schedule.status !== 'DRAFT') return res.status(409).json({ error: 'Only draft schedules can be edited' });
-  await prisma.scheduleStop.delete({ where: { id: Number(req.params.stopEntryId) } });
+  const stopEntryId = Number(req.params.stopEntryId);
+  const existing = await prisma.scheduleStop.findFirst({
+    where: { id: stopEntryId, scheduleVersionId: schedule.id },
+  });
+  if (!existing) return res.status(404).json({ error: 'Schedule stop not found' });
+  await prisma.$transaction(async (tx) => {
+    await tx.scheduleStop.delete({ where: { id: stopEntryId } });
+    await writeAdminAudit(tx, req, {
+      action: 'SCHEDULE_STOP_REMOVED',
+      entityType: 'ScheduleStop',
+      entityId: stopEntryId,
+      beforeSummary: scheduleStopAuditSummary(existing),
+    });
+  });
   return res.json({ deleted: true });
 });
 
@@ -155,7 +220,7 @@ router.post('/:id/publish', async (req, res) => {
   if (errors.length) return res.status(400).json({ error: 'Schedule validation failed', errors });
 
   const published = await prisma.$transaction(async (tx) => {
-    await tx.scheduleVersion.updateMany({
+    const archived = await tx.scheduleVersion.updateMany({
       where: {
         routeServiceId: schedule.routeServiceId,
         direction: schedule.direction,
@@ -163,11 +228,19 @@ router.post('/:id/publish', async (req, res) => {
       },
       data: { status: 'ARCHIVED' },
     });
-    return tx.scheduleVersion.update({
+    const updated = await tx.scheduleVersion.update({
       where: { id },
       data: { status: 'PUBLISHED', publishedAt: new Date() },
       include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
     });
+    await writeAdminAudit(tx, req, {
+      action: 'SCHEDULE_PUBLISHED',
+      entityType: 'ScheduleVersion',
+      entityId: id,
+      beforeSummary: scheduleAuditSummary(schedule),
+      afterSummary: { ...scheduleAuditSummary(updated), archivedSchedules: archived.count },
+    });
+    return updated;
   });
   return res.json(published);
 });

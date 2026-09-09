@@ -1,10 +1,85 @@
 const express = require('express');
+const path = require('path');
+const multer = require('multer');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
+const { createRateLimiters } = require('../middleware/security');
 const { rosterCreateSchema, rosterPassengerSchema } = require('../schemas');
 const { validate, parsePagination } = require('../crud');
+const { writeAdminAudit } = require('../lib/adminAudit');
+const {
+  RosterExchangeError,
+  buildRosterExportCsv,
+  buildRosterExportXlsx,
+  buildTemplateCsv,
+  buildTemplateXlsx,
+  loadRouteReferences,
+  loadValidationContext,
+  parseRosterFile,
+  previewRosterImport,
+  summarizeResults,
+  validateRosterRows,
+} = require('../lib/rosterExchange');
 
 const router = express.Router();
+const { rosterImport: rosterImportRateLimiter } = createRateLimiters();
+
+function rosterAuditSummary(roster) {
+  return {
+    name: roster?.name ?? null,
+    academicYear: roster?.academicYear ?? null,
+    version: roster?.version ?? null,
+    status: roster?.status ?? null,
+  };
+}
+
+function passengerAssignmentSummary(passenger) {
+  return {
+    rosterId: passenger?.rosterId ?? null,
+    passengerType: passenger?.passengerType ?? null,
+    routeServiceId: passenger?.routeServiceId ?? null,
+    boardingStopId: passenger?.boardingStopId ?? null,
+  };
+}
+
+const rosterUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0, parts: 2 },
+  fileFilter: (_req, file, callback) => {
+    const extension = path.extname(file.originalname || '').toLowerCase();
+    if (extension === '.csv' || extension === '.xlsx') return callback(null, true);
+    return callback(new Error('Only .csv and .xlsx roster files are accepted'));
+  },
+});
+
+function receiveRosterFile(req, res, next) {
+  rosterUpload.single('file')(req, res, (error) => {
+    if (!error) return next();
+    if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'Roster file must not exceed 5 MB' });
+    }
+    return res.status(400).json({ error: error.message || 'Roster upload failed' });
+  });
+}
+
+function sendExchangeError(res, error, scope) {
+  if (error instanceof RosterExchangeError) {
+    return res.status(error.statusCode).json({ error: error.message, ...(error.details || {}) });
+  }
+  console.error(`[${scope}]`, error);
+  return res.status(500).json({ error: 'Roster file operation failed' });
+}
+
+function safeFilePart(value) {
+  return String(value || 'roster').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'roster';
+}
+
+function sendDownload(res, buffer, fileName, contentType) {
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(buffer);
+}
 
 async function validateRoster(rosterId) {
   const roster = await prisma.transportRoster.findUnique({
@@ -99,6 +174,144 @@ async function validateRoster(rosterId) {
 
 router.use(requireAuth(['admin']));
 
+router.get('/import/template', async (req, res) => {
+  const format = String(req.query.format || 'xlsx').toLowerCase();
+  if (!['csv', 'xlsx'].includes(format)) {
+    return res.status(400).json({ error: 'format must be csv or xlsx' });
+  }
+  try {
+    if (format === 'csv') {
+      return sendDownload(res, buildTemplateCsv(), 'annual-roster-import-template.csv', 'text/csv; charset=utf-8');
+    }
+    const references = await loadRouteReferences(prisma);
+    const buffer = await buildTemplateXlsx(references);
+    return sendDownload(
+      res,
+      buffer,
+      'annual-roster-import-template.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+  } catch (error) {
+    console.error('[rosters/template]', error);
+    return res.status(500).json({ error: 'Roster template could not be generated' });
+  }
+});
+
+router.get('/:id/export', async (req, res) => {
+  const rosterId = Number(req.params.id);
+  const format = String(req.query.format || 'xlsx').toLowerCase();
+  if (!Number.isInteger(rosterId) || rosterId <= 0) return res.status(400).json({ error: 'Invalid roster ID' });
+  if (!['csv', 'xlsx'].includes(format)) return res.status(400).json({ error: 'format must be csv or xlsx' });
+  try {
+    const roster = await prisma.transportRoster.findUnique({ where: { id: rosterId } });
+    if (!roster) return res.status(404).json({ error: 'Roster not found' });
+    const passengers = await prisma.rosterPassenger.findMany({
+      where: { rosterId },
+      include: {
+        routeService: { select: { routeNo: true, name: true } },
+        boardingStop: { select: { name: true } },
+      },
+      orderBy: [{ routeService: { routeNo: 'asc' } }, { name: 'asc' }],
+    });
+    const fileBase = `transport-roster-${safeFilePart(roster.academicYear)}-v${roster.version}`;
+    const buffer = format === 'csv'
+      ? buildRosterExportCsv(passengers)
+      : await buildRosterExportXlsx(roster, passengers);
+    await writeAdminAudit(prisma, req, {
+      action: 'ROSTER_EXPORTED',
+      entityType: 'TransportRoster',
+      entityId: roster.id,
+      afterSummary: { format, passengerRows: passengers.length, academicYear: roster.academicYear, version: roster.version },
+    });
+    return sendDownload(
+      res,
+      buffer,
+      `${fileBase}.${format}`,
+      format === 'csv' ? 'text/csv; charset=utf-8' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+  } catch (error) {
+    console.error('[rosters/export]', error);
+    return res.status(500).json({ error: 'Roster export could not be generated' });
+  }
+});
+
+router.post('/:id/import/preview', rosterImportRateLimiter, receiveRosterFile, async (req, res) => {
+  const rosterId = Number(req.params.id);
+  if (!Number.isInteger(rosterId) || rosterId <= 0) return res.status(400).json({ error: 'Invalid roster ID' });
+  if (!req.file) return res.status(400).json({ error: 'Upload one file using the multipart field named file' });
+  try {
+    const preview = await previewRosterImport(prisma, rosterId, req.file.buffer, req.file.originalname);
+    const { normalizedRows: _internalRows, ...clientPreview } = preview;
+    return res.json(clientPreview);
+  } catch (error) {
+    return sendExchangeError(res, error, 'rosters/import-preview');
+  }
+});
+
+router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (req, res) => {
+  const rosterId = Number(req.params.id);
+  if (!Number.isInteger(rosterId) || rosterId <= 0) return res.status(400).json({ error: 'Invalid roster ID' });
+  if (!req.file) return res.status(400).json({ error: 'Upload one file using the multipart field named file' });
+
+  try {
+    const parsed = await parseRosterFile(req.file.buffer, req.file.originalname);
+    const imported = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "TransportRoster" WHERE "id" = ${rosterId} FOR UPDATE`;
+      const { roster, context } = await loadValidationContext(tx, rosterId);
+      const results = validateRosterRows(parsed.rows, context);
+      const summary = summarizeResults(results);
+      if (summary.invalidRows > 0) {
+        throw new RosterExchangeError('Import validation failed; no rows were added', 400, {
+          summary,
+          unknownHeaders: parsed.unknownHeaders,
+          rows: results.filter((row) => !row.valid || row.warnings.length).map((row) => ({
+            rowNumber: row.rowNumber,
+            valid: row.valid,
+            errors: row.errors,
+            warnings: row.warnings,
+          })),
+        });
+      }
+
+      const data = results.map((result) => {
+        const { routeNo: _routeNo, boardingStop: _boardingStop, ...passenger } = result.normalized;
+        return { rosterId, ...passenger };
+      });
+      for (let offset = 0; offset < data.length; offset += 500) {
+        await tx.rosterPassenger.createMany({ data: data.slice(offset, offset + 500) });
+      }
+      const existingRows = [...context.existingCountsByRoute.values()].reduce((total, count) => total + count, 0);
+      await writeAdminAudit(tx, req, {
+        action: 'ROSTER_FILE_IMPORTED',
+        entityType: 'TransportRoster',
+        entityId: roster.id,
+        beforeSummary: { passengerRows: existingRows },
+        afterSummary: {
+          passengerRows: existingRows + data.length,
+          importedRows: data.length,
+          format: parsed.format,
+        },
+      });
+      return {
+        roster: { id: roster.id, name: roster.name, academicYear: roster.academicYear, version: roster.version },
+        importedRows: data.length,
+        summary,
+        unknownHeaders: parsed.unknownHeaders,
+        warnings: results.filter((row) => row.warnings.length).map((row) => ({ rowNumber: row.rowNumber, warnings: row.warnings })),
+      };
+    }, { maxWait: 5_000, timeout: 30_000 });
+    return res.status(201).json(imported);
+  } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Roster identifiers changed during import; preview the file again' });
+    }
+    if (error.code === 'P2003') {
+      return res.status(409).json({ error: 'A referenced route or stop changed during import; preview the file again' });
+    }
+    return sendExchangeError(res, error, 'rosters/import');
+  }
+});
+
 router.get('/', async (_req, res) => {
   const rosters = await prisma.transportRoster.findMany({
     include: { _count: { select: { passengers: true, trips: true } } },
@@ -126,16 +339,28 @@ router.post('/', async (req, res) => {
           version: (latest?.version || 0) + 1,
         },
       });
+      let copiedPassengers = 0;
       if (input.copyFromRosterId) {
         const source = await tx.rosterPassenger.findMany({ where: { rosterId: input.copyFromRosterId } });
         if (!source.length) throw Object.assign(new Error('Source roster has no passengers'), { statusCode: 400 });
-        await tx.rosterPassenger.createMany({
+        const copied = await tx.rosterPassenger.createMany({
           data: source.map(({ id, rosterId, createdAt, updatedAt, ...passenger }) => ({
             ...passenger,
             rosterId: created.id,
           })),
         });
+        copiedPassengers = copied.count;
       }
+      await writeAdminAudit(tx, req, {
+        action: 'ROSTER_CREATED',
+        entityType: 'TransportRoster',
+        entityId: created.id,
+        afterSummary: {
+          ...rosterAuditSummary(created),
+          copiedFromRosterId: input.copyFromRosterId || null,
+          copiedPassengers,
+        },
+      });
       return created;
     });
     return res.status(201).json(roster);
@@ -177,12 +402,20 @@ router.post('/:id/passengers', async (req, res) => {
   if (!roster) return res.status(404).json({ error: 'Roster not found' });
   if (roster.status !== 'DRAFT') return res.status(409).json({ error: 'Only draft rosters can be edited' });
   try {
-    return res.status(201).json(
-      await prisma.rosterPassenger.create({
+    const passenger = await prisma.$transaction(async (tx) => {
+      const created = await tx.rosterPassenger.create({
         data: { rosterId, ...input },
         include: { routeService: true, boardingStop: true },
-      })
-    );
+      });
+      await writeAdminAudit(tx, req, {
+        action: 'ROSTER_PASSENGER_ADDED',
+        entityType: 'RosterPassenger',
+        entityId: created.id,
+        afterSummary: passengerAssignmentSummary(created),
+      });
+      return created;
+    });
+    return res.status(201).json(passenger);
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Bus-pass, roll, or faculty ID is duplicated in this roster' });
     if (error.code === 'P2003') return res.status(400).json({ error: 'Route or boarding stop does not exist' });
@@ -207,8 +440,17 @@ router.post('/:id/passengers/bulk', async (req, res) => {
   if (invalid.length) return res.status(400).json({ error: 'Bulk validation failed', invalid });
 
   try {
-    const result = await prisma.rosterPassenger.createMany({
-      data: parsed.map(({ result }) => ({ rosterId, ...result.data })),
+    const result = await prisma.$transaction(async (tx) => {
+      const created = await tx.rosterPassenger.createMany({
+        data: parsed.map(({ result: parsedResult }) => ({ rosterId, ...parsedResult.data })),
+      });
+      await writeAdminAudit(tx, req, {
+        action: 'ROSTER_PASSENGERS_BULK_ADDED',
+        entityType: 'TransportRoster',
+        entityId: rosterId,
+        afterSummary: { addedPassengers: created.count },
+      });
+      return created;
     });
     return res.status(201).json({ imported: result.count });
   } catch (error) {
@@ -227,11 +469,21 @@ router.put('/:id/passengers/:passengerId', async (req, res) => {
   if (roster.status !== 'DRAFT') return res.status(409).json({ error: 'Only draft rosters can be edited' });
   const existing = await prisma.rosterPassenger.findFirst({
     where: { id: Number(req.params.passengerId), rosterId },
-    select: { id: true },
   });
   if (!existing) return res.status(404).json({ error: 'Passenger not found in this roster' });
   try {
-    return res.json(await prisma.rosterPassenger.update({ where: { id: existing.id }, data: input }));
+const passenger = await prisma.$transaction(async (tx) => {
+      const updated = await tx.rosterPassenger.update({ where: { id: existing.id }, data: input });
+      await writeAdminAudit(tx, req, {
+        action: 'ROSTER_PASSENGER_UPDATED',
+        entityType: 'RosterPassenger',
+        entityId: existing.id,
+        beforeSummary: passengerAssignmentSummary(existing),
+        afterSummary: passengerAssignmentSummary(updated),
+      });
+      return updated;
+    });
+    return res.json(passenger);
   } catch (error) {
     if (error.code === 'P2002') return res.status(409).json({ error: 'Bus-pass, roll, or faculty ID is duplicated in this roster' });
     return res.status(500).json({ error: 'Internal server error' });
@@ -243,10 +495,18 @@ router.delete('/:id/passengers/:passengerId', async (req, res) => {
   const roster = await prisma.transportRoster.findUnique({ where: { id: rosterId } });
   if (!roster) return res.status(404).json({ error: 'Roster not found' });
   if (roster.status !== 'DRAFT') return res.status(409).json({ error: 'Only draft rosters can be edited' });
-  const result = await prisma.rosterPassenger.deleteMany({
-    where: { id: Number(req.params.passengerId), rosterId },
+  const passengerId = Number(req.params.passengerId);
+  const existing = await prisma.rosterPassenger.findFirst({ where: { id: passengerId, rosterId } });
+  if (!existing) return res.status(404).json({ error: 'Passenger not found in this roster' });
+  await prisma.$transaction(async (tx) => {
+    await tx.rosterPassenger.delete({ where: { id: passengerId } });
+    await writeAdminAudit(tx, req, {
+      action: 'ROSTER_PASSENGER_REMOVED',
+      entityType: 'RosterPassenger',
+      entityId: passengerId,
+      beforeSummary: passengerAssignmentSummary(existing),
+    });
   });
-  if (!result.count) return res.status(404).json({ error: 'Passenger not found in this roster' });
   return res.json({ deleted: true });
 });
 
@@ -264,11 +524,22 @@ router.post('/:id/publish', async (req, res) => {
   if (errors.length) return res.status(400).json({ error: 'Roster validation failed', errors, warnings });
 
   const published = await prisma.$transaction(async (tx) => {
-    await tx.transportRoster.updateMany({ where: { status: 'PUBLISHED' }, data: { status: 'ARCHIVED' } });
-    return tx.transportRoster.update({
+    const archived = await tx.transportRoster.updateMany({
+      where: { status: 'PUBLISHED' },
+      data: { status: 'ARCHIVED' },
+    });
+    const updated = await tx.transportRoster.update({
       where: { id },
       data: { status: 'PUBLISHED', publishedAt: new Date() },
     });
+    await writeAdminAudit(tx, req, {
+      action: 'ROSTER_PUBLISHED',
+      entityType: 'TransportRoster',
+      entityId: id,
+      beforeSummary: rosterAuditSummary(roster),
+      afterSummary: { ...rosterAuditSummary(updated), archivedRosters: archived.count },
+    });
+    return updated;
   });
   return res.json({ roster: published, warnings });
 });

@@ -1,6 +1,7 @@
 const express = require('express');
 const { idParam } = require('./schemas');
 const { requireAuth } = require('./middleware/auth');
+const { writeAdminAudit } = require('./lib/adminAudit');
 
 function parsePagination(query) {
   const page = Math.max(1, parseInt(query.page, 10) || 1);
@@ -37,6 +38,7 @@ function crudRouter(options) {
     include,
     idSchema = idParam,
     publicGet = false,
+    audit,
   } = options;
 
   if (!createSchema) throw new Error('crudRouter requires createSchema');
@@ -80,7 +82,18 @@ function crudRouter(options) {
     try {
       const data = validate(createSchema, req.body, res);
       if (data === null) return;
-      const item = await delegate.create({ data, select, include });
+      const item = audit
+        ? await audit.prisma.$transaction(async (tx) => {
+            const created = await tx[audit.delegateName].create({ data, select, include });
+            await writeAdminAudit(tx, req, {
+              action: audit.actions.create,
+              entityType: audit.entityType,
+              entityId: created.id,
+              afterSummary: audit.summarize(created),
+            });
+            return created;
+          })
+        : await delegate.create({ data, select, include });
       res.status(201).json(item);
     } catch (err) {
       handleUniqueError(err, res);
@@ -94,7 +107,20 @@ function crudRouter(options) {
       if (Number.isNaN(id)) return;
       const data = validate(updateSchema, req.body, res);
       if (data === null) return;
-      const item = await delegate.update({ where: { id }, data, select, include });
+      const item = audit
+        ? await audit.prisma.$transaction(async (tx) => {
+            const before = await tx[audit.delegateName].findUnique({ where: { id } });
+            const updated = await tx[audit.delegateName].update({ where: { id }, data, select, include });
+            await writeAdminAudit(tx, req, {
+              action: audit.actions.update,
+              entityType: audit.entityType,
+              entityId: id,
+              beforeSummary: before ? audit.summarize(before) : undefined,
+              afterSummary: audit.summarize(updated),
+            });
+            return updated;
+          })
+        : await delegate.update({ where: { id }, data, select, include });
       res.json(item);
     } catch (err) {
       if (err.code === 'P2025') return res.status(404).json({ error: 'Record not found' });
@@ -107,7 +133,20 @@ function crudRouter(options) {
     try {
       const { id } = validate(idSchema, req.params, res) ?? { id: NaN };
       if (Number.isNaN(id)) return;
-      await delegate.delete({ where: { id } });
+      if (audit) {
+        await audit.prisma.$transaction(async (tx) => {
+          const before = await tx[audit.delegateName].findUnique({ where: { id } });
+          await tx[audit.delegateName].delete({ where: { id } });
+          await writeAdminAudit(tx, req, {
+            action: audit.actions.delete,
+            entityType: audit.entityType,
+            entityId: id,
+            beforeSummary: before ? audit.summarize(before) : undefined,
+          });
+        });
+      } else {
+        await delegate.delete({ where: { id } });
+      }
       res.json({ deleted: true, id });
     } catch (err) {
       if (err.code === 'P2025') return res.status(404).json({ error: 'Record not found' });

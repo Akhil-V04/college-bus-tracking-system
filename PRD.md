@@ -1,8 +1,8 @@
 # College Bus Tracking System — Product Requirements Document
 
-**Status:** Planning baseline  
-**Version:** 1.0  
-**Last updated:** 24 August 2026  
+**Status:** Local release candidate; prototype deployment and field validation pending
+**Version:** 2.0
+**Last updated:** 25 August 2026
 **Location:** Aushapur, Hyderabad  
 **Initial scope:** 31 college bus routes/services
 
@@ -10,11 +10,36 @@
 
 The College Bus Tracking System is a live transport-information and late-arrival alert platform for the college's 31 bus routes. It has three applications sharing one backend:
 
-1. A Flutter passenger experience for students and faculty, with no passenger accounts or login.
-2. A Flutter driver experience with authenticated trip controls and GPS streaming.
+1. A React Native (Expo + TypeScript) passenger experience for students and faculty, with no passenger accounts or login.
+2. A React Native (Expo + TypeScript) driver experience with authenticated trip controls and GPS streaming.
 3. A React web admin panel for route, roster, driver, advisor, schedule, import, export, and alert administration.
 
 The system's central value is not only showing a moving bus. It predicts arrival times at remaining stops and the college. When a route is predicted to miss the college-arrival deadline, it identifies all students assigned to that route in the trip's academic-year roster, groups them by class, and alerts the appropriate class advisors. The advisor decides who is actually absent; the transport system does not track daily boarding attendance.
+
+### 1.1 Current implementation status
+
+The repository is a **local release candidate**. Approximately **87% of the real production MVP** is complete. All work that can be truthfully completed with local code, generated fixtures, and the development PostgreSQL instance is implemented. The remaining approximately 13% requires college-owned data and approval, internet hosting/secrets, real SMTP, target-browser visual approval, Android devices, real roads, and a supervised pilot.
+
+Implemented and locally verified:
+
+- PostgreSQL 18 with Prisma, five versioned migrations, and 16 application tables.
+- Node.js/Express `/api/v1`, Socket.IO live updates, database readiness, monitoring summary, retention controls, shared PostgreSQL rate limits, and explicit trusted-proxy policy.
+- React administrator application covering routes, capacities, stops, schedules, annual rosters, imports/exports, drivers, advisors, alerts, delivery recovery, operations, audit history, and revocable sessions.
+- React Native/Expo passenger and driver applications with no-login route access, Track Bus, stop timeline, assigned-passenger badges, explicit ETA states, driver trip recovery, native background location, and a bounded 200-sample offline GPS queue.
+- HttpOnly/SameSite administrator cookies, CSRF protection, strict CORS, privacy-safe logs, server-side session revocation, role authorization, API privacy verification, and route/socket isolation.
+- Durable late-alert evidence and PostgreSQL notification outbox with locking, idempotency, retries, stale-lock recovery, and administrator-visible failures.
+- 59 backend tests plus real-PostgreSQL privacy, socket-isolation, migration, backup/restore, load, authentication, API, and recovery verification; React production build and Expo TypeScript/configuration/web export also pass.
+
+Not yet claimed complete:
+
+- real college routes/passengers/drivers/advisors and their approval;
+- Vercel/frontend plus long-running backend/PostgreSQL prototype deployment;
+- real email-provider delivery;
+- Android screen-lock, battery-vendor, poor-network, and queue-recovery testing;
+- real-road ETA/off-route/stop-distance calibration;
+- target-browser responsive/accessibility/visual sign-off; and
+- supervised route pilot and phased college rollout.
+
 
 ## 2. Locked product decisions
 
@@ -47,7 +72,7 @@ These decisions supersede older project documents and implementation prompts:
 - Select one route number and view its current details without an account.
 - See the route, ordered stops, scheduled arrival time at each stop, driver name, capacity, and assigned-passenger count.
 - Open a passenger-list view grouped by boarding stop.
-- See passenger names and student/faculty badges; student roll numbers and faculty IDs follow the configured privacy policy.
+- See passenger names and Student/Faculty badges. Roll numbers, faculty IDs, bus-pass IDs, and phone numbers remain administrator-only and are never returned by public APIs.
 - Track the active bus on a live map.
 - Select a stop and receive a useful, honest arrival estimate or a clear non-ETA state.
 - See when live data was last updated.
@@ -105,9 +130,9 @@ Authenticated with an admin-issued driver code and password. Can view only their
 
 ### 5.3 Passenger
 
-Unauthenticated student or faculty user. Can select a route and see the approved passenger-facing route, roster, tracking, timeline, and ETA data. Cannot see any phone numbers or admin-only fields.
+Unauthenticated student or faculty user. Can select a route and see the approved passenger-facing route, assigned names with Student/Faculty badges, tracking, timeline, and ETA data. Cannot see phone numbers, roll numbers, faculty IDs, bus-pass IDs, notification recipients, audit data, or administrator-only fields.
 
-Because an entirely open API could allow roster scraping, the implementation should support a lightweight no-account access control such as a route access code or valid bus-pass lookup. This is not a passenger account and requires no password lifecycle. If the college intentionally chooses fully open route selection, the privacy impact must be accepted and roll/faculty identifiers may need masking.
+The implemented prototype uses fully open no-login route selection with sanitized responses. Before college rollout, the college must explicitly accept the passenger-name visibility policy or request a lightweight route access code. Such a code would restrict casual scraping without creating passenger accounts or password lifecycle.
 
 ### 5.4 Class advisor
 
@@ -210,7 +235,7 @@ Not an application account in the MVP. An advisor is a notification-contact reco
 - CSV is a flattened roster with actual columns.
 - Excel may contain separate `All Passengers`, `Route Summary`, `Students`, `Faculty`, and `Stops and Timings` sheets.
 - The standard roster export does not contain phone numbers.
-- A separate explicitly private contact export may be available only to admins.
+- No phone/contact export is part of the current standard workflow; any future contact export must be separately authorized, audited, and administrator-only.
 
 Recommended flattened columns:
 
@@ -295,17 +320,23 @@ Every ETA response contains one of:
 - `POSSIBLY_SKIPPED`
 - `OFF_ROUTE`
 - `NO_LIVE_DATA`
+- `GPS_UNRELIABLE`
+- `STALE_LOCATION`
+- `NOT_MOVING`
+- `ROUTE_COMPLETED`
 - `TRIP_ENDED`
+- `NO_SCHEDULE`
+- `INVALID_STOP`
 - `UNKNOWN`
 
 State priority prevents contradictory messages:
 
-1. Trip ended.
-2. Selected stop passed.
-3. Bus at selected stop.
-4. Location stale or off route.
+1. Trip ended or route completed.
+2. Bus currently at the selected stop.
+3. Selected stop passed or possibly skipped.
+4. GPS missing, unreliable, stale, stationary, or off route.
 5. Upcoming live ETA.
-6. Scheduled-time fallback.
+6. Published scheduled-time fallback, clearly labelled as non-live.
 
 ### 8.4 Passed-stop behavior
 
@@ -487,11 +518,30 @@ Names are conceptual and may use Prisma naming conventions.
 - safe before/after summary
 - timestamp
 
+### 10.15 `AdminSession`
+
+- opaque UUID session ID
+- administrator identifier
+- expiry timestamp
+- optional revocation timestamp and bounded reason
+- creation timestamp
+
+The signed administrator JWT is transported in an HttpOnly, SameSite cookie in the browser; the database stores no bearer token, password, browser fingerprint, or IP address.
+
+### 10.16 `RateLimitBucket`
+
+- SHA-256-hashed limiter/client key; no raw IP or identifier
+- hit count
+- reset timestamp
+- update timestamp
+
+The table shares failed-login and roster-import counters across backend instances. Expired buckets are eligible for scheduled retention cleanup.
+
 ## 11. API and real-time boundaries
 
 ### 11.1 Admin APIs
 
-Authenticated admin-only CRUD and workflows for routes, stops, schedules, capacity, drivers, advisors, rosters, roster entries, imports, exports, publication, alert review, and audit history.
+Authenticated admin-only CRUD and workflows for routes, stops, schedules, capacity, drivers, advisors, rosters, roster entries, imports, exports, publication, alert/delivery review and retry, operational health, audit history, and administrator-session review/revocation. Browser authentication uses an HttpOnly/SameSite cookie; cookie-authenticated mutations also require the CSRF-protection header.
 
 ### 11.2 Driver APIs
 
@@ -511,7 +561,7 @@ Return sanitized DTOs only:
 - Active trip and sanitized latest location.
 - ETA for a selected stop.
 
-No passenger API returns phone numbers, password/auth fields, internal audit data, notification recipients, or private admin fields.
+No passenger API returns phone numbers, roll numbers, faculty IDs, bus-pass IDs, password/auth fields, internal audit data, notification recipients, or private admin fields.
 
 ### 11.4 Socket.io events
 
@@ -531,7 +581,16 @@ Server to clients:
 - `trip:recovered`
 - `trip:ended`
 
-Every event is scoped to a trip room. Driver events require JWT authentication and ownership authorization.
+Every event is scoped to a trip/route room. Driver events require JWT authentication, active driver session version, running-trip ownership, payload validation, replay protection, and burst limiting.
+
+### 11.5 Versioning and health
+
+- Stable HTTP base: `/api/v1`.
+- Unversioned aliases remain temporarily for compatibility.
+- Responses include `X-API-Version: 1` and a correlation/request ID.
+- `/health` checks process liveness.
+- `/health/ready` verifies PostgreSQL connectivity.
+- `/api/v1/operations/summary` is administrator-only and exposes privacy-safe running/stale trip, alert, notification, and session counts.
 
 ## 12. Privacy and security requirements
 
@@ -704,13 +763,15 @@ The following scenarios are mandatory design and acceptance-test inputs.
 - Running trips and GPS health
 - Delayed routes and notification status
 - Audit log
+- Operations centre for running/stale trips, active alerts, pending/failed notifications, and active sessions
+- Administrator-session list with individual and revoke-all controls
 
 ## 15. Passenger screens
 
 - Route selection
 - Route details summary
 - Passenger list grouped by stop
-- Live tracking map
+- Track Bus button and live tracking map
 - Stop timeline
 - Stop-selection ETA sheet/page
 - Offline/stale/error states
@@ -723,8 +784,10 @@ Passenger route details show driver name but no driver phone number.
 - Assigned-route summary
 - Permission/readiness check
 - Start trip
-- Running-trip GPS/connection status
-- End trip confirmation
+- Running-trip GPS/connection/queue status
+- Foreground/background permission explanation and persistent Android tracking notification
+- Bounded offline queue status, ordered retry, and dropped-sample warning
+- End trip confirmation that flushes/stops tracking
 - Resume interrupted trip
 
 No scanner, QR, passenger phone, or attendance UI is included.
@@ -739,81 +802,162 @@ No scanner, QR, passenger phone, or attendance UI is included.
 - Accessibility: readable contrast, scalable text, and timeline usable without a map.
 - Observability: health checks, structured logs, stale-trip monitoring, and notification status.
 - Data protection: least-privilege responses, secure secrets, backups, and auditability.
+- Production browser authentication: HttpOnly/Secure/SameSite cookie, CSRF-protection header, restricted CORS, and immediate database-session revocation.
+- Multi-instance controls: PostgreSQL-shared rate limits and an exact reviewed reverse-proxy hop count.
+- Retention defaults delete only expired rate-limit buckets and old inactive administrator sessions; roster, trip, alert, GPS, and audit retention requires college policy approval.
 
-## 18. Revised build phases
+## 18. Revised build phases and current status
+
+Delivery-order update — 25 August 2026: backend workflows and `/api/v1` contracts are stable, and the React administrator plus React Native passenger/driver applications implement the required workflows. Future visual changes may alter presentation only; they may not change locked privacy, roster-publication, attendance, or ETA behavior.
 
 ### Phase 0 — Requirements, repository, and privacy baseline
 
-- Adopt this PRD as the source of truth.
-- Reconcile or replace older planning documents.
-- Choose MySQL or PostgreSQL and document the decision.
-- Initialize Git and commit the current prototype as a baseline.
-- Decide the no-account passenger roster-access policy.
+**Status: complete.**
 
-### Phase 1 — Schema redesign and migrations
+- This PRD is the product source of truth.
+- No-account passengers, unified Student/Faculty rosters, phone/identifier privacy, no QR attendance, and no registration-plate field are locked.
+- PostgreSQL, React Native/Expo, React web, Express, Socket.IO, and the API/database trust boundary are selected.
 
-- Implement route-service, versioned schedule, roster, unified roster passenger, trip snapshot, stop-event, notification outbox, and audit models.
-- Remove registration/plate number, passenger login fields, boarding records, QR occupancy, and passenger `active` concepts.
-- Create migrations and seed/import fixtures.
+### Phase 1 — PostgreSQL schema, migration, and local foundation
 
-### Phase 2 — Backend admin and annual-roster workflows
+**Status: complete.**
 
-- Secure admin and driver authentication.
-- Implement route/stop/schedule/driver/advisor CRUD.
-- Implement roster draft, copy, edit, import, validate, compare, publish, archive, rollback-as-draft, and export.
-- Add field-level privacy DTOs and audit logs.
+- Five versioned PostgreSQL migrations reproduce 16 application tables.
+- Development seed, private administrator credentials, health/readiness, clean-schema migration, restricted-role inspection, and backup/restore verification pass.
+- Flutter, MySQL schema, QR/boarding, registration-plate, separate-student, and passenger-`active` concepts are absent from active code.
 
-### Phase 3 — Admin panel
+### Phase 2 — Initial client/API integration
 
-- Build admin-only navigation and all management screens.
-- Add roster import preview, downloadable errors, capacity checks, publish confirmation, archive/export, advisor coverage, and health dashboards.
+**Status: complete and superseded by Phase 7.**
 
-### Phase 4 — Secure driver tracking
+- React admin and React Native clients were used to verify real PostgreSQL-backed APIs before final workflow completion.
+- Backend business/privacy rules remain authoritative; clients do not connect directly to PostgreSQL.
 
-- Driver-only mobile login and assignment.
-- Permission/readiness flow.
-- One-running-trip enforcement.
-- Authenticated GPS socket, foreground service, reconnection, stale status, resume, and ownership checks.
+### Phase 3 — Annual-roster exchange and administration
 
-### Phase 5 — Passenger experience
+**Status: complete.**
 
-- No-account route selection/access.
-- Sanitized route details, capacity/assigned count, passenger roster, map, timeline, trip status, and offline handling.
+- Downloadable CSV/XLSX templates, complete sanitized exports, non-writing preview, row-level validation, formula protection, duplicate/capacity/route/stop/advisor checks, and atomic draft-only import are implemented.
+- Draft, copy, edit, validate, publish, archive, and replace-current-year workflows are implemented.
+- Sensitive administrator mutations and exports/imports are privacy-safely audited.
 
-### Phase 6 — Smart ETA and route progress
+### Phase 4 — Trip, GPS, route-progress, and ETA hardening
 
-- Validated rolling-speed model, route progress, stop states, passed/skipped handling, confidence ranges, stale/off-route behavior, stop events, and ETA UI.
+**Status: code and local integration complete; field calibration remains in Phase 8.**
 
-### Phase 7 — Automatic late alerts
+- Assigned-driver, one-running-trip, concurrent start/end, reconnect, GPS replay/quarantine, monotonic progress, stale/no-data/off-route/not-moving, reached/skipped, passed, route-completed, and trip-ended behavior are implemented.
+- Driver background tracking and the bounded 200-sample offline queue are implemented and TypeScript/native configuration is verified.
+- Real Android vendor/battery/network testing and road-distance/ETA calibration remain external.
 
-- Throttled automatic evaluation, deadline/service calendar, confident triggering, student grouping, advisor matching, outbox delivery/retry, recovery, and dashboard.
+### Phase 5 — Automatic late alerts and notification reliability
 
-### Phase 8 — Security, performance, and failure-mode testing
+**Status: code and simulated-provider integration complete; real SMTP pilot remains in Phase 8.**
 
-- Implement the acceptance cases in Section 13.
-- Add unit, API integration, socket, import, concurrency, Flutter widget/state, and browser end-to-end tests.
-- Test backups and migrations.
+- Confident late observations trigger immutable assigned-student/advisor snapshots without attendance inference.
+- Hash-chain evidence, one-active-alert protection, durable PostgreSQL outbox, multi-worker locking, idempotency, bounded retries, stale-lock recovery, failed-delivery visibility, and audited retries are implemented.
+- Provider mode remains disabled or simulated until private SMTP credentials and sender approval exist.
 
-### Phase 9 — Data collection, deployment, and pilot
+### Phase 6 — Security, performance, contracts, and recovery
 
-- Import all 31 routes, schedules, passengers, and advisors.
-- Verify coordinates and timings.
-- Deploy HTTPS/WSS services.
-- Pilot one route on real phones and roads, expand to several, then all 31.
-- Collect ETA accuracy metrics before considering historical/ML enhancement.
+**Status: local release gate complete.**
+
+- Helmet, strict CORS, metadata-only logs, correlation IDs, role/privacy boundaries, GPS/login/import throttling, PostgreSQL-shared rate limits, exact proxy-hop policy, revocable database sessions, HttpOnly admin cookies, and CSRF protection are implemented.
+- `/api/v1`, readiness, operations summary, retention dry run, deployment guidance, CI, Docker/Nginx staging files, and dependency policy are documented.
+- 59 backend tests and the privacy, socket-isolation, authentication, API, clean migration, backup/restore, 10,000-row roster, and five-worker/500-notification checks pass.
+
+### Phase 7 — Required frontend workflows
+
+**Status: implementation/build complete; target-browser and real-device visual/accessibility sign-off remains.**
+
+- Administrator dashboard and route, stop, schedule, roster/import/export, driver, advisor, late-alert/delivery, operations, audit, and session workflows are implemented and production-build successfully.
+- Passenger no-login route selection, route details, Track Bus, stop timeline, scheduled boarding time, assigned names with Student/Faculty badges, and complete ETA feedback are implemented.
+- Driver login, assignment, start/resume/end, foreground fallback, background tracking, persistent notification, connection health, and bounded queue visibility are implemented.
+- Automated rendered-browser acceptance could not be completed locally because the desktop browser harness failed; manual target-browser sign-off remains required.
+
+### Phase 8 — Prototype deployment, real data, field testing, and pilot
+
+**Status: pending external data, accounts, credentials, devices, roads, and college approval.**
+
+- Prepare approved synthetic demo data first; do not upload real personal data to public prototype infrastructure without permission.
+- Deploy admin/passenger web frontends to Vercel and the long-running Express/Socket.IO/worker backend plus PostgreSQL to suitable persistent hosting; configure same-origin admin API proxying, HTTPS/WSS, secrets, backups, and monitoring.
+- Begin with simulated notification delivery; configure a real SMTP sender only through private environment variables.
+- Install an Expo development APK and test foreground/background permission, screen lock, vendor battery behavior, network loss/recovery, queue bounds, pause/end/logout, and route isolation on real Android devices.
+- Record predicted ETA ranges and actual stop arrivals over multiple runs, then calibrate stop-reached, stale, off-route, speed, and confidence thresholds.
+- Complete a supervised one-route pilot, expand to several routes, then consider fleet rollout. Collect historical travel data before any ML/AI ETA claim.
 
 ## 19. Definition of done
 
-The MVP is complete only when:
+### 19.1 Local release-candidate acceptance — satisfied
 
-- A full academic-year roster can be drafted, imported, validated, exported, published, archived, and restored as a new draft.
-- Passenger views switch atomically to the newly published roster.
-- No passenger or driver API leaks phone numbers.
-- A driver can securely start, stream, resume, and end only their assigned route's trip.
-- Two simultaneous routes do not exchange live events.
-- Passenger map and timeline correctly show live, stale, ended, and offline states.
-- ETA returns correct stateful behavior for upcoming, at-stop, passed, skipped, stale, off-route, and ended cases.
-- A predicted-late trip automatically produces the correct student groups and advisor notifications without duplicate spam.
-- Failed deliveries and missing advisors are visible to admins.
-- Imports, migrations, backups, security controls, and the failure cases in Section 13 have automated or documented test evidence.
-- At least one real-route pilot succeeds with the driver's screen locked and variable network conditions.
+- Full academic-year roster draft/import/preview/validate/export/publish/archive behavior is implemented.
+- Passenger views switch to the newly published roster and sanitized APIs do not leak private identifiers or phone numbers.
+- Drivers can start, stream, resume, and end only their assigned trip; two routes do not exchange live events.
+- ETA returns explicit upcoming, at-stop, passed, skipped, stale, off-route, not-moving, route-completed, and ended states without negative values.
+- Late trips produce assigned-student/advisor evidence and recoverable notification rows without attendance claims or ordinary duplicate processing.
+- Imports, migrations, backup/restore, security controls, load limits, session revocation, API privacy, and failure modes have automated/documented local evidence.
+- Admin production build and Expo TypeScript/configuration/web export pass.
+
+### 19.2 Production/pilot acceptance — pending
+
+The real production MVP is not complete until:
+
+- college transport staff approve real routes, coordinates, capacities, timings, drivers, advisors, and annual passengers;
+- HTTPS/WSS hosting, managed secrets, restricted runtime database identity, monitoring, backups, and restore ownership are operational;
+- real SMTP delivery and failure recovery are tested with authorized recipients;
+- target browsers pass responsive, keyboard, contrast, loading/error/offline, and privacy review;
+- at least one real Android device succeeds with screen lock and variable network conditions;
+- real-road ETA ranges and reached/skipped/off-route thresholds are calibrated; and
+- at least one supervised route pilot succeeds without private-data leakage, false attendance claims, cross-route updates, or unrecoverable delivery failures.
+
+## 20. Prototype deployment plan
+
+The intended faculty-demonstration topology is:
+
+```text
+React admin on Vercel --------┐
+                              ├── HTTPS API proxy ──> persistent Express/Socket.IO backend
+Expo passenger web on Vercel ─┘                              │
+React Native Android app ───────── direct HTTPS/WSS ─────────┤
+                                                             └── PostgreSQL
+```
+
+- Vercel is appropriate for the web frontends and provides automatic HTTPS for its deployment domains.
+- The current backend should run on a service designed for a persistent Node/Express process, WebSockets, and the notification worker; Render is the planned prototype option, not a completed deployment.
+- The administrator frontend should use a same-origin `/api/v1` proxy so its strict HttpOnly/SameSite cookie remains secure.
+- The passenger/mobile clients may connect directly to the public HTTPS backend because they do not use administrator cookies.
+- Use synthetic demo data: two routes, four-to-six stops per route, fake drivers/advisors, and 10–20 mixed Student/Faculty passengers.
+- Start with `NOTIFICATION_PROVIDER=console` and clearly label delivery as simulated. Real SMTP is optional for the faculty demo.
+- The prototype must label ETA as an experimental estimated range rather than a guaranteed arrival time.
+
+## 21. Abstract-preparation summary
+
+This section gives a teammate the facts needed to write an academic abstract without reading implementation logs.
+
+### Problem
+
+College passengers depend on fixed bus schedules even when traffic, delays, route deviation, weak GPS, or network loss changes actual arrival time. Class advisors also need timely information about students assigned to a late bus, but a transport system must not falsely claim boarding attendance.
+
+### Proposed solution
+
+A role-aware college bus tracking platform combines a no-login passenger experience, authenticated driver GPS application, administrator operations portal, PostgreSQL data model, live Socket.IO updates, explainable stop-level ETA ranges, annual Student/Faculty roster management, and automatic late-route advisor notifications based on assigned students rather than QR scans or attendance.
+
+### Methodology and architecture
+
+- React Native/Expo for passenger and driver experiences.
+- React/Vite for transport administration.
+- Node.js/Express, Socket.IO, Zod, JWT/cookies, and background workers for API/realtime/business logic.
+- PostgreSQL with Prisma migrations for versioned schedules, annual rosters, trips, GPS, alerts, outbox, sessions, audit, and rate limits.
+- Conservative geospatial progress and rolling-speed ETA with explicit uncertainty and failure states; historical/ML enhancement is postponed until real travel data exists.
+- Privacy-by-design boundaries: no passenger accounts, no QR attendance, no public phone/roll/faculty/bus-pass identifiers, administrator-only contacts, auditable sensitive changes, and revocable authentication.
+
+### Main contribution
+
+The project treats reliability and honesty as core features: a passed stop never produces negative ETA; stale/off-route/unreliable GPS is shown explicitly; offline driver samples are bounded and replayed with device timestamps; late alerts use assigned rosters without inferring presence; and administrator roster replacement is previewed, validated, atomic, versioned, exportable, and recoverable.
+
+### Current result
+
+The local release candidate implements the required backend and client workflows and passes the verification summarized in Section 1.1. Approximately 87% of the production MVP is complete. Prototype deployment, real college data approval, real email, Android/road calibration, browser sign-off, and a supervised pilot remain future validation work rather than claimed results.
+
+### Suggested keywords
+
+College bus tracking, React Native, PostgreSQL, Socket.IO, GPS, estimated time of arrival, transport management, annual passenger roster, late-bus alert, privacy, offline queue, real-time system.

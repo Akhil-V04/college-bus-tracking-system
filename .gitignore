@@ -16,24 +16,23 @@ out/
 backend/prisma/*.db
 backend/prisma/*.db-journal
 
-# Flutter
-mobile-app/.dart_tool/
-mobile-app/.flutter-plugins
-mobile-app/.flutter-plugins-dependencies
-mobile-app/.packages
-mobile-app/build/
-mobile-app/android/.gradle/
-mobile-app/android/local.properties
-mobile-app/ios/Pods/
-mobile-app/ios/.symlinks/
-mobile-app/android/app/debug/
-mobile-app/android/app/profile/
-mobile-app/android/app/release/
-mobile-app/Flutter/ephemeral/
+# React Native / Expo
+mobile-app/.expo/
+mobile-app/web-build/
+mobile-app/.metro-health-check*
+mobile-app/android/
+mobile-app/ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
 
 # Logs
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # OS / editor
 .DS_Store

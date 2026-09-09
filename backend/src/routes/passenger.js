@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../lib/prisma');
 const { estimateArrival } = require('../lib/eta');
+const { locationFreshness } = require('../lib/liveTracking');
 
 const router = express.Router();
 
@@ -85,11 +86,24 @@ router.get('/routes/:routeNo', async (req, res) => {
     const assignedPassengerCount = roster
       ? await prisma.rosterPassenger.count({ where: { rosterId: roster.id, routeServiceId: route.id } })
       : 0;
-    const activeTrip = await prisma.trip.findFirst({
+    const runningTrip = await prisma.trip.findFirst({
       where: { routeServiceId: route.id, status: 'RUNNING' },
       orderBy: { startTime: 'desc' },
       select: { id: true, startTime: true, currentStopIndex: true },
     });
+    let activeTrip = null;
+    if (runningTrip) {
+      const latestLocation = await prisma.liveLocation.findFirst({
+        where: { tripId: runningTrip.id, acceptedForEta: true },
+        orderBy: { receivedAt: 'desc' },
+        select: { receivedAt: true },
+      });
+      activeTrip = {
+        ...runningTrip,
+        trackingState: locationFreshness(latestLocation?.receivedAt),
+        lastLocationAt: latestLocation?.receivedAt || null,
+      };
+    }
     return res.json({
       ...route,
       schedule: route.schedules[0] || null,
@@ -157,7 +171,12 @@ router.get('/routes/:routeNo/roster', async (req, res) => {
 });
 
 router.get('/trips/:tripId/eta/:stopId', async (req, res) => {
-  const result = await estimateArrival(Number(req.params.tripId), Number(req.params.stopId));
+  const tripId = Number(req.params.tripId);
+  const stopId = Number(req.params.stopId);
+  if (!Number.isInteger(tripId) || tripId <= 0 || !Number.isInteger(stopId) || stopId <= 0) {
+    return res.status(400).json({ error: 'Invalid trip or stop ID' });
+  }
+  const result = await estimateArrival(tripId, stopId);
   if (!result) return res.status(404).json({ error: 'Trip not found' });
   if (result.status === 'INVALID_STOP') return res.status(400).json(result);
   return res.json(result);

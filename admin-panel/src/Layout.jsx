@@ -1,68 +1,63 @@
+import { useState } from 'react';
 import { NavLink, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './auth';
 
-const NAV = [
-  { to: '/routes', label: 'Routes' },
-  { to: '/stops', label: 'Stops' },
-  { to: '/buses', label: 'Buses' },
-  { to: '/drivers', label: 'Drivers' },
-  { to: '/students', label: 'Students' },
-  { to: '/class-advisors', label: 'Class Advisors' },
+const navigation = [
+  { to: '/', label: 'Overview', icon: '⌂', end: true },
+  { to: '/routes', label: 'Routes & capacity', icon: '↝' },
+  { to: '/schedules', label: 'Schedules', icon: '◷' },
+  { to: '/rosters', label: 'Annual rosters', icon: '▤' },
+  { to: '/drivers', label: 'Drivers', icon: '◉' },
+  { to: '/class-advisors', label: 'Class advisors', icon: '◎' },
+  { to: '/late-alerts', label: 'Late alerts', icon: '!' },
+  { to: '/operations', label: 'Operations', icon: '⌁' },
+  { to: '/audit-log', label: 'Audit history', icon: '✓' },
+  { to: '/sessions', label: 'Sessions', icon: '◌' },
 ];
 
 export default function Layout() {
-  const { isLoggedIn, role, logout } = useAuth();
+  const { checking, isLoggedIn, user, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  if (!isLoggedIn) {
-    return <Navigate to="/login" replace />;
-  }
+  if (checking) return <div className="app-loading"><div className="spinner" /><p>Checking administrator session…</p></div>;
+  if (!isLoggedIn) return <Navigate to="/login" replace />;
 
   return (
-    <div className="flex min-h-screen bg-slate-100">
-      <aside className="flex w-56 flex-col bg-slate-800 text-slate-100">
-        <div className="border-b border-slate-700 px-4 py-4 text-sm font-semibold">
-          Bus Tracking Admin
+    <div className="app-shell">
+      <aside className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
+        <div className="sidebar-brand">
+          <div className="brand-mark brand-mark-small">CB</div>
+          <div><strong>Bus Control</strong><span>Transport office</span></div>
         </div>
-        <nav className="flex-1 space-y-1 p-3">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `block rounded px-3 py-2 text-sm ${
-                  isActive ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-700/60'
-                }`
-              }
-            >
-              {item.label}
+        <nav className="sidebar-nav" aria-label="Admin navigation">
+          {navigation.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setMenuOpen(false)}
+              className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}>
+              <span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}
             </NavLink>
           ))}
-          {role === 'admin' && (
-            <NavLink
-              to="/delayed-buses"
-              className={({ isActive }) =>
-                `block rounded px-3 py-2 text-sm ${
-                  isActive ? 'bg-slate-700 text-white' : 'text-slate-300 hover:bg-slate-700/60'
-                }`
-              }
-            >
-              Delayed Buses Today
-            </NavLink>
-          )}
         </nav>
-        <div className="border-t border-slate-700 p-3">
-          <button
-            onClick={logout}
-            className="w-full rounded bg-slate-700 py-2 text-sm hover:bg-slate-600"
-          >
-            Log out
-          </button>
+        <div className="sidebar-footer">
+          <span className="admin-label">Signed in as</span>
+          <strong>{user?.id || 'Administrator'}</strong>
+          <button type="button" className="button button-ghost button-wide" onClick={logout}>Sign out</button>
         </div>
       </aside>
 
-      <main className="flex-1 p-6">
-        <Outlet />
-      </main>
+      {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} aria-label="Close menu" />}
+
+      <div className="content-shell">
+        <header className="topbar">
+          <button type="button" className="menu-button" onClick={() => setMenuOpen((open) => !open)}
+            aria-label="Open navigation">☰</button>
+          <div>
+            <p className="topbar-title">College transport administration</p>
+            <p className="topbar-date">{new Intl.DateTimeFormat('en-IN', { dateStyle: 'full' }).format(new Date())}</p>
+          </div>
+          <span className="system-pill"><i /> System online</span>
+        </header>
+        <main className="page-content"><Outlet /></main>
+      </div>
     </div>
   );
 }

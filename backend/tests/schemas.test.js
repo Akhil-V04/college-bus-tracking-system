@@ -73,4 +73,18 @@ test('GPS payload rejects impossible latitude and accepts device timestamp', () 
     locationPayloadSchema.safeParse({ tripId: 1, latitude: 170, longitude: 78.5 }).success,
     false
   );
+  assert.equal(
+    locationPayloadSchema.safeParse({
+      tripId: 1,
+      latitude: 17.4,
+      longitude: 78.5,
+      accuracyMeters: 12.5,
+      deviceSpeedKmh: 35,
+    }).success,
+    true
+  );
+  assert.equal(
+    locationPayloadSchema.safeParse({ tripId: 1, latitude: 17.4, longitude: 78.5, accuracyMeters: -1 }).success,
+    false
+  );
 });

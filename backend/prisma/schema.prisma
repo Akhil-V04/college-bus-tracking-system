@@ -10,7 +10,7 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -66,8 +66,8 @@ model RouteService {
   areaCovered String   @db.Text
   capacity    Int
   driverId    Int?     @unique
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
 
   driver           Driver?           @relation(fields: [driverId], references: [id], onDelete: SetNull)
   schedules        ScheduleVersion[]
@@ -82,8 +82,8 @@ model Stop {
   name      String
   latitude  Float
   longitude Float
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   scheduleStops    ScheduleStop[]
   rosterPassengers RosterPassenger[]
@@ -98,10 +98,10 @@ model ScheduleVersion {
   direction      String         @default("MORNING")
   status         ScheduleStatus @default(DRAFT)
   version        Int            @default(1)
-  effectiveFrom  DateTime?
-  publishedAt    DateTime?
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  effectiveFrom  DateTime?      @db.Timestamptz(3)
+  publishedAt    DateTime?      @db.Timestamptz(3)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
 
   routeService RouteService   @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
   stops        ScheduleStop[]
@@ -117,8 +117,8 @@ model ScheduleStop {
   stopId            Int
   sequenceOrder     Int
   scheduledTime     String
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
 
   scheduleVersion ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Cascade)
   stop            Stop            @relation(fields: [stopId], references: [id], onDelete: Restrict)
@@ -137,11 +137,31 @@ model Driver {
   licenseNo      String
   passwordHash   String
   sessionVersion Int      @default(1)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
 
   assignedRoute RouteService?
   trips         Trip[]
+}
+
+model AdminSession {
+  id              String    @id @default(uuid()) @db.Uuid
+  adminIdentifier String
+  expiresAt       DateTime  @db.Timestamptz(3)
+  revokedAt       DateTime? @db.Timestamptz(3)
+  revokeReason    String?
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([adminIdentifier, revokedAt, expiresAt])
+}
+
+model RateLimitBucket {
+  key       String   @id
+  hits      Int
+  resetAt   DateTime @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([resetAt])
 }
 
 model TransportRoster {
@@ -150,9 +170,9 @@ model TransportRoster {
   academicYear String
   status       RosterStatus @default(DRAFT)
   version      Int          @default(1)
-  publishedAt  DateTime?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  publishedAt  DateTime?    @db.Timestamptz(3)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
 
   passengers RosterPassenger[]
   trips      Trip[]
@@ -174,8 +194,8 @@ model RosterPassenger {
   department     String?
   year           Int?
   section        String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(3)
 
   roster       TransportRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
   routeService RouteService    @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
@@ -198,8 +218,8 @@ model ClassAdvisor {
   department String
   year       Int
   section    String
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
 
   @@unique([department, year, section])
 }
@@ -210,13 +230,13 @@ model Trip {
   driverId          Int
   rosterId          Int
   scheduleVersionId Int
-  date              DateTime
-  startTime         DateTime?
-  endTime           DateTime?
+  date              DateTime   @db.Timestamptz(3)
+  startTime         DateTime?  @db.Timestamptz(3)
+  endTime           DateTime?  @db.Timestamptz(3)
   status            TripStatus @default(SCHEDULED)
   currentStopIndex  Int        @default(0)
-  createdAt         DateTime   @default(now())
-  updatedAt         DateTime   @updatedAt
+  createdAt         DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime   @updatedAt @db.Timestamptz(3)
 
   routeService    RouteService    @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
   driver          Driver          @relation(fields: [driverId], references: [id], onDelete: Restrict)
@@ -236,8 +256,10 @@ model LiveLocation {
   tripId          Int
   latitude        Float
   longitude       Float
-  deviceTimestamp DateTime?
-  receivedAt      DateTime  @default(now())
+  deviceTimestamp DateTime? @db.Timestamptz(3)
+  accuracyMeters  Float?
+  deviceSpeedKmh  Float?
+  receivedAt      DateTime  @default(now()) @db.Timestamptz(3)
   acceptedForEta  Boolean   @default(true)
   rejectionReason String?
 
@@ -245,6 +267,7 @@ model LiveLocation {
 
   @@index([tripId, receivedAt])
   @@index([tripId, acceptedForEta, receivedAt])
+  @@index([tripId, deviceTimestamp])
 }
 
 model TripStopEvent {
@@ -252,7 +275,7 @@ model TripStopEvent {
   tripId         Int
   scheduleStopId Int
   status         StopEventStatus
-  detectedAt     DateTime        @default(now())
+  detectedAt     DateTime        @default(now()) @db.Timestamptz(3)
   latitude       Float?
   longitude      Float?
 
@@ -266,10 +289,10 @@ model TripStopEvent {
 model LateAlert {
   id               Int             @id @default(autoincrement())
   tripId           Int
-  predictedEta     DateTime
+  predictedEta     DateTime        @db.Timestamptz(3)
   status           LateAlertStatus @default(ACTIVE)
-  triggeredAt      DateTime        @default(now())
-  recoveredAt      DateTime?
+  triggeredAt      DateTime        @default(now()) @db.Timestamptz(3)
+  recoveredAt      DateTime?       @db.Timestamptz(3)
   studentsAffected Json
   advisorsNotified Json
   previousHash     String?
@@ -283,17 +306,23 @@ model LateAlert {
 }
 
 model NotificationOutbox {
-  id          Int                 @id @default(autoincrement())
-  lateAlertId Int
-  recipient   String
-  channel     NotificationChannel @default(EMAIL)
-  payload     Json
-  status      NotificationStatus  @default(PENDING)
-  attempts    Int                 @default(0)
-  lastError   String?
-  sentAt      DateTime?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id                Int                 @id @default(autoincrement())
+  lateAlertId       Int
+  recipient         String
+  channel           NotificationChannel @default(EMAIL)
+  payload           Json
+  status            NotificationStatus  @default(PENDING)
+  attempts          Int                 @default(0)
+  idempotencyKey    String              @unique
+  nextAttemptAt     DateTime            @default(now()) @db.Timestamptz(3)
+  lastAttemptAt     DateTime?           @db.Timestamptz(3)
+  lockedAt          DateTime?           @db.Timestamptz(3)
+  lockToken         String?
+  lastError         String?
+  providerMessageId String?
+  sentAt            DateTime?           @db.Timestamptz(3)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime            @updatedAt @db.Timestamptz(3)
 
   lateAlert LateAlert @relation(fields: [lateAlertId], references: [id], onDelete: Cascade)
 
@@ -309,7 +338,7 @@ model AdminAuditLog {
   entityId        String?
   beforeSummary   Json?
   afterSummary    Json?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([entityType, entityId])
   @@index([createdAt])

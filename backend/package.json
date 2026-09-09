@@ -6,8 +6,20 @@
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
+    "admin:set-password": "node scripts/set-admin-password.js",
     "test": "node --test",
-    "validate": "prisma validate && node --test"
+    "validate": "prisma validate && node --test",
+    "verify:database-clean": "node scripts/verify-clean-database.js",
+    "verify:backup-restore": "node scripts/verify-backup-restore.js",
+    "verify:api-privacy": "node scripts/verify-api-privacy.js",
+    "verify:socket-isolation": "node scripts/verify-socket-isolation.js",
+    "verify:load-limits": "node scripts/verify-load-limits.js",
+    "verify:admin-sessions": "node scripts/verify-admin-sessions.js",
+    "verify:admin-cookie-auth": "node scripts/verify-admin-cookie-auth.js",
+    "verify:shared-rate-limit": "node scripts/verify-shared-rate-limit.js",
+    "verify:release-api": "node scripts/verify-release-api.js",
+    "maintenance:retention": "node scripts/run-retention.js",
+    "maintenance:retention:apply": "node scripts/run-retention.js --apply"
   },
   "keywords": [],
   "author": "",
@@ -17,15 +29,21 @@
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.6.2",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.2.0",
+    "nodemailer": "^9.0.5",
     "socket.io": "^4.7.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",
     "prisma": "^5.18.0",
-    "socket.io-client": "^4.8.3"
+    "socket.io-client": "^4.8.3",
+    "supertest": "^7.2.2"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

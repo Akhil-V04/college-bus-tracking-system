@@ -1,44 +1,48 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import api from './api';
 
 const AuthContext = createContext(null);
 
-// useAuth reads token + role from localStorage so the panel persists across reloads.
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => localStorage.getItem('token') || null);
-  const [role, setRole] = useState(() => localStorage.getItem('role') || null);
+  const [user, setUser] = useState(null);
+  const [checking, setChecking] = useState(true);
 
-  function login({ token: t, role: r }) {
-    localStorage.setItem('token', t);
-    localStorage.setItem('role', r);
-    setToken(t);
-    setRole(r);
-  }
-
-  function logout() {
+  const clearSession = useCallback(() => {
+    localStorage.removeItem('collegeBusAdminToken');
     localStorage.removeItem('token');
     localStorage.removeItem('role');
-    setToken(null);
-    setRole(null);
-  }
-
-  const isLoggedIn = Boolean(token);
-
-  useEffect(() => {
-    function onStorage() {
-      setToken(localStorage.getItem('token'));
-      setRole(localStorage.getItem('role'));
-    }
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
+    setUser(null);
+    setChecking(false);
+  }, []);
+  const logout = useCallback(async () => {
+    try { await api.post('/auth/logout'); } catch (_error) { /* expired/offline sessions still clear locally */ }
+    finally { clearSession(); }
+  }, [clearSession]);
+  const login = useCallback((session) => {
+    if (session.role !== 'admin') throw new Error('Only administrators can use this panel.');
+    setUser({ id: session.id, role: session.role });
+    setChecking(false);
   }, []);
 
-  return (
-    <AuthContext.Provider value={{ token, role, isLoggedIn, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  useEffect(() => {
+    let active = true;
+    api.get('/auth/me').then(({ data }) => {
+      if (active && data.role === 'admin') setUser(data);
+    }).catch(() => { if (active) setUser(null); })
+      .finally(() => { if (active) setChecking(false); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    window.addEventListener('admin-auth-expired', clearSession);
+    return () => window.removeEventListener('admin-auth-expired', clearSession);
+  }, [clearSession]);
+
+  const value = useMemo(() => ({ user, checking, isLoggedIn: Boolean(user), login, logout }), [user, checking, login, logout]);
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
-  return useContext(AuthContext);
+  const value = useContext(AuthContext);
+  if (!value) throw new Error('useAuth must be used inside AuthProvider');
+  return value;
 }

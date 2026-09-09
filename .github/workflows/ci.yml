@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: bus_tracker
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: college_bus_tracking
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U bus_tracker -d college_bus_tracking"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://bus_tracker:ci-password@localhost:5432/college_bus_tracking?schema=public
+      JWT_SECRET: ci-only-long-random-secret-not-for-production-2026
+      ADMIN_EMAIL: admin@example.invalid
+      ADMIN_PASSWORD_HASH: ''
+      NODE_ENV: test
+      RATE_LIMIT_STORE: memory
+      TRUST_PROXY_HOPS: '0'
+      REQUEST_LOGGING_ENABLED: 'false'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npx prisma db seed
+      - run: npm run validate
+      - run: npm run verify:shared-rate-limit
+      - run: npm run verify:admin-sessions
+      - run: npm run verify:admin-cookie-auth
+      - run: npm run verify:release-api
+      - run: npm audit --omit=dev --audit-level=high
+
+  admin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin-panel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: admin-panel/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx expo config --type public
+      - run: npm audit --omit=dev --audit-level=high

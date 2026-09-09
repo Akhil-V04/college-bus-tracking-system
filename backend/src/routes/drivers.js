@@ -4,8 +4,16 @@ const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { driverCreateSchema, driverUpdateSchema } = require('../schemas');
 const { parsePagination, validate } = require('../crud');
+const { writeAdminAudit } = require('../lib/adminAudit');
 
 const router = express.Router();
+
+function driverAuditSummary(driver) {
+  return {
+    driverCode: driver?.driverCode ?? null,
+    sessionVersion: driver?.sessionVersion ?? null,
+  };
+}
 
 const adminSelect = {
   id: true,
@@ -35,9 +43,19 @@ router.post('/', async (req, res) => {
   if (!input) return;
   const { password, ...data } = input;
   try {
-    const driver = await prisma.driver.create({
-      data: { ...data, passwordHash: await bcrypt.hash(password, 10) },
-      select: adminSelect,
+    const passwordHash = await bcrypt.hash(password, 10);
+    const driver = await prisma.$transaction(async (tx) => {
+      const created = await tx.driver.create({
+        data: { ...data, passwordHash },
+        select: adminSelect,
+      });
+      await writeAdminAudit(tx, req, {
+        action: 'DRIVER_CREATED',
+        entityType: 'Driver',
+        entityId: created.id,
+        afterSummary: driverAuditSummary(created),
+      });
+      return created;
     });
     return res.status(201).json(driver);
   } catch (error) {
@@ -56,7 +74,23 @@ router.put('/:id', async (req, res) => {
     data.sessionVersion = { increment: 1 };
   }
   try {
-    return res.json(await prisma.driver.update({ where: { id: Number(req.params.id) }, data, select: adminSelect }));
+const id = Number(req.params.id);
+    const driver = await prisma.$transaction(async (tx) => {
+      const before = await tx.driver.findUnique({ where: { id } });
+      const updated = await tx.driver.update({ where: { id }, data, select: adminSelect });
+      await writeAdminAudit(tx, req, {
+        action: 'DRIVER_UPDATED',
+        entityType: 'Driver',
+        entityId: id,
+        beforeSummary: driverAuditSummary(before),
+        afterSummary: {
+          ...driverAuditSummary(updated),
+          changedFields: Object.keys(input).sort(),
+        },
+      });
+      return updated;
+    });
+    return res.json(driver);
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Driver not found' });
     if (error.code === 'P2002') return res.status(409).json({ error: 'Driver code or phone number already exists' });
@@ -66,12 +100,24 @@ router.put('/:id', async (req, res) => {
 
 router.post('/:id/revoke-sessions', async (req, res) => {
   try {
-    const driver = await prisma.driver.update({
-      where: { id: Number(req.params.id) },
-      data: { sessionVersion: { increment: 1 } },
-      select: { id: true, sessionVersion: true },
+    const id = Number(req.params.id);
+    const driver = await prisma.$transaction(async (tx) => {
+      const before = await tx.driver.findUnique({ where: { id }, select: { id: true, driverCode: true, sessionVersion: true } });
+      const updated = await tx.driver.update({
+        where: { id },
+        data: { sessionVersion: { increment: 1 } },
+        select: { id: true, driverCode: true, sessionVersion: true },
+      });
+      await writeAdminAudit(tx, req, {
+        action: 'DRIVER_SESSIONS_REVOKED',
+        entityType: 'Driver',
+        entityId: id,
+        beforeSummary: driverAuditSummary(before),
+        afterSummary: driverAuditSummary(updated),
+      });
+      return updated;
     });
-    return res.json({ revoked: true, ...driver });
+    return res.json({ revoked: true, id: driver.id, sessionVersion: driver.sessionVersion });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Driver not found' });
     return res.status(500).json({ error: 'Internal server error' });
@@ -80,7 +126,17 @@ router.post('/:id/revoke-sessions', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    await prisma.driver.delete({ where: { id: Number(req.params.id) } });
+    const id = Number(req.params.id);
+    await prisma.$transaction(async (tx) => {
+      const before = await tx.driver.findUnique({ where: { id } });
+      await tx.driver.delete({ where: { id } });
+      await writeAdminAudit(tx, req, {
+        action: 'DRIVER_DELETED',
+        entityType: 'Driver',
+        entityId: id,
+        beforeSummary: driverAuditSummary(before),
+      });
+    });
     return res.json({ deleted: true });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Driver not found' });

@@ -3,6 +3,8 @@ const { computeRecordHash, alertHashData } = require('./hashChain');
 
 const REQUIRED_CONSECUTIVE_EVALUATIONS = 3;
 const EVALUATION_THROTTLE_MS = 30 * 1000;
+const ALERT_TRANSACTION_RETRIES = 3;
+const ALERT_HASH_CHAIN_LOCK_ID = 753421;
 const stateByTrip = new Map();
 
 function getZonedParts(date, timeZone) {
@@ -32,10 +34,35 @@ function deadlineForToday(now = new Date()) {
   return new Date(utcGuess.getTime() - timeZoneOffsetMs(utcGuess, timeZone));
 }
 
+function classGroupKey(value) {
+  return `${value?.department || ''}|${Number(value?.year) || ''}|${value?.section || ''}`;
+}
+
+function deriveMissingAdvisorGroups(students = [], advisors = []) {
+  const notifiedKeys = new Set(advisors.map(classGroupKey));
+  const missing = new Map();
+  for (const student of students) {
+    const key = classGroupKey(student);
+    if (!notifiedKeys.has(key) && !missing.has(key)) {
+      missing.set(key, {
+        department: student.department,
+        year: student.year,
+        section: student.section,
+      });
+    }
+  }
+  return [...missing.values()].sort((a, b) => classGroupKey(a).localeCompare(classGroupKey(b)));
+}
+
 async function createLateAlert(tripId, predictedEta) {
   const trip = await prisma.trip.findUnique({
     where: { id: tripId },
-    select: { id: true, rosterId: true, routeServiceId: true },
+    select: {
+      id: true,
+      rosterId: true,
+      routeServiceId: true,
+      routeService: { select: { routeNo: true, name: true } },
+    },
   });
   if (!trip) return null;
 
@@ -56,7 +83,7 @@ async function createLateAlert(tripId, predictedEta) {
     orderBy: { rollNo: 'asc' },
   });
 
-  const classKeys = [...new Set(students.map((student) => `${student.department}|${student.year}|${student.section}`))];
+  const classKeys = [...new Set(students.map(classGroupKey))];
   const advisors = [];
   for (const key of classKeys) {
     const [department, year, section] = key.split('|');
@@ -67,59 +94,69 @@ async function createLateAlert(tripId, predictedEta) {
     if (advisor) advisors.push(advisor);
   }
 
-  return prisma.$transaction(
-    async (tx) => {
-      const existing = await tx.lateAlert.findFirst({
-        where: { tripId, status: 'ACTIVE' },
-        select: { id: true },
-      });
-      if (existing) return null;
+  for (let attempt = 1; attempt <= ALERT_TRANSACTION_RETRIES; attempt += 1) {
+    try {
+      return await prisma.$transaction(
+        async (tx) => {
+          // One global advisory lock keeps the immutable hash chain linear when
+          // multiple backend processes create alerts at the same moment.
+          await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock($1)', ALERT_HASH_CHAIN_LOCK_ID);
+          const existing = await tx.lateAlert.findFirst({
+            where: { tripId, status: 'ACTIVE' },
+            select: { id: true },
+          });
+          if (existing) return null;
 
-      const previous = await tx.lateAlert.findFirst({
-        where: { recordHash: { not: null } },
-        orderBy: { id: 'desc' },
-        select: { recordHash: true },
-      });
-      const triggeredAt = new Date();
-      const immutable = {
-        tripId,
-        predictedEta,
-        triggeredAt,
-        studentsAffected: students,
-        advisorsNotified: advisors,
-        previousHash: previous?.recordHash || null,
-      };
-      const alert = await tx.lateAlert.create({
-        data: {
-          ...immutable,
-          recordHash: computeRecordHash(alertHashData(immutable)),
-        },
-      });
-      if (advisors.length) {
-        await tx.notificationOutbox.createMany({
-          data: advisors.map((advisor) => ({
-            lateAlertId: alert.id,
-            recipient: advisor.email,
-            payload: {
-              advisorName: advisor.name,
-              department: advisor.department,
-              year: advisor.year,
-              section: advisor.section,
-              predictedEta,
-              students: students.filter(
-                (student) =>
-                  student.department === advisor.department &&
-                  student.year === advisor.year &&
-                  student.section === advisor.section
-              ),
+          const previous = await tx.lateAlert.findFirst({
+            where: { recordHash: { not: null } },
+            orderBy: { id: 'desc' },
+            select: { recordHash: true },
+          });
+          const triggeredAt = new Date();
+          const immutable = {
+            tripId,
+            predictedEta,
+            triggeredAt,
+            studentsAffected: students,
+            advisorsNotified: advisors,
+            previousHash: previous?.recordHash || null,
+          };
+          const alert = await tx.lateAlert.create({
+            data: {
+              ...immutable,
+              recordHash: computeRecordHash(alertHashData(immutable)),
             },
-          })),
-        });
-      }
-      return alert;
-    },
-    { isolationLevel: 'Serializable' }
-  );
+          });
+          if (advisors.length) {
+            await tx.notificationOutbox.createMany({
+              data: advisors.map((advisor) => ({
+                lateAlertId: alert.id,
+                recipient: advisor.email,
+                idempotencyKey: `late-alert-${alert.id}-advisor-${advisor.id}`,
+                payload: {
+                  advisorName: advisor.name,
+                  department: advisor.department,
+                  year: advisor.year,
+                  section: advisor.section,
+                  routeNo: trip.routeService.routeNo,
+                  routeName: trip.routeService.name,
+                  predictedEta,
+                  students: students.filter((student) => classGroupKey(student) === classGroupKey(advisor)),
+                },
+              })),
+            });
+          }
+          return alert;
+        },
+        { isolationLevel: 'Serializable' }
+      );
+    } catch (error) {
+      if (error?.code === 'P2002') return null;
+      if (error?.code === 'P2034' && attempt < ALERT_TRANSACTION_RETRIES) continue;
+      throw error;
+    }
+  }
+  return null;
 }
 
 async function observeTripEta(tripId, eta) {
@@ -157,10 +194,14 @@ function clearTripObservation(tripId) {
 }
 
 module.exports = {
-  deadlineForToday,
-  createLateAlert,
-  observeTripEta,
-  clearTripObservation,
-  REQUIRED_CONSECUTIVE_EVALUATIONS,
+  ALERT_HASH_CHAIN_LOCK_ID,
+  ALERT_TRANSACTION_RETRIES,
   EVALUATION_THROTTLE_MS,
+  REQUIRED_CONSECUTIVE_EVALUATIONS,
+  classGroupKey,
+  clearTripObservation,
+  createLateAlert,
+  deadlineForToday,
+  deriveMissingAdvisorGroups,
+  observeTripEta,
 };

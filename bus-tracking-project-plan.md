@@ -1,127 +1,171 @@
-# College Bus Tracking System — Team Project Plan
+# College Bus Tracking System - Current Project Plan
 
-> **Superseded:** This historical plan contains the original student-login and boarding assumptions. Use [`PRD.md`](./PRD.md) as the current source of truth.
+This plan is aligned with [PRD.md](./PRD.md). The PRD wins if the documents ever disagree.
 
-## 1. What we're building
+## 1. Current strategy
 
-A live bus tracking platform for our college (located in Aushapur, Hyderabad) covering all **31 bus routes** across the city. Every bus must reach college before **9:50 AM** (first period start). The system has three user-facing parts sharing one backend:
+Backend-first contract stabilization is complete. The React administrator and React Native passenger/driver applications now cover the stable workflows; future redesign work is presentation-only and must preserve the locked privacy/domain contract.
 
-- **Student app** — see their bus's live location, a stop-by-stop timeline, ETA, driver/incharge contact, and occupancy.
-- **Driver app** — same Flutter app, a driver-only screen that streams GPS while the trip is running.
-- **Admin panel** — web dashboard for the transport office to manage routes, buses, drivers, stops, students, and class advisors.
+The frontend redesign is intentionally deferred until the backend contracts, privacy rules, import/export workflows, trip state, ETA states, and late-alert behavior are stable. See [Frontend redesign boundary](./docs/FRONTEND_REDESIGN_BOUNDARY.md).
 
-**Core differentiator:** if a bus is predicted to miss the 9:50 AM deadline (e.g. stuck in traffic), the system automatically identifies every student on that bus, groups them by year/section, and notifies the right class advisor with the affected roll numbers — turning this from "a map with a moving dot" into a system that actually prevents missed classes.
+## 2. Product surfaces
 
----
+### Backend — authoritative product layer
 
-## 2. System architecture
+Node.js, Express, Prisma, Socket.IO, and PostgreSQL in `backend/`.
 
+The backend owns:
+
+- authentication and role authorization;
+- public/admin field selection and phone-number privacy;
+- route, stop, capacity, schedule, driver, advisor, and roster rules;
+- draft validation and transactional publication;
+- trip lifecycle, GPS acceptance, route progress, and ETA states;
+- late-alert evidence, notification outbox, and audit history;
+- import/export validation and stable API contracts.
+
+Web and mobile clients never access PostgreSQL directly.
+
+### Administrator web reference
+
+React and Vite in `admin-panel/`.
+
+The current reference UI already exercises administrator login and live PostgreSQL updates for routes, drivers, advisors, schedules, rosters, and late alerts. Its visual system and screen composition may be replaced later. Domain and privacy rules must remain in the backend.
+
+### Passenger and driver mobile reference
+
+React Native, Expo, and TypeScript in `mobile-app/`.
+
+The current reference app proves:
+
+- no-login passenger route selection;
+- route, timeline, passenger-type badge, tracking, and ETA states;
+- authenticated driver login and assigned-trip controls;
+- foreground authenticated GPS publishing.
+
+Final mobile design and reliable background GPS/device testing are deferred to their later phases.
+
+## 3. Locked scope rules
+
+- No passenger accounts or student Google login.
+- No QR boarding or bus attendance tracking.
+- No vehicle registration/plate field.
+- No generic `active` passenger field.
+- Route number and operational bus number are one identifier.
+- Occupancy means assigned roster count against configured capacity, not actual boarded count.
+- Driver and passenger phone numbers never appear in passenger or driver responses.
+- Students and faculty are both passengers and must be differentiated by type.
+- Annual rosters and schedules use draft, validation, publish, and archive states.
+- Late alerts use route assignment; class advisors verify actual attendance.
+- A passed stop returns `PASSED` or `POSSIBLY_SKIPPED`, never a negative ETA.
+
+## 4. Technology stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| Database | PostgreSQL 18 | Relational integrity, transactions, `TIMESTAMPTZ`, `JSONB`, and partial indexes |
+| ORM/migrations | Prisma | Version-controlled schema, migrations, and database transactions |
+| Backend | Node.js + Express | REST APIs, authentication, business rules, and workflows |
+| Realtime | Socket.IO | Authenticated driver GPS and passenger trip subscriptions |
+| Admin reference | React + Vite | Working administrative API client; final design deferred |
+| Mobile reference | React Native + Expo + TypeScript | Working passenger/driver API client; final design deferred |
+| Mobile state | TanStack Query | API caching, retry, and invalidation |
+| Maps/location | react-native-maps + expo-location | Route visualization and driver GPS |
+| Driver token | Expo SecureStore | OS-backed mobile credential storage |
+
+## 5. Repository structure
+
+```text
+backend/                       # Authoritative API and database layer
+  prisma/                      # PostgreSQL schema and migrations
+  scripts/                     # Safe local/administrative setup commands
+  src/                         # Routes, services, authorization, sockets
+  tests/                       # Unit and integration tests
+admin-panel/                   # Functional React reference; not final UI
+  src/screens/                 # Active route-level reference screens
+  README.md                    # Reference-frontend rules and commands
+mobile-app/                    # Functional React Native reference; not final UI
+  src/app/                     # Expo Router screens
+  src/components/              # Shared mobile reference UI
+  src/lib/                     # API, authentication, and socket clients
+  src/types/                   # API response types
+docs/
+  FRONTEND_REDESIGN_BOUNDARY.md
+PRD.md                         # Product source of truth
+BUILD_AND_INTERVIEW_GUIDE.md   # Living implementation/interview journal
+bus-tracking-project-plan.md   # Current execution order
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Flutter App    │     │   Flutter App     │     │  React Admin    │
-│  (Student view)  │     │  (Driver view)    │     │     Panel       │
-└────────┬─────────┘     └────────┬──────────┘     └────────┬────────┘
-         │  REST + WebSocket      │  GPS stream           │  REST (CRUD)
-         └────────────┬───────────┴────────────────────────┘
-                       ▼
-          ┌─────────────────────────────┐
-          │  Backend API (Node/Express)  │
-          │  + Socket.io (real-time)     │
-          │  + ETA & late-alert engine   │
-          └───────────────┬──────────────┘
-                           ▼
-                 ┌───────────────────┐
-                 │   PostgreSQL DB    │
-                 │ (Supabase / Neon)  │
-                 └────────────────────┘
-```
 
-Backend is API-first: the Flutter app and the admin panel are just two separate consumers that never touch the database directly. This keeps things clean and means the college could plug in another client later (e.g. a website) without touching core logic.
+Generated dependencies, build output, local `.env` files, and generated native Expo projects are not source files. The deleted Flutter trees remain recoverable from Git history but are no longer part of the active project.
 
----
+## 6. Milestone status
 
-## 3. Tech stack (final)
+### Milestone A — Product model and PostgreSQL foundation
 
-| Layer | Choice | Notes |
-|---|---|---|
-| Student + Driver app | **Flutter** | One codebase, both Android/iOS, installable APK |
-| Admin panel | **React (Vite)** | Web dashboard, used by transport office on laptops |
-| Backend API | **Node.js + Express** | REST endpoints for all CRUD |
-| Real-time layer | **Socket.io** | Push live GPS + status updates, no polling |
-| Database | **PostgreSQL** (Supabase or Neon free tier) | Relational data — routes/stops/buses/students all reference each other |
-| Maps | **flutter_map (OpenStreetMap)** or Google Maps Flutter plugin | OSM = no billing account needed |
-| GPS source | **Driver's phone** (Geolocation API), throttled every 5–10s / 20m movement | No extra hardware needed |
-| Notifications | In-app + email (SendGrid/Resend free tier) | WhatsApp via Twilio sandbox optional if time allows |
-| Hosting | Render/Railway (API) + Vercel (admin panel) | Free tiers are enough for a demo/pilot |
+Status: complete.
 
----
+- product/privacy rules and failure modes documented;
+- PostgreSQL 18 role and database configured;
+- Prisma PostgreSQL migration applied and development data seeded;
+- administrator password hash configured privately;
+- backend validation passes;
+- backend health and real PostgreSQL CRUD verified.
 
-## 4. AI dev tools — how we'll split usage
+### Milestone B — Functional reference clients
 
-Three tools, three different jobs. Don't use all three on the same task — pick based on what you're doing:
+Status: complete enough for backend development.
 
-| Tool | Best for | Cost |
-|---|---|---|
-| **Google Antigravity** | Scaffolding whole features autonomously — e.g. "build the admin CRUD panel for routes/stops," "set up the Socket.io live-location pipeline." It's an agent-first IDE (powered by Gemini 3) that plans and executes multi-step tasks with less hand-holding — good for greenfield modules. | Free for individuals |
-| **Cursor** | Day-to-day in-editor work — fixing bugs, refining a specific screen, tight iterate-and-review loops where you want to see every diff. Feels like a supercharged VS Code. | Free tier (rate-limited); Pro is paid if you outgrow it |
-| **OpenCode** | Backup/parallel option, especially for teammates without a paid plan — it's fully open-source and free, terminal-based, and works with whatever model you point it at (including free models). Good for repetitive backend tasks: API endpoints, DB migration scripts. | Free (tool) + free models available; BYOK if you want a stronger model |
+- React administrator reference builds and performs real database updates;
+- active admin screens are organized under `admin-panel/src/screens`;
+- obsolete vehicle/student prototype files removed;
+- React Native passenger and driver reference foundations validate;
+- final visual frontend work explicitly frozen.
 
-**Suggested split for a 4–5 person team:**
-- Whoever owns backend/admin panel scaffolding → start new modules in **Antigravity**, then polish in Cursor.
-- Whoever owns the Flutter app UI → **Cursor** for the tight edit-preview loop.
-- Anyone without a paid tool/API budget → **OpenCode** with free models, especially for scripts, seed data, and DB schema work.
+### Milestone C — Backend completion and contract stabilization
 
-Note: free-tier terms on all three of these change often — worth a quick check on each tool's site before you lock in your workflow, since limits/pricing can shift mid-semester.
+Status: current work.
 
----
+1. **Completed 25 August 2026:** server-side CSV/XLSX roster template, preview, validation, atomic bulk import, complete export, and import/export audit APIs.
+2. **Completed 25 August 2026:** transaction-safe, privacy-sanitized admin audit records across sensitive mutations plus a paginated administrator-only query API.
+3. **Completed 25 August 2026:** idempotent concurrent trip start/end, persisted reconnect snapshots, GPS replay/quarantine rules, and stale/recovery events.
+4. **Completed 25 August 2026:** monotonic reached/possibly-skipped route progress and explicit no-data, unreliable, stale, off-route, stationary, passed, route-completed, and ended ETA states.
+5. **Completed 25 August 2026:** notification-outbox worker locking, bounded retries, idempotency, missing-advisor visibility, administrator recovery APIs, SMTP boundary, and database-backed concurrency verification.
+6. **In progress 25 August 2026:** security/privacy/socket controls, clean-schema migration/seed verification, local role checks, isolated backup/restore, generated roster/outbox load-resource checks, and revocable administrator sessions are complete; shared deployment controls, monitoring, and contract freeze remain.
+7. Publish stable, sanitized request/response contracts for the later frontends.
 
-## 5. Locked MVP — 8 features, no additions
+### Milestone D — Final frontend redesign
 
-We're deliberately **not** adding anything beyond this list. Extra scope is the most common way a college project runs out of time.
+Status: deferred until Milestone C contracts are stable.
 
-1. **Admin panel** — CRUD for routes, buses, drivers, stops, students, class advisors
-2. **31 routes** with stops, sequence, and scheduled times stored in DB
-3. **Driver screen** (inside the Flutter app) — login, auto-starts GPS streaming on trip start
-4. **Live location pipeline** — Socket.io, throttled updates
-5. **Student screen** — map view + timeline/stepper view for their specific route
-6. **Bus info display** — driver name/number, capacity, filled count, faculty incharge contact
-7. **ETA prediction** — rolling average speed → predicted time to each remaining stop + college
-8. **Late-arrival alert system** — if predicted ETA misses 9:50 AM, notify affected class advisors (grouped by year/section) with roll numbers of students on that bus
+- create final visual identity and component systems;
+- redesign administrator workflows for large annual datasets;
+- redesign passenger and driver mobile experiences;
+- add accessibility, responsive, offline, loading, and error-state polish;
+- add browser and React Native component/end-to-end tests.
 
----
+### Milestone E — Device testing, deployment, and pilot
 
-## 6. Database schema (core tables)
+- reliable background location in an Expo development build;
+- actual-route field tests and ETA calibration;
+- HTTPS deployment and production secret management;
+- database backup/restore drills, retention, logs, metrics, and alerts;
+- administrator and driver training followed by a controlled pilot.
 
-| Table | Key fields |
-|---|---|
-| `routes` | route_no, name, area_covered |
-| `buses` | bus_no, route_id, driver_id, capacity, plate_number |
-| `drivers` | name, phone, license_no |
-| `class_advisors` | name, phone/email, department, year, section |
-| `stops` | name, latitude, longitude |
-| `route_stops` | route_id, stop_id, sequence_order, scheduled_time |
-| `students` | roll_no, name, route_id, year, department, section, boarding_stop_id |
-| `trips` | bus_id, date, start_time, status (running/completed) |
-| `live_locations` | bus_id, lat, lng, timestamp, current_stop_index |
-| `late_alerts` | bus_id, trip_id, predicted_eta, triggered_at, students_affected[], advisors_notified[] |
+## 7. Next implementation slice
 
----
+Clean migration/seed, backup/restore, generated load/resource, and administrator-session baselines now pass. The next code slice finishes the backend acceptance gate before final frontend coupling:
 
-## 7. 50-day timeline
+1. define shared rate-limit storage and trusted-proxy behavior;
+2. document privacy-safe monitoring, retention and dependency policy;
+3. freeze/version sanitized request and response contracts for the final React and React Native clients.
 
-| Days | Phase | Deliverable |
-|---|---|---|
-| 1–5 | Requirements + schema | All 31 routes/stops/timings collected from transport office; DB schema finalized; wireframes |
-| 6–18 | Backend API + admin panel | Auth (student/driver/admin/advisor roles), CRUD APIs, React admin dashboard to input all data |
-| 19–26 | Real-time pipeline | Socket.io server, driver GPS streaming, Haversine-based stop-detection logic |
-| 27–38 | Flutter app build | Driver screens (login, start/end trip); student screens (home, map, timeline, bus info) |
-| 39–45 | ETA + late-alert system | Rolling-average ETA calc, late-trigger logic, advisor grouping + notification, advisor dashboard |
-| 46–50 | Testing + polish | End-to-end testing on real routes, bug fixes, screenshots, report, demo prep |
 
----
 
-## 8. Team workflow notes
+## 8. Working rules
 
-- Keep the backend API-first from day one — agree on endpoint contracts early so Flutter and admin-panel work can happen in parallel instead of blocking on each other.
-- Use a shared `.env.example` and a single seed script for the 31 routes' data so everyone's local DB matches.
-- Log decisions (schema changes, scope calls) in this doc as you go — it doubles as your project diary for the report later.
+- Keep business rules and authorization in the backend, never only in a frontend.
+- Keep API response types explicit and sanitized.
+- Update the PRD and build/interview journal with every material decision.
+- Run the relevant validation before each commit.
+- Never commit database URLs, passwords, JWT secrets, phone lists, or real rosters.
+- Use small milestone commits and preserve unrelated user changes.
