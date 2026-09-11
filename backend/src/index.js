@@ -20,9 +20,14 @@ const passengerRoutes = require('./routes/passenger');
 const lateAlertRoutes = require('./routes/late-alerts');
 const adminAuditLogRoutes = require('./routes/admin-audit-logs');
 const operationsRoutes = require('./routes/operations');
+const pushSubscriptionRoutes = require('./routes/push-subscriptions');
+const feedbackRoutes = require('./routes/feedback');
+const emergencyRoutes = require('./routes/emergencies');
 const setupSocket = require('./socket');
 const { setupStaleTripMonitor } = require('./lib/staleTripMonitor');
 const { setupNotificationOutboxWorker } = require('./lib/notificationOutbox');
+const { setupPushOutboxWorker } = require('./lib/pushOutbox');
+const { assertRuntimeIdentity } = require('./lib/runtimeIdentity');
 
 const app = express();
 const server = http.createServer(app);
@@ -64,6 +69,7 @@ app.get('/health', (_req, res) => {
 app.get('/health/ready', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
+    await assertRuntimeIdentity(prisma);
     return res.json({ status: 'ready', database: 'ok' });
   } catch (error) {
     console.error('[health/ready]', error);
@@ -84,6 +90,9 @@ function mountApi(router) {
   router.use('/late-alerts', lateAlertRoutes);
   router.use('/admin-audit-logs', adminAuditLogRoutes);
   router.use('/operations', operationsRoutes);
+  router.use('/push-subscriptions', pushSubscriptionRoutes);
+  router.use('/feedback', feedbackRoutes);
+  router.use('/emergencies', emergencyRoutes);
 }
 
 // Existing clients remain compatible while new clients use the stable v1 prefix.
@@ -106,15 +115,53 @@ app.set('io', io);
 setupSocket(io);
 
 if (require.main === module) {
-  const staleTripMonitor = setupStaleTripMonitor(io);
-  const notificationWorker = setupNotificationOutboxWorker();
-  server.once('close', () => {
-    staleTripMonitor.stop();
-    notificationWorker.stop();
-  });
-  server.listen(PORT, () => {
-    console.log(`Backend running on http://localhost:${PORT}`);
-  });
+  let staleTripMonitor;
+  let notificationWorker;
+  let pushWorker;
+  let shuttingDown = false;
+
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(JSON.stringify({ type: 'shutdown', signal, state: 'started' }));
+    staleTripMonitor?.stop();
+    notificationWorker?.stop();
+    pushWorker?.stop();
+    const timeoutMs = Math.max(1000, Math.min(30_000, Number(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS || 10_000)));
+    const timeout = setTimeout(() => {
+      server.closeAllConnections?.();
+      process.exitCode = 1;
+    }, timeoutMs);
+    timeout.unref?.();
+    await new Promise((resolve) => io.close(resolve));
+    await prisma.$disconnect();
+    clearTimeout(timeout);
+    console.log(JSON.stringify({ type: 'shutdown', signal, state: 'complete' }));
+  }
+
+  process.once('SIGTERM', () => shutdown('SIGTERM').catch((error) => {
+    console.error(`[shutdown] ${error.message}`);
+    process.exitCode = 1;
+  }));
+  process.once('SIGINT', () => shutdown('SIGINT').catch((error) => {
+    console.error(`[shutdown] ${error.message}`);
+    process.exitCode = 1;
+  }));
+
+  assertRuntimeIdentity(prisma)
+    .then(() => {
+      staleTripMonitor = setupStaleTripMonitor(io);
+      notificationWorker = setupNotificationOutboxWorker();
+      pushWorker = setupPushOutboxWorker();
+      server.listen(PORT, () => {
+        console.log(JSON.stringify({ type: 'startup', state: 'ready', port: PORT }));
+      });
+    })
+    .catch(async (error) => {
+      console.error(`[startup] ${error.message}`);
+      process.exitCode = 1;
+      await prisma.$disconnect();
+    });
 }
 
 module.exports = { app, server, io };

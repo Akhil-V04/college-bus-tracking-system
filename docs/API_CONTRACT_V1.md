@@ -24,6 +24,9 @@ The stable HTTP base path is `/api/v1`. Existing unversioned paths remain tempor
 | `/api/v1/drivers` | administrator | private driver records and credential reset |
 | `/api/v1/class-advisors` | administrator | private class-to-advisor mappings |
 | `/api/v1/trips` | driver/administrator | trip lifecycle and driver reconnect state |
+| `/api/v1/push-subscriptions` | mixed | anonymous/driver devices and stop-alert preferences |
+| `/api/v1/feedback` | mixed | anonymous submission and administrator workflow |
+| `/api/v1/emergencies` | mixed | active-trip reports, confirmation and assistance |
 | `/api/v1/late-alerts` | administrator | evidence, delivery state and retry controls |
 | `/api/v1/admin-audit-logs` | administrator | immutable application-level audit history query |
 | `/api/v1/operations` | administrator | privacy-safe operational health summary |
@@ -35,3 +38,5 @@ Passenger route DTOs may include route number, route name, covered area, capacit
 ## Compatibility policy
 
 Breaking field or state changes require a new major API prefix. Additive optional fields may be introduced in v1. ETA state names and privacy exclusions are contractually stable. The Socket.IO endpoint remains at the server origin; its `bus:update`, `trip:stale` and recovery events are documented in `LIVE_TRACKING_API.md`.
+
+The expanded backend workflow and request guards are documented in `BACKEND_WORKFLOWS_V1.md`.

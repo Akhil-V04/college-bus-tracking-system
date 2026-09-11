@@ -1,0 +1,61 @@
+services:
+  - type: web
+    name: college-bus-tracking-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health/ready
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_CONNECTION_LIMIT
+        value: "5"
+      - key: REQUIRE_RESTRICTED_DB_ROLE
+        value: "true"
+      - key: EXPECTED_RUNTIME_DB_ROLE
+        value: bus_tracker_runtime
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: MAPPLS_ACCESS_TOKEN
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: NODE_ENV
+        value: production
+      - key: RATE_LIMIT_STORE
+        value: postgres
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: GRACEFUL_SHUTDOWN_TIMEOUT_MS
+        value: "10000"
+      - key: NOTIFICATION_PROVIDER
+        value: console
+      - key: PUSH_NOTIFICATION_PROVIDER
+        value: console
+
+  - type: cron
+    name: college-bus-tracking-retention-preview
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    dockerCommand: npm run maintenance:retention
+    schedule: "30 20 * * *"
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_CONNECTION_LIMIT
+        value: "1"
+      - key: REQUIRE_RESTRICTED_DB_ROLE
+        value: "true"
+      - key: EXPECTED_RUNTIME_DB_ROLE
+        value: bus_tracker_runtime
+      - key: RAW_GPS_ACCEPTED_RETENTION_DAYS
+        value: "7"
+      - key: RAW_GPS_REJECTED_RETENTION_DAYS
+        value: "2"
+      - key: ETA_CALIBRATION_RETENTION_DAYS
+        value: "30"

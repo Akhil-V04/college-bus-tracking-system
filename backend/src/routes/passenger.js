@@ -2,6 +2,7 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { estimateArrival } = require('../lib/eta');
 const { locationFreshness } = require('../lib/liveTracking');
+const haversineDistance = require('../lib/haversine');
 
 const router = express.Router();
 
@@ -13,17 +14,64 @@ async function getPublishedRoster() {
   });
 }
 
-router.get('/routes', async (_req, res) => {
+function parseNearbyQuery(query) {
+  const latitude = Number(query.latitude);
+  const longitude = Number(query.longitude);
+  const radiusMeters = query.radiusMeters == null ? 10000 : Number(query.radiusMeters);
+  const limit = query.limit == null ? 10 : Number(query.limit);
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) return null;
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) return null;
+  if (!Number.isFinite(radiusMeters) || radiusMeters < 100 || radiusMeters > 50000) return null;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) return null;
+  return { latitude, longitude, radiusMeters, limit };
+}
+
+function rankNearestStops(stops, query) {
+  return stops
+    .map((stop) => ({
+      ...stop,
+      distanceMeters: Math.round(haversineDistance(query.latitude, query.longitude, stop.latitude, stop.longitude)),
+    }))
+    .filter((stop) => stop.distanceMeters <= query.radiusMeters)
+    .sort((left, right) => left.distanceMeters - right.distanceMeters || left.id - right.id)
+    .slice(0, query.limit);
+}
+
+router.get('/routes', async (req, res) => {
   try {
     const roster = await getPublishedRoster();
+    const search = String(req.query.q || '').trim().slice(0, 100);
     const routes = await prisma.routeService.findMany({
+      where: search
+        ? {
+            OR: [
+              { routeNo: { contains: search, mode: 'insensitive' } },
+              { name: { contains: search, mode: 'insensitive' } },
+              { areaCovered: { contains: search, mode: 'insensitive' } },
+              { schedules: { some: { status: 'PUBLISHED', stops: { some: { stop: { name: { contains: search, mode: 'insensitive' } } } } } } },
+            ],
+          }
+        : undefined,
       select: {
         id: true,
         routeNo: true,
         name: true,
         areaCovered: true,
         capacity: true,
-        driver: { select: { name: true } },
+        driver: { select: { name: true, status: true } },
+        trips: { where: { status: 'RUNNING' }, select: { id: true }, take: 1 },
+        schedules: {
+          where: { status: 'PUBLISHED' },
+          orderBy: { publishedAt: 'desc' },
+          take: 1,
+          select: {
+            stops: {
+              orderBy: { sequenceOrder: 'asc' },
+              take: 5,
+              select: { stop: { select: { id: true, name: true } } },
+            },
+          },
+        },
       },
       orderBy: { routeNo: 'asc' },
     });
@@ -37,7 +85,14 @@ router.get('/routes', async (_req, res) => {
     const countByRoute = new Map(counts.map((item) => [item.routeServiceId, item._count._all]));
     return res.json(
       routes.map((route) => ({
-        ...route,
+        id: route.id,
+        routeNo: route.routeNo,
+        name: route.name,
+        areaCovered: route.areaCovered,
+        capacity: route.capacity,
+        driver: route.driver?.status === 'ACTIVE' ? { name: route.driver.name } : null,
+        active: route.trips.length > 0,
+        majorStops: (route.schedules[0]?.stops || []).map((entry) => entry.stop),
         assignedPassengerCount: countByRoute.get(route.id) || 0,
         roster: roster ? { name: roster.name, academicYear: roster.academicYear } : null,
       }))
@@ -45,6 +100,61 @@ router.get('/routes', async (_req, res) => {
   } catch (error) {
     console.error('[passenger/routes]', error);
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/stops/nearest', async (req, res) => {
+  const query = parseNearbyQuery(req.query);
+  if (!query) {
+    return res.status(400).json({
+      error: 'Valid latitude, longitude, radiusMeters (100-50000), and limit (1-20) are required',
+    });
+  }
+  try {
+    const stops = await prisma.stop.findMany({
+      where: { scheduleStops: { some: { scheduleVersion: { status: 'PUBLISHED' } } } },
+      select: {
+        id: true,
+        name: true,
+        latitude: true,
+        longitude: true,
+        scheduleStops: {
+          where: { scheduleVersion: { status: 'PUBLISHED' } },
+          orderBy: { sequenceOrder: 'asc' },
+          select: {
+            scheduledTime: true,
+            scheduleVersion: {
+              select: {
+                direction: true,
+                routeService: { select: { id: true, routeNo: true, name: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    const ranked = rankNearestStops(stops, query).map((stop) => {
+      const routeMap = new Map();
+      for (const entry of stop.scheduleStops) {
+        const route = entry.scheduleVersion.routeService;
+        const key = `${route.id}:${entry.scheduleVersion.direction}`;
+        if (!routeMap.has(key)) {
+          routeMap.set(key, { ...route, direction: entry.scheduleVersion.direction, scheduledTime: entry.scheduledTime });
+        }
+      }
+      return {
+        id: stop.id,
+        name: stop.name,
+        latitude: stop.latitude,
+        longitude: stop.longitude,
+        distanceMeters: stop.distanceMeters,
+        routes: [...routeMap.values()],
+      };
+    });
+    return res.json({ query: { radiusMeters: query.radiusMeters }, stops: ranked });
+  } catch (error) {
+    console.error('[passenger/nearest-stops]', error);
+    return res.status(500).json({ error: 'Nearest stops could not be loaded' });
   }
 });
 
@@ -67,6 +177,12 @@ router.get('/routes/:routeNo', async (req, res) => {
             id: true,
             name: true,
             direction: true,
+            geometryPolyline: true,
+            geometryFormat: true,
+            geometryDistanceMeters: true,
+            geometryDurationSeconds: true,
+            geometryGeneratedAt: true,
+            geometryProvider: true,
             stops: {
               orderBy: { sequenceOrder: 'asc' },
               select: {
@@ -184,3 +300,5 @@ router.get('/trips/:tripId/eta/:stopId', async (req, res) => {
 
 module.exports = router;
 module.exports.getPublishedRoster = getPublishedRoster;
+module.exports.parseNearbyQuery = parseNearbyQuery;
+module.exports.rankNearestStops = rankNearestStops;

@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 const ExcelJS = require('exceljs');
 
 const MAX_IMPORT_ROWS = 10_000;
@@ -410,6 +411,7 @@ async function previewRosterImport(db, rosterId, buffer, originalName) {
     roster: { id: roster.id, name: roster.name, academicYear: roster.academicYear, version: roster.version },
     fileName: path.basename(originalName),
     format: parsed.format,
+    previewDigest: crypto.createHash('sha256').update(buffer).digest('hex'),
     unknownHeaders: parsed.unknownHeaders,
     summary: summarizeResults(results),
     rows: results.map((result) => ({

@@ -5,10 +5,13 @@ const { spawnSync } = require('node:child_process');
 const { PrismaClient } = require('@prisma/client');
 
 const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error('DATABASE_URL is required');
+const directUrl = process.env.DIRECT_URL;
+if (!databaseUrl || !directUrl) throw new Error('DATABASE_URL and DIRECT_URL are required');
 
 const mainUrl = new URL(databaseUrl);
-if (!['postgresql:', 'postgres:'].includes(mainUrl.protocol)) {
+const migrationUrl = new URL(directUrl);
+if (!['postgresql:', 'postgres:'].includes(mainUrl.protocol) ||
+    !['postgresql:', 'postgres:'].includes(migrationUrl.protocol)) {
   throw new Error('Clean-database verification requires PostgreSQL');
 }
 
@@ -16,10 +19,10 @@ const schemaName = `codex_clean_verify_${Date.now()}_${Math.random().toString(16
 if (!/^codex_clean_verify_[a-z0-9_]+$/.test(schemaName)) {
   throw new Error('Generated verification schema name is unsafe');
 }
-const cleanUrl = new URL(mainUrl);
+const cleanUrl = new URL(migrationUrl);
 cleanUrl.searchParams.set('schema', schemaName);
 
-const main = new PrismaClient();
+const main = new PrismaClient({ datasources: { db: { url: migrationUrl.toString() } } });
 let clean = null;
 let schemaCreated = false;
 
@@ -27,12 +30,20 @@ function runPrisma(args) {
   const prismaCli = require.resolve('prisma/build/index.js');
   const result = spawnSync(process.execPath, [prismaCli, ...args], {
     cwd: process.cwd(),
-    env: { ...process.env, DATABASE_URL: cleanUrl.toString() },
+    env: {
+      ...process.env,
+      DATABASE_URL: cleanUrl.toString(),
+      DIRECT_URL: cleanUrl.toString(),
+    },
     encoding: 'utf8',
     shell: false,
+    timeout: 60_000,
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error?.code === 'ETIMEDOUT') {
+    throw new Error(`prisma ${args.join(' ')} exceeded the 60-second isolated-schema limit`);
+  }
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`npx prisma ${args.join(' ')} failed with exit code ${result.status}`);
@@ -53,17 +64,20 @@ async function verifyRole() {
   `);
   assert.equal(rows.length, 1);
   const role = rows[0];
-  assert.equal(role.isSuperuser, false, 'application development role must not be a PostgreSQL superuser');
-  assert.equal(role.canCreateDatabase, false, 'application development role must not create databases');
-  assert.equal(role.canCreateRole, false, 'application development role must not create roles');
+  assert.equal(role.isSuperuser, false, 'configured PostgreSQL role must not be a superuser');
+  const restrictedRuntimeRole = !role.canCreateDatabase && !role.canCreateRole;
+  if (process.env.REQUIRE_RESTRICTED_DB_ROLE === 'true') {
+    assert.equal(restrictedRuntimeRole, true, 'production runtime requires a role without CREATEDB or CREATEROLE');
+  }
   return {
     currentUser: role.currentUser,
     canLogin: role.canLogin,
     isSuperuser: role.isSuperuser,
     canCreateDatabase: role.canCreateDatabase,
     canCreateRole: role.canCreateRole,
+    restrictedRuntimeRole,
+    productionRuntimeSeparationRequired: !restrictedRuntimeRole || role.databaseOwner === role.currentUser,
     ownsDevelopmentDatabase: role.databaseOwner === role.currentUser,
-    productionRuntimeSeparationRequired: role.databaseOwner === role.currentUser,
   };
 }
 
@@ -86,6 +100,17 @@ async function verifySchemaAndSeed() {
     'TransportRoster',
     'Trip',
     'TripStopEvent',
+    'TripDriverTransfer',
+    'EtaCalibrationSnapshot',
+    'SegmentTravelSample',
+    'SegmentTravelAggregate',
+    'PushDeviceSubscription',
+    'StopAlertSubscription',
+    'StopAlertDelivery',
+    'PushNotificationOutbox',
+    'FeedbackReport',
+    'EmergencyReport',
+    'EmergencyAssistance',
   ];
   const tables = await clean.$queryRawUnsafe(
     `SELECT table_name AS "tableName"
@@ -102,7 +127,7 @@ async function verifySchemaAndSeed() {
        FROM information_schema.columns
       WHERE table_schema = $1
         AND lower(column_name) IN (
-          'registrationnumber', 'vehicleregistration', 'active',
+          'registrationnumber', 'vehicleregistration',
           'boardingrecordid', 'attendancestatus', 'qrcode'
         )`,
     schemaName
@@ -127,7 +152,7 @@ async function verifySchemaAndSeed() {
        FROM "${schemaName}"."_prisma_migrations"
       ORDER BY migration_name`
   );
-  assert.equal(migrations.length, 5);
+  assert.equal(migrations.length, 6);
   assert.ok(migrations.every((migration) => migration.finishedAt && !migration.rolledBackAt));
   return {
     migratedTables: requiredTables.length,

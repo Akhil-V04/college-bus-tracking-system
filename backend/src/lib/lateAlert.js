@@ -61,12 +61,17 @@ async function createLateAlert(tripId, predictedEta) {
       id: true,
       rosterId: true,
       routeServiceId: true,
+      rosterSnapshot: true,
+      routeSnapshot: true,
       routeService: { select: { routeNo: true, name: true } },
     },
   });
   if (!trip) return null;
 
-  const students = await prisma.rosterPassenger.findMany({
+  const snapshottedStudents = Array.isArray(trip.rosterSnapshot?.students)
+    ? trip.rosterSnapshot.students
+    : null;
+  const students = snapshottedStudents || await prisma.rosterPassenger.findMany({
     where: {
       rosterId: trip.rosterId,
       routeServiceId: trip.routeServiceId,
@@ -81,7 +86,7 @@ async function createLateAlert(tripId, predictedEta) {
       boardingStopId: true,
     },
     orderBy: { rollNo: 'asc' },
-  });
+    });
 
   const classKeys = [...new Set(students.map(classGroupKey))];
   const advisors = [];
@@ -100,7 +105,10 @@ async function createLateAlert(tripId, predictedEta) {
         async (tx) => {
           // One global advisory lock keeps the immutable hash chain linear when
           // multiple backend processes create alerts at the same moment.
-          await tx.$queryRawUnsafe('SELECT pg_advisory_xact_lock($1)', ALERT_HASH_CHAIN_LOCK_ID);
+          await tx.$queryRawUnsafe(
+            'SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock($1)) AS acquired',
+            ALERT_HASH_CHAIN_LOCK_ID
+          );
           const existing = await tx.lateAlert.findFirst({
             where: { tripId, status: 'ACTIVE' },
             select: { id: true },
@@ -138,8 +146,8 @@ async function createLateAlert(tripId, predictedEta) {
                   department: advisor.department,
                   year: advisor.year,
                   section: advisor.section,
-                  routeNo: trip.routeService.routeNo,
-                  routeName: trip.routeService.name,
+                  routeNo: trip.routeSnapshot?.routeNo || trip.routeService.routeNo,
+                  routeName: trip.routeSnapshot?.name || trip.routeService.name,
                   predictedEta,
                   students: students.filter((student) => classGroupKey(student) === classGroupKey(advisor)),
                 },

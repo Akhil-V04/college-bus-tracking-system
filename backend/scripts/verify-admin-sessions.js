@@ -77,11 +77,11 @@ async function run() {
     expiredAndMissingSessionsRejected: 'verified',
     singleSessionRevocation: 'verified',
     revokeAllCount: revokeAll.body.revokedSessions,
+    auditEvidenceRetained: true,
   }));
 }
 
 async function cleanup() {
-  await prisma.adminAuditLog.deleteMany({ where: { adminIdentifier } });
   await prisma.adminSession.deleteMany({ where: { adminIdentifier } });
 }
 

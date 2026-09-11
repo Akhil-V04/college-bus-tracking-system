@@ -6,25 +6,20 @@ From each package, run the commands below before creating a release:
 
 ```powershell
 cd E:\bus-tracking-system\backend
-npm run validate
-npm run verify:shared-rate-limit
-npm run verify:admin-sessions
-npm run verify:admin-cookie-auth
-npm run verify:release-api
-
-cd E:\bus-tracking-system\admin-panel
-npm run build
-
-cd E:\bus-tracking-system\mobile-app
-npm run typecheck
-npx expo config --type public
+npm run verify:backend-acceptance
 ```
 
-GitHub Actions repeats the portable checks with PostgreSQL 18. Clean-schema and backup/restore drills remain explicit operator checks because they require local PostgreSQL command-line tools and a deliberately restricted role.
+The consolidated command checks `DATABASE_URL` runtime reachability, then uses `DIRECT_URL` for mutation-heavy integration, clean-schema, and backup/restore drills so the transaction pool is not exhausted. It removes all temporary fixtures. Configure `DATABASE_URL` for runtime traffic and `DIRECT_URL` for migrations and PostgreSQL tooling. For Supabase, transaction mode on port 6543 can serve scalable runtime traffic; migrations, dump/restore, and the acceptance drill use session mode on port 5432 or a direct connection.
+
+Frontend build/type checks remain deferred until backend Phase B9 is accepted.
 
 ## Container staging
 
-`compose.production.example.yml` is a staging template, not a secrets file. Supply `POSTGRES_PASSWORD`, a 32+ character random `JWT_SECRET`, administrator email/hash and `PUBLIC_ORIGIN` through the deployment secret manager. Start it with a TLS reverse proxy in front of port 8080. The migration service runs versioned Prisma migrations before the backend becomes healthy; Nginx serves the SPA and proxies `/api` and Socket.IO to the backend.
+`render.yaml` is the backend deployment blueprint. Supply the restricted runtime `DATABASE_URL`, a 32+ character random `JWT_SECRET`, administrator email/hash, Mappls key, and eventual provider credentials through Render secret environment variables. Keep the owner-level `DIRECT_URL` outside runtime services and use it only in a controlled migration job or operator environment before promotion. Follow `SUPABASE_RENDER_DATABASE.md`. The scheduled retention service is dry-run only.
+
+The web service also requires the exact future administrator origin in `CORS_ORIGINS`; use a single HTTPS Vercel origin initially and add comma-separated approved origins only when needed. `REQUIRE_RESTRICTED_DB_ROLE=true` makes startup and `/health/ready` fail if Render accidentally receives the owner credential. Render terminates TLS for HTTPS/WSS, forwards one trusted proxy hop, and sends `SIGTERM`; the backend stops workers, closes Socket.IO/HTTP, disconnects Prisma, and bounds shutdown to ten seconds.
+
+After deployment, set `HOSTED_BACKEND_URL` privately to the Render HTTPS origin and run `npm run verify:hosted-render`. It verifies liveness, restricted database readiness, safe public access, hostile-origin rejection, security headers, two WSS connections/reconnection, and that health payloads contain no provider or database secrets. Run `npm run verify:restricted-acceptance` separately against the same restricted Supabase identity before promotion.
 
 The example uses one database owner for compact staging. Production must split migration ownership from the restricted runtime role as described in `DATABASE_RECOVERY.md`.
 

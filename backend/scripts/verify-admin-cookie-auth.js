@@ -24,12 +24,16 @@ async function main() {
   await agent.post('/api/v1/auth/logout').expect(403);
   await agent.post('/api/v1/auth/logout').set('X-Requested-With', 'college-bus-admin').expect(200);
   await agent.get('/api/v1/auth/me').expect(401);
-  console.log('Administrator HttpOnly-cookie login, CSRF rejection, logout and revocation verified.');
+  console.log(JSON.stringify({
+    httpOnlyCookieLogin: 'verified',
+    csrfRejection: 'verified',
+    logoutRevocation: 'verified',
+    auditEvidenceRetained: true,
+  }));
 }
 
 async function cleanup() {
   if (createdSessionId) {
-    await prisma.adminAuditLog.deleteMany({ where: { entityType: 'AdminSession', entityId: createdSessionId } });
     await prisma.adminSession.deleteMany({ where: { id: createdSessionId } });
   }
   await prisma.$disconnect();

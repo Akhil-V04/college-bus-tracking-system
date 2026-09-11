@@ -4,6 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { scheduleVersionSchema, scheduleStopSchema } = require('../schemas');
 const { validate } = require('../crud');
 const { writeAdminAudit } = require('../lib/adminAudit');
+const { MapplsGeometryError, requestRouteGeometry } = require('../lib/mapplsGeometry');
 
 const router = express.Router();
 
@@ -60,6 +61,12 @@ router.get('/route/:routeServiceId', async (req, res) => {
       direction: true,
       version: true,
       effectiveFrom: true,
+      geometryPolyline: true,
+      geometryFormat: true,
+      geometryDistanceMeters: true,
+      geometryDurationSeconds: true,
+      geometryGeneratedAt: true,
+      geometryProvider: true,
       stops: {
         orderBy: { sequenceOrder: 'asc' },
         select: {
@@ -219,6 +226,20 @@ router.post('/:id/publish', async (req, res) => {
   if (schedule.status !== 'DRAFT') return res.status(409).json({ error: 'Only a draft schedule can be published' });
   if (errors.length) return res.status(400).json({ error: 'Schedule validation failed', errors });
 
+  let geometry;
+  try {
+    geometry = await requestRouteGeometry(schedule.stops);
+  } catch (error) {
+    if (error instanceof MapplsGeometryError) {
+      return res.status(error.statusCode).json({
+        error: 'Route geometry could not be generated',
+        code: error.code,
+      });
+    }
+    console.error('[schedules/publish]', error);
+    return res.status(500).json({ error: 'Route geometry could not be generated' });
+  }
+
   const published = await prisma.$transaction(async (tx) => {
     const archived = await tx.scheduleVersion.updateMany({
       where: {
@@ -230,7 +251,7 @@ router.post('/:id/publish', async (req, res) => {
     });
     const updated = await tx.scheduleVersion.update({
       where: { id },
-      data: { status: 'PUBLISHED', publishedAt: new Date() },
+      data: { status: 'PUBLISHED', publishedAt: new Date(), ...geometry },
       include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
     });
     await writeAdminAudit(tx, req, {
@@ -243,6 +264,54 @@ router.post('/:id/publish', async (req, res) => {
     return updated;
   });
   return res.json(published);
+});
+
+router.post('/:id/geometry/regenerate', async (req, res) => {
+  const id = Number(req.params.id);
+  const schedule = await prisma.scheduleVersion.findUnique({
+    where: { id },
+    include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
+  });
+  if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+  if (schedule.status !== 'PUBLISHED') {
+    return res.status(409).json({ error: 'Only published route geometry can be regenerated' });
+  }
+
+  try {
+    const geometry = await requestRouteGeometry(schedule.stops);
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.scheduleVersion.update({ where: { id }, data: geometry });
+      await writeAdminAudit(tx, req, {
+        action: 'ROUTE_GEOMETRY_REGENERATED',
+        entityType: 'ScheduleVersion',
+        entityId: id,
+        beforeSummary: {
+          fingerprint: schedule.geometryFingerprint,
+          generatedAt: schedule.geometryGeneratedAt,
+        },
+        afterSummary: {
+          fingerprint: result.geometryFingerprint,
+          generatedAt: result.geometryGeneratedAt,
+          provider: result.geometryProvider,
+        },
+      });
+      return result;
+    });
+    return res.json(updated);
+  } catch (error) {
+    if (error instanceof MapplsGeometryError) {
+      await prisma.scheduleVersion.update({
+        where: { id },
+        data: { geometryErrorCode: error.code },
+      });
+      return res.status(error.statusCode).json({
+        error: 'Route geometry could not be regenerated',
+        code: error.code,
+      });
+    }
+    console.error('[schedules/geometry-regenerate]', error);
+    return res.status(500).json({ error: 'Route geometry could not be regenerated' });
+  }
 });
 
 module.exports = router;

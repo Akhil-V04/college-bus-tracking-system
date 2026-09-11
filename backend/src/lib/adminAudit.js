@@ -1,4 +1,7 @@
 const SENSITIVE_KEY = /(password|hash|phone|license|email|recipient|token|secret|bus.?pass|roll.?no|faculty.?id)/i;
+const { computeRecordHash } = require('./hashChain');
+
+const ADMIN_AUDIT_HASH_CHAIN_LOCK_ID = 753422;
 
 function sanitizeAuditSummary(value, depth = 0) {
   if (value === null || value === undefined) return value;
@@ -29,15 +32,47 @@ function buildAdminAuditData(req, event) {
     entityId: event.entityId === null || event.entityId === undefined ? null : String(event.entityId),
     beforeSummary: event.beforeSummary === undefined ? undefined : sanitizeAuditSummary(event.beforeSummary),
     afterSummary: event.afterSummary === undefined ? undefined : sanitizeAuditSummary(event.afterSummary),
+    correlationId: req.requestId ? String(req.requestId).slice(0, 100) : null,
+  };
+}
+
+function adminAuditHashData(row) {
+  return {
+    adminIdentifier: row.adminIdentifier,
+    action: row.action,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    beforeSummary: row.beforeSummary,
+    afterSummary: row.afterSummary,
+    correlationId: row.correlationId,
+    createdAt: row.createdAt,
+    previousHash: row.previousHash,
   };
 }
 
 async function writeAdminAudit(client, req, event) {
-  return client.adminAuditLog.create({ data: buildAdminAuditData(req, event) });
+  await client.$queryRawUnsafe(
+    'SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock($1)) AS acquired',
+    ADMIN_AUDIT_HASH_CHAIN_LOCK_ID
+  );
+  const previous = await client.adminAuditLog.findFirst({
+    where: { recordHash: { not: null } },
+    orderBy: { id: 'desc' },
+    select: { recordHash: true },
+  });
+  const data = {
+    ...buildAdminAuditData(req, event),
+    createdAt: new Date(),
+    previousHash: previous?.recordHash || null,
+  };
+  data.recordHash = computeRecordHash(adminAuditHashData(data));
+  return client.adminAuditLog.create({ data });
 }
 
 module.exports = {
   SENSITIVE_KEY,
+  ADMIN_AUDIT_HASH_CHAIN_LOCK_ID,
+  adminAuditHashData,
   buildAdminAuditData,
   changedFields,
   sanitizeAuditSummary,
