@@ -51,6 +51,8 @@ Stable API base: `http://localhost:4000/api/v1`
 
 ## Administrator application
 
+For the complete local Administrator, Passenger, and Driver walkthrough, use [docs/LOCAL_ROLE_TESTING.md](./docs/LOCAL_ROLE_TESTING.md).
+
 ```powershell
 cd E:\bus-tracking-system\admin-panel
 npm install
