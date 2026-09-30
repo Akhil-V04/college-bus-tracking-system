@@ -5,7 +5,7 @@ const { stopSchema } = require('../schemas');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../crud');
 const { writeAdminAudit } = require('../lib/adminAudit');
-const { MapplsGeometryError, requestRouteGeometry } = require('../lib/mapplsGeometry');
+const { GoogleMapsGeometryError, requestRouteGeometry } = require('../lib/googleMapsGeometry');
 
 const router = express.Router();
 
@@ -28,7 +28,7 @@ router.put('/:id/coordinates', requireAuth(['admin']), async (req, res) => {
       regenerated.push({ id: schedule.id, geometry: await requestRouteGeometry(points) });
     }
   } catch (error) {
-    if (error instanceof MapplsGeometryError) {
+    if (error instanceof GoogleMapsGeometryError) {
       return res.status(error.statusCode).json({
         error: 'Stop coordinates were not changed because published geometry could not be regenerated',
         code: error.code,

@@ -23,7 +23,7 @@ The previous 87% completion estimate and blanket local-completion claims are wit
 
 On 9 September 2026, repository inspection confirmed Express, Prisma/PostgreSQL, Socket.IO, roster exchange, explainable ETA, SMTP/outbox code, session security, and administrative audit foundations. Running `npm test` in `backend` passed **59/59 tests**. This verifies the existing unit-test baseline, not all integration, hosting, or new-feature requirements. Database migration, backup/restore, live API/socket/load scripts, client builds, and field tests were not rerun in this documentation revision.
 
-Supabase hosting is not verified; Mappls, adaptive transmission, raw GPS cleanup, robust historical segment statistics, annual passenger purge, driver Excel import, push subscriptions, feedback, emergencies, and assistance require new work or modifications. No newly documented feature is marked complete merely because it appears here.
+Supabase hosting is not verified; Google Maps, adaptive transmission, raw GPS cleanup, robust historical segment statistics, annual passenger purge, driver Excel import, push subscriptions, feedback, emergencies, and assistance require new work or modifications. No newly documented feature is marked complete merely because it appears here.
 
 ### 1.2 Locked technical stack
 
@@ -34,7 +34,7 @@ Supabase hosting is not verified; Mappls, adaptive transmission, raw GPS cleanup
 | APIs and business logic | Persistent Node.js + Express; Zod validation |
 | Live communication | Socket.IO/WebSockets over persistent HTTPS/WSS connections |
 | Data | Prisma ORM and migrations; Supabase-managed PostgreSQL for hosted database |
-| Maps | Mappls for rendering, route display, previews, and required directions |
+| Maps | Google Maps for rendering, route display, previews, and required directions |
 | ETA | Explainable GPS, route progress, rolling speed, and robust historical segment statistics; no current ML claim |
 | Notifications | Node.js workers; SMTP email to advisors; Expo/native push for passenger and driver devices |
 | Data exchange | CSV/XLSX; separate annual passenger and driver workbook workflows |
@@ -43,7 +43,7 @@ Supabase hosting is not verified; Mappls, adaptive transmission, raw GPS cleanup
 
 Supabase is primarily the managed PostgreSQL host. Express, Prisma, Socket.IO, current authentication, and Node workers remain authoritative. Do not substitute Supabase Auth, Realtime, Edge Functions, or other services without a separate request. No RAG is introduced.
 
-`Combined Passenger + Driver mobile app / separately hosted Admin website → HTTPS/WSS → Express + Socket.IO + business logic/workers → Prisma → Supabase PostgreSQL`. Mappls renders map information; backend route progress, ETA, and stop states remain authoritative.
+`Combined Passenger + Driver mobile app / separately hosted Admin website → HTTPS/WSS → Express + Socket.IO + business logic/workers → Prisma → Supabase PostgreSQL`. Google Maps renders map information; backend route progress, ETA, and stop states remain authoritative.
 
 ## 2. Locked product decisions
 
@@ -783,7 +783,7 @@ The following scenarios are mandatory design and acceptance-test inputs.
 - Operations centre for running/stale trips, active alerts, pending/failed notifications, and active sessions
 - Administrator-session list with individual and revoke-all controls
 - Driver Excel import and safe deactivation; explicit active-trip transfer
-- Mappls stop/route preview and published route geometry
+- Google Maps stop/route preview and published route geometry
 - Actual route lateness analytics
 - Feedback management
 - High-priority emergencies, confirmation, assistance assignment, and incident map
@@ -801,7 +801,7 @@ This is the required React + Vite website scope; new screen work is deferred unt
 - Stop-selection ETA sheet/page
 - Offline/stale/error states
 - Route-number search, Bus Stop Near Me, and locally saved My Route
-- Full Route on Mappls and passenger-safe Bus Info
+- Full Route on Google Maps and passenger-safe Bus Info
 - Optional Notify Me push thresholds
 - Feedback and unverified passenger Emergency reporting
 
@@ -831,7 +831,7 @@ No scanner, QR, passenger phone, or attendance UI is included.
 - Ship one combined Passenger + Driver Android app. The separately hosted React administrator website is not bundled into the mobile binary.
 - Production size target: a fresh Google Play device-specific installation should remain below 100 MB on representative supported Android devices. Treat universal/internal/development APK size as diagnostic only; use the production AAB and Google Play App Size report for acceptance.
 - Target the optimized production download at approximately 25–50 MB and normal application data below approximately 10 MB before optional map cache. Set bounded eviction for map and network caches so ordinary use does not create uncontrolled storage growth.
-- Measure size after Mappls, location, push and release minification are integrated. Remove unused native dependencies and production development-client code where safe; do not reduce required GPS reliability, security, accessibility or offline behavior merely to meet the size target.
+- Measure size after Google Maps, location, push and release minification are integrated. Remove unused native dependencies and production development-client code where safe; do not reduce required GPS reliability, security, accessibility or offline behavior merely to meet the size target.
 - Live updates should normally appear within seconds of a valid driver fix.
 - Static route/roster reads should be cached where safe.
 - Admin imports must handle the college's full annual roster without browser freezing.
@@ -881,12 +881,12 @@ The real production MVP is not complete until:
 
 `React + Vite admin website on Vercel → HTTPS API proxy → persistent Node.js + Express + Socket.IO + Node workers → Prisma → Supabase PostgreSQL`.
 
-`React Native + Expo passenger/driver Android clients → direct HTTPS/WSS backend`. Mappls provides map rendering and required directions. SMTP serves class-advisor email; Expo/native infrastructure serves mobile push.
+`React Native + Expo passenger/driver Android clients → direct HTTPS/WSS backend`. Google Maps provides map rendering and required directions. SMTP serves class-advisor email; Expo/native infrastructure serves mobile push.
 
 - Keep the backend and workers on a persistent Node host supporting long-lived sockets; hosting/provider activation is external configuration, not evidence of an implemented deployment.
 - Preserve same-origin admin API proxying and secure HttpOnly/SameSite cookies, CSRF checks, strict CORS, role checks, and revocation.
 - Configure database connectivity, migrations, runtime privileges, backup/restore, HTTPS/WSS, monitoring, and secret rotation before pilot release. Supabase hosting must not create a public direct route to private application tables.
-- Store database credentials, SMTP credentials, JWT secrets, private Mappls credentials, and push-provider secrets only in environment/secret configuration; never commit or return them to clients.
+- Store database credentials, SMTP credentials, JWT secrets, private Google Maps credentials, and push-provider secrets only in environment/secret configuration; never commit or return them to clients.
 - Begin with approved synthetic demo data and explicitly simulated email/push delivery. Real provider verification remains required for production acceptance.
 - Publish/integrate the new frontends only after the backend gate. Test native GPS and push with development Android builds before pilot rollout.
 - Prototype ETA remains an experimental estimate with confidence and stale/offline states, not guaranteed arrival.
@@ -909,7 +909,7 @@ A role-aware college bus tracking platform combines a single Passenger + Driver 
 - React/Vite for transport administration.
 - Node.js/Express, Socket.IO, Zod, JWT/cookies, and background workers for API/realtime/business logic.
 - Supabase-managed PostgreSQL with Prisma migrations for versioned schedules, current annual rosters, trips, retained derived evidence, alerts, outbox, sessions, audit, and rate limits.
-- Mappls rendering separated from backend geospatial progress and rolling-speed ETA; robust historical segment medians follow real data collection. No RAG or current ML claim.
+- Google Maps rendering separated from backend geospatial progress and rolling-speed ETA; robust historical segment medians follow real data collection. No RAG or current ML claim.
 - SMTP advisor email, Expo/native mobile push, and Node.js notification workers.
 - Privacy-by-design boundaries: no passenger accounts, no QR attendance, no public phone/roll/faculty/bus-pass identifiers, administrator-only contacts, auditable sensitive changes, and revocable authentication.
 
@@ -919,7 +919,7 @@ The project treats reliability and honesty as core features: a passed stop never
 
 ### Current result
 
-The existing repository provides a release-candidate foundation and passes 59 backend tests in this revision. The expanded September requirements remain partially unimplemented; Section 23 identifies the actual gaps. Backend work precedes new frontend work. Supabase deployment, Mappls integration, real notifications, device/road calibration, and supervised pilot acceptance must not be described as completed results.
+The existing repository provides a release-candidate foundation and passes 59 backend tests in this revision. The expanded September requirements remain partially unimplemented; Section 23 identifies the actual gaps. Backend work precedes new frontend work. Supabase deployment, Google Maps integration, real notifications, device/road calibration, and supervised pilot acceptance must not be described as completed results.
 
 ### Suggested keywords
 
@@ -945,7 +945,7 @@ Prisma as ORM.
 
 Supabase-managed PostgreSQL as the hosted PostgreSQL database.
 
-Mappls for maps, route display and location-related map functionality.
+Google Maps for maps, route display and location-related map functionality.
 
 Node.js background workers for notification processing.
 
@@ -979,7 +979,7 @@ Supabase PostgreSQL
 ```
 
 Map rendering/location UI:
-Mappls
+Google Maps
 
 ### 22.2 GPS update strategy
 
@@ -1045,7 +1045,7 @@ Driver
 → route progress
 → Socket.IO trip room
 → connected passenger/admin clients
-→ Mappls marker position update
+→ Google Maps marker position update
 
 Provide a Refresh button only as a fallback.
 
@@ -1057,11 +1057,11 @@ Last updated: X seconds ago
 
 and appropriate stale/offline states.
 
-### 22.5 Mappls
+### 22.5 Google Maps
 
-Use Mappls as the mapping platform.
+Use Google Maps as the mapping platform.
 
-Mappls features required:
+Google Maps features required:
 
 live bus marker
 stop markers
@@ -1072,7 +1072,7 @@ admin stop/map preview
 incident/emergency map visualization
 navigation/directions where required
 
-Do not couple ETA calculation directly to Mappls rendering.
+Do not couple ETA calculation directly to Google Maps rendering.
 
 The backend remains authoritative for route progress, ETA and stop states.
 
@@ -1082,7 +1082,7 @@ Generate/cache/persist the route polyline/geometry associated with a published r
 
 When the route is edited/published, update the route geometry.
 
-Then passenger clients can render the stored published route on Mappls.
+Then passenger clients can render the stored published route on Google Maps.
 
 ### 22.6 GPS validation
 
@@ -1645,7 +1645,7 @@ Compare passenger coordinates with the college's stored stop coordinates.
 
 Use a simple geographic-distance calculation locally/backend or an appropriate spatial query.
 
-Mappls displays the result.
+Google Maps displays the result.
 
 Show preferably:
 
@@ -1657,7 +1657,7 @@ scheduled time where applicable
 
 Allow user to select the route/stop.
 
-Do not call Mappls Nearby search for every request if the college stops are already stored in our database and can be compared efficiently.
+Do not call Google Maps Nearby search for every request if the college stops are already stored in our database and can be compared efficiently.
 
 ### 22.22 Home route search
 
@@ -1716,7 +1716,7 @@ Add:
 
 Full Route
 
-Display the entire selected bus route on Mappls.
+Display the entire selected bus route on Google Maps.
 
 Show:
 
@@ -1859,7 +1859,7 @@ Admin receives the same status.
 
 Other drivers see that assistance is already assigned.
 
-Use Mappls to show incident location and, when needed, route/directions for the assisting bus.
+Use Google Maps to show incident location and, when needed, route/directions for the assisting bus.
 
 Do not automatically claim that the assisting bus has sufficient empty seats because the system tracks assigned passengers, not actual occupied seats.
 
@@ -1958,7 +1958,7 @@ dashboard
 routes
 capacities
 stops
-Mappls previews
+Google Maps previews
 route geometry
 schedules
 drivers
@@ -1998,7 +1998,7 @@ Database:
 Supabase PostgreSQL
 
 Maps:
-Mappls
+Google Maps
 
 Advisor notifications:
 SMTP
@@ -2013,7 +2013,7 @@ Do not commit:
 Supabase private database credentials
 SMTP credentials
 JWT secrets
-private Mappls credentials
+private Google Maps credentials
 push-provider secrets
 
 ### 22.35 Security and privacy
@@ -2080,7 +2080,7 @@ Validation:
 Zod
 
 Maps:
-Mappls
+Google Maps
 
 Driver location:
 Expo/native background GPS
@@ -2146,9 +2146,9 @@ Paths in this subsection are relative to backend/src unless a different root is 
 | Requirement | Classification | Actual repository evidence / remaining work |
 | --- | --- | --- |
 | Supabase hosting | EXTERNAL CONFIGURATION REQUIRED | PostgreSQL via DATABASE_URL exists. Live Supabase connectivity, permissions, migrations and restore were not verified; retain Express/Prisma/auth/workers |
-| Mappls | NEW FEATURE — NOT IMPLEMENTED; EXTERNAL CONFIGURATION REQUIRED; FIELD TESTING REQUIRED | mobile-app/src/components/route-map.native.tsx uses react-native-maps; no Mappls integration found |
+| Google Maps | NEW FEATURE — NOT IMPLEMENTED; EXTERNAL CONFIGURATION REQUIRED; FIELD TESTING REQUIRED | mobile-app/src/components/route-map.native.tsx uses react-native-maps; no Google Maps integration found |
 | Combined app role-selection landing | REQUIRES MODIFICATION | The repository already has passenger and driver routes in one Expo package, but mobile-app/src/app/index.tsx opens passenger route selection directly and exposes Driver Login as a button. Replace it after B9 with the required two-avatar Passenger/Driver landing screen |
-| Sub-100 MB production installation | REQUIRES MODIFICATION; FIELD TESTING REQUIRED | Current app source/assets are small, but no final Mappls-enabled production artifact exists. Remove unused native modules where safe and verify the production AAB through Google Play on representative devices |
+| Sub-100 MB production installation | REQUIRES MODIFICATION; FIELD TESTING REQUIRED | Current app source/assets are small, but no final Google Maps-enabled production artifact exists. Remove unused native modules where safe and verify the production AAB through Google Play on representative devices |
 | Adaptive GPS transmission | REQUIRES MODIFICATION; FIELD TESTING REQUIRED | DriverConsoleScreen.tsx and lib/backgroundLocation.ts use fixed 5,000 ms location options; no specified adaptive sending policy found. Simulate/backend-test policy now; native sender later |
 | GPS retention | NEW FEATURE — NOT IMPLEMENTED; EXTERNAL CONFIGURATION REQUIRED | backend/scripts/run-retention.js only cleans rate-limit buckets and inactive sessions, not raw/rejected GPS; add guarded scheduled cleanup. Metadata migration only if needed |
 | Robust historical segments | NEW FEATURE — NOT IMPLEMENTED; DATABASE MIGRATION REQUIRED; FIELD TESTING REQUIRED | eta.js uses recent clean points; schema has no segment sample/aggregate pipeline |
@@ -2161,7 +2161,7 @@ Paths in this subsection are relative to backend/src unless a different root is 
 | Bus Stop Near Me | NEW FEATURE — NOT IMPLEMENTED; FIELD TESTING REQUIRED for permission/display | Existing coordinates/haversine utility reusable; no nearest-stop workflow found |
 | Route-number search | REQUIRES MODIFICATION | passenger.js lists/selects routes; mobile-app/src/app/index.tsx renders cards without search. Extend discovery data with major stops/current state; UI later |
 | My Route | NEW FEATURE — NOT IMPLEMENTED for local preference | Published schedule data is reusable; no saved preferred route found. Device-local storage requires no passenger account/database identity |
-| Full Route | REQUIRES MODIFICATION; DATABASE MIGRATION REQUIRED; EXTERNAL CONFIGURATION REQUIRED | Existing map/ordered stops do not implement Mappls plus cached published geometry |
+| Full Route | REQUIRES MODIFICATION; DATABASE MIGRATION REQUIRED; EXTERNAL CONFIGURATION REQUIRED | Existing map/ordered stops do not implement Google Maps plus cached published geometry |
 | Bus Info | ALREADY IMPLEMENTED data foundation; REQUIRES MODIFICATION for finalized integration | passenger.js returns sanitized route, areas, driver name, capacity, assigned count, schedule/active state; dedicated UI/navigation is deferred |
 | Feedback | NEW FEATURE — NOT IMPLEMENTED; DATABASE MIGRATION REQUIRED | No feedback model/routes found; add spam-controlled anonymous intake and administrator status workflow |
 | Emergency reporting | NEW FEATURE — NOT IMPLEMENTED; DATABASE MIGRATION REQUIRED; EXTERNAL CONFIGURATION REQUIRED; FIELD TESTING REQUIRED | No incident model/routes/notification workflow; separate passenger unverified reports from trusted confirmation |
@@ -2179,12 +2179,12 @@ This checkpoint records verified progress and does not declare B1–B9 complete.
 - **Historical evidence and audit:** trip start captures route, schedule, roster and college-deadline snapshots. Completion distinguishes final-stop arrival evidence from manual end and stores unknown arrival explicitly. Administrator audit rows carry correlation references and a serialized, advisory-lock-protected hash chain. PostgreSQL append-only triggers rejected transaction-safe UPDATE and DELETE probes while preserving the original evidence. Broader complete-workflow mutation coverage remains.
 - **Roster replacement:** import confirmation binds the exact file SHA-256 and roster version. Publishing requires explicit confirmation and snapshots older affected trips before archival. Old passenger rows are not yet deleted: the destructive purge was deliberately deferred pending explicit authorization and backup evidence.
 - **Drivers and transfers:** inactive drivers cannot log in, start/resume GPS, or accept assistance; removal deactivates, unassigns and revokes sessions while preserving history. The separate XLSX driver template/preview/confirm workflow is implemented with formula/duplicate/route/identity validation, exact file and master fingerprints, atomic swaps, safe deactivation, active-trip blocking and one-time generated credentials outside the workbook/audit. Active-trip transfer is confirmed, serialized, audited and immediately rechecks socket/end ownership.
-- **Mappls and discovery:** schedule publication persists Mappls polyline, distance, duration, fingerprint and generation metadata. Reads reuse that geometry; a credential-safe synthetic Cloud routing probe succeeded. Stop-coordinate edits pre-generate every affected published geometry and commit all-or-nothing. Active trips use captured stop coordinates. Public APIs support route/area/major-stop search, active state, ordered schedules, geometry and transient nearest stored stops without retaining passenger coordinates. The privacy verifier now creates and removes a complete synthetic public fixture rather than passing against an empty database.
+- **Google Maps and discovery:** schedule publication persists Google Maps polyline, distance, duration, fingerprint and generation metadata. Reads reuse that geometry; a credential-safe synthetic Cloud routing probe succeeded. Stop-coordinate edits pre-generate every affected published geometry and commit all-or-nothing. Active trips use captured stop coordinates. Public APIs support route/area/major-stop search, active state, ordered schedules, geometry and transient nearest stored stops without retaining passenger coordinates. The privacy verifier now creates and removes a complete synthetic public fixture rather than passing against an empty database.
 - **GPS, ETA and retention:** accepted marker/progress broadcasts do not wait for ETA recalculation. ETA refresh is cached at a configurable 15–30 second interval with transition invalidation. Backend simulation verifies separate five-second collection, 12-second normal, seven-second transition, 30-second stationary and immediate lifecycle/recovery sending contracts; native implementation remains deferred. Retention dry-run/apply logic covers accepted GPS at seven days only after derived evidence, rejected diagnostics at two days, calibration snapshots at 30 days and expired push devices. The Render blueprint schedules dry-run only; production apply scheduling and failure alerting remain an operational gate.
 - **Segments and actual lateness:** completed-trip stop evidence feeds idempotent adjacent-segment samples and median/MAD aggregates, preserving disruption classification. ETA consumes matching weekday/time-window history while current slow/stationary evidence outweighs optimistic history. Admin analytics separate completed, verified-arrival, unknown-arrival and actual-late counts and use verified arrivals as the late-percentage denominator. Production accuracy remains a field gate.
 - **Notify Me:** anonymous and driver device registration uses one-time management secrets; tokens are never returned after registration. Route/stop threshold preferences and durable 10/5/1-minute deduplication are implemented, including jump-skipping semantics. The push worker now includes Expo ticket submission, bounded retry, delayed receipt checks and invalid-token deactivation. Console simulation remains configured until Expo credentials/device tests are available.
 - **Feedback and emergencies:** bounded, rate-limited, duplicate-resistant feedback with audited admin states is implemented. Passenger emergencies remain unverified; own-trip driver/admin confirmation snapshots only fresh accepted bus GPS, creates nearest active-bus offers and requires a recent low-speed GPS sample plus explicit safely-stopped confirmation before atomic acceptance. Concurrent losing accepts cannot emit false acceptance. Administrator reassignment closes the current assignment and reopens only still-active alternatives with audit evidence. Provider/device and supervised operational tests remain.
-- **Contracts and verification at this checkpoint:** expanded v1 workflows are frozen in `docs/BACKEND_WORKFLOWS_V1.md`; `npm run verify:backend-acceptance` composes 16 local/hosted checks with bounded database retries. On 11 September 2026, one uninterrupted run passed all 16 checks in 208 seconds, including Prisma validation and **92/92 backend unit tests**, Supabase readiness, clean migration/seed, backup/restore, append-only audit, administrator session/cookie, socket isolation, shared rate limiting, public privacy, release API, adaptive GPS, a 10,000-row roster limit, five concurrent workers delivering 500 unique outbox messages, credential-safe Mappls geometry and retention dry-run. After provisioning the restricted identity, `npm run verify:restricted-acceptance` passed all 14 checks in 165 seconds without the migration credential. It verified all 27 RLS policies, 26 ordinary application-table CRUD grants, sequence access, append/read-only audit behavior, ten denied privilege-escalation operations, rollback-only mutations across all 27 application tables, two serialized competing roster publications, API/privacy/socket/session/outbox/rate-limit/load behavior, Mappls and retention dry-run. Production-mode local startup, restricted readiness and graceful shutdown also passed. The Render blueprint and hosted HTTPS/WSS verifier are prepared, but the service is not yet deployed because publishing the deployment branch requires explicit approval for the GitHub remote. No secret value was printed, committed, copied to documentation/tests, or added to `.env.example`.
+- **Contracts and verification at this checkpoint:** expanded v1 workflows are frozen in `docs/BACKEND_WORKFLOWS_V1.md`; `npm run verify:backend-acceptance` composes 16 local/hosted checks with bounded database retries. On 11 September 2026, one uninterrupted run passed all 16 checks in 208 seconds, including Prisma validation and **92/92 backend unit tests**, Supabase readiness, clean migration/seed, backup/restore, append-only audit, administrator session/cookie, socket isolation, shared rate limiting, public privacy, release API, adaptive GPS, a 10,000-row roster limit, five concurrent workers delivering 500 unique outbox messages, credential-safe Google Maps geometry and retention dry-run. After provisioning the restricted identity, `npm run verify:restricted-acceptance` passed all 14 checks in 165 seconds without the migration credential. It verified all 27 RLS policies, 26 ordinary application-table CRUD grants, sequence access, append/read-only audit behavior, ten denied privilege-escalation operations, rollback-only mutations across all 27 application tables, two serialized competing roster publications, API/privacy/socket/session/outbox/rate-limit/load behavior, Google Maps and retention dry-run. Production-mode local startup, restricted readiness and graceful shutdown also passed. The Render blueprint and hosted HTTPS/WSS verifier are prepared, but the service is not yet deployed because publishing the deployment branch requires explicit approval for the GitHub remote. No secret value was printed, committed, copied to documentation/tests, or added to `.env.example`.
 
 Phase implementation status at this checkpoint:
 
@@ -2194,7 +2194,7 @@ Phase implementation status at this checkpoint:
 | B1 | Supabase schema/restore and dedicated least-privilege runtime identity verified | Render deployment, hosted connectivity and monitoring |
 | B2 | Snapshot boundaries, append-only chained audit and all-table mutation coverage verified under the restricted role | Re-run hosted checks from the deployed Render process |
 | B3 | Passenger preview/confirm/snapshot, driver exchange, trip transfer and competing publication verified | Old-passenger deletion remains intentionally disabled pending separate authorization and backup policy |
-| B4 | Published/reused Mappls geometry, atomic coordinate regeneration and discovery DTOs implemented and backend-verified | Visual rendering is deferred to the frontend/mobile phase |
+| B4 | Published/reused Google Maps geometry, atomic coordinate regeneration and discovery DTOs implemented and backend-verified | Visual rendering is deferred to the frontend/mobile phase |
 | B5 | Adaptive contract simulation, independent ETA, fan-out/load behavior and guarded retention backend-verified | Native sender and road behavior remain deferred field gates |
 | B6 | Segment history, robust aggregates and actual lateness implemented | Production route calibration remains a field gate |
 | B7 | Subscriptions, threshold worker and Expo ticket/receipt behavior implemented | Real Expo credential/device delivery gate |
@@ -2245,7 +2245,7 @@ Implement Transfer Active Trip with confirmation, atomic ownership update, audit
 
 Persist/cache route geometry per published route/schedule version and regenerate on edited publication. Keep active-trip geometry stable and reuse it for readers. Extend route-number discovery with areas, major stops and active state; expose safe Bus Info and ordered fixed schedule for My Route.
 
-Provide nearest stored stops using validated transient coordinates/geographic distance, returning distances/routes/applicable schedule without retaining user location or repeatedly calling Mappls Nearby. Define Full Route, stop/map preview and incident geometry contracts independently of rendering, including unavailable-geometry fallback.
+Provide nearest stored stops using validated transient coordinates/geographic distance, returning distances/routes/applicable schedule without retaining user location or repeatedly calling Google Maps Nearby. Define Full Route, stop/map preview and incident geometry contracts independently of rendering, including unavailable-geometry fallback.
 
 **Exit gate:** repeated reads reuse published geometry; generation failure cannot corrupt published state; nearest-stop fixtures are deterministic; response allowlists exclude private fields; scheduled time and live ETA remain distinct.
 
@@ -2297,13 +2297,13 @@ Reconcile Section 23 against evidence, distinguishing local simulation, hosted c
 
 ### F1 — Deferred frontend implementation
 
-After B9, update the separately hosted React + Vite administrator WEBSITE and the single combined React Native + Expo + TypeScript Passenger + Driver app against verified contracts. Reuse applicable clients. Make the first mobile screen two large avatar/tiles labelled `Passenger` and `Driver`; Passenger opens the no-login dashboard and Driver opens login. Implement Sections 14–16 and 22: Mappls, automatic tracking/fallback Refresh, fixed-schedule My Route, route search, nearby stops, Bus Info/Full Route, Notify Me, feedback, emergencies and safely-stopped assistance. Implement the adaptive native sender and background behavior without weakening backend rules to fit UI shortcuts.
+After B9, update the separately hosted React + Vite administrator WEBSITE and the single combined React Native + Expo + TypeScript Passenger + Driver app against verified contracts. Reuse applicable clients. Make the first mobile screen two large avatar/tiles labelled `Passenger` and `Driver`; Passenger opens the no-login dashboard and Driver opens login. Implement Sections 14–16 and 22: Google Maps, automatic tracking/fallback Refresh, fixed-schedule My Route, route search, nearby stops, Bus Info/Full Route, Notify Me, feedback, emergencies and safely-stopped assistance. Implement the adaptive native sender and background behavior without weakening backend rules to fit UI shortcuts.
 
 **Exit gate:** builds and contract integration pass; role privacy, landing navigation, loading/error/offline/stale, accessibility, permission, push-token lifecycle and reconnect behavior are tested. The production AAB is analyzed and its fresh device-specific installation remains below the 100 MB target on representative supported Android devices.
 
 ### F2 — Devices, roads and supervised rollout
 
-Use approved college data, configured Mappls, real SMTP recipients and mobile push infrastructure. Test Android screen lock/battery vendors, foreground/background permissions/GPS, weak network, queue replay and push delivery. Compare ETA with actual arrivals, calibrate thresholds, evaluate historical baselines with sufficient samples and rehearse assistance safely. Begin with one route, then several, then all 31 after acceptance.
+Use approved college data, configured Google Maps, real SMTP recipients and mobile push infrastructure. Test Android screen lock/battery vendors, foreground/background permissions/GPS, weak network, queue replay and push delivery. Compare ETA with actual arrivals, calibrate thresholds, evaluate historical baselines with sufficient samples and rehearse assistance safely. Begin with one route, then several, then all 31 after acceptance.
 
 **Exit gate:** approved data, restore ownership, measured road/device results, browser sign-off and supervised operational acceptance. No RAG or current ML claim; future ML requires separate evaluation showing improvement.
 

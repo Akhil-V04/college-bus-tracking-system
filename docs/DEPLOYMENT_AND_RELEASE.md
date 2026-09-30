@@ -15,7 +15,7 @@ Frontend build/type checks remain deferred until backend Phase B9 is accepted.
 
 ## Container staging
 
-`render.yaml` is the backend deployment blueprint. Supply the restricted runtime `DATABASE_URL`, a 32+ character random `JWT_SECRET`, administrator email/hash, Mappls key, and eventual provider credentials through Render secret environment variables. Keep the owner-level `DIRECT_URL` outside runtime services and use it only in a controlled migration job or operator environment before promotion. Follow `SUPABASE_RENDER_DATABASE.md`. The scheduled retention service is dry-run only.
+`render.yaml` is the backend deployment blueprint. Supply the restricted runtime `DATABASE_URL`, a 32+ character random `JWT_SECRET`, administrator email/hash, Google Maps key, and eventual provider credentials through Render secret environment variables. Keep the owner-level `DIRECT_URL` outside runtime services and use it only in a controlled migration job or operator environment before promotion. Follow `SUPABASE_RENDER_DATABASE.md`. The scheduled retention service is dry-run only.
 
 The web service also requires the exact future administrator origin in `CORS_ORIGINS`; use a single HTTPS Vercel origin initially and add comma-separated approved origins only when needed. `REQUIRE_RESTRICTED_DB_ROLE=true` makes startup and `/health/ready` fail if Render accidentally receives the owner credential. Render terminates TLS for HTTPS/WSS, forwards one trusted proxy hop, and sends `SIGTERM`; the backend stops workers, closes Socket.IO/HTTP, disconnects Prisma, and bounds shutdown to ten seconds.
 

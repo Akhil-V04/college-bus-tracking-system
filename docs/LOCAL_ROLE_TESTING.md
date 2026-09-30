@@ -10,7 +10,7 @@ The backend workflows are ahead of the frontend. The current interfaces are suit
 - Passenger mode requires no login.
 - Driver mode uses a driver code and password.
 - The current mobile landing page opens the Passenger route list and provides a **Driver login** button. The finalized two-avatar Passenger/Driver landing screen is scheduled for the later frontend phase.
-- Backend Mappls routing and persisted route geometry can be tested. The mobile app still uses its reference map component; final native Mappls rendering is deferred.
+- Backend Google Maps routing and persisted route geometry can be tested. The mobile app still uses its reference map component; final native Google Maps rendering is deferred.
 - Real SMTP, Expo push delivery, background-GPS device certification, and road calibration are deferred. Their backend behavior uses simulations.
 
 ## 2. Recommended local test arrangement
@@ -30,11 +30,11 @@ Using Expo web for Passenger and Android for Driver avoids switching roles and s
 Required software:
 
 - Node.js 22 or newer and npm;
-- the existing private `backend/.env` with Supabase and Mappls configuration;
+- the existing private `backend/.env` with Supabase and Google Maps configuration;
 - Android Studio emulator or an Android phone for driver GPS testing;
 - all three package dependencies installed with `npm install`.
 
-Do not replace the configured `backend/.env` with `.env.example`. Never put database passwords, Mappls keys, JWT secrets, or administrator passwords in this guide, screenshots, commits, or chat.
+Do not replace the configured `backend/.env` with `.env.example`. Never put database passwords, Google Maps keys, JWT secrets, or administrator passwords in this guide, screenshots, commits, or chat.
 
 Verify the backend configuration without displaying its values:
 
@@ -94,7 +94,7 @@ Expected results:
 - `/health` returns `status: ok`;
 - `/health/ready` returns `status: ready` and `database: ok`;
 - the passenger route response includes synthetic Route `01`;
-- no response contains database credentials, Mappls credentials, driver phone numbers, licence numbers, password hashes, or passenger identifiers.
+- no response contains database credentials, Google Maps credentials, driver phone numbers, licence numbers, password hashes, or passenger identifiers.
 
 Keep this terminal open while testing all roles.
 
@@ -128,11 +128,11 @@ Run this checklist:
    - Editing the driver without a password preserves the current password.
    - Changing the password invalidates the driver's previous token.
 
-4. **Schedule and Mappls geometry**
+4. **Schedule and Google Maps geometry**
    - If the driver later sees **Published route geometry is not ready**, create a new MORNING schedule version for Route 01.
    - Add at least `Demo Start` followed by `College`, with increasing times.
    - Validate the schedule and publish it.
-   - Publication should succeed only when the backend Mappls Cloud credential is available; generated geometry is persisted and reused.
+   - Publication should succeed only when the backend Google Maps Cloud credential is available; generated geometry is persisted and reused.
 
 5. **Roster**
    - Open the published `2026-27` roster and confirm Demo Student and Demo Faculty are assigned to Route 01.
@@ -207,7 +207,7 @@ Passenger mode never asks for a name, phone number, password, or account.
 9. Keep this screen open while testing Driver mode. After the driver starts and shares GPS, confirm live state/ETA updates arrive without refreshing the page.
 10. Pause driver GPS or disconnect the driver's network and confirm Passenger mode eventually reports stale/unavailable tracking rather than inventing a location.
 
-The final route search, nearest-stop, saved My Route, Notify Me, feedback, emergency, two-avatar landing, and native Mappls presentation are later frontend tasks. Their backend contracts are tested separately.
+The final route search, nearest-stop, saved My Route, Notify Me, feedback, emergency, two-avatar landing, and native Google Maps presentation are later frontend tasks. Their backend contracts are tested separately.
 
 ## 9. Test Driver mode
 
@@ -277,7 +277,7 @@ cd E:\bus-tracking-system\backend
 npm run verify:restricted-acceptance
 ```
 
-Expected: `restrictedAcceptanceChecks: 14` and `status: passed`. This suite uses synthetic fixtures, rolls back or removes them, keeps notification providers simulated, calls Mappls without displaying the credential, and never enables old-passenger purge.
+Expected: `restrictedAcceptanceChecks: 14` and `status: passed`. This suite uses synthetic fixtures, rolls back or removes them, keeps notification providers simulated, calls Google Maps without displaying the credential, and never enables old-passenger purge.
 
 Run the heavier `npm run verify:backend-acceptance` only as a release gate. It uses the private migration connection for clean-schema and backup/restore drills and may take several minutes.
 
@@ -303,7 +303,7 @@ Copy this table into an issue or private test note:
 | | Passenger | Route 01 during trip | Live progress/ETA updates arrive | | | |
 | | Admin | Operations/audit after trip | State and evidence are visible | | | |
 
-Acceptable evidence includes status codes, timestamps, redacted screenshots, and synthetic route IDs. Never capture passwords, cookies, authorization headers, database URLs, Mappls keys, push tokens, phone numbers, or real passenger records.
+Acceptable evidence includes status codes, timestamps, redacted screenshots, and synthetic route IDs. Never capture passwords, cookies, authorization headers, database URLs, Google Maps keys, push tokens, phone numbers, or real passenger records.
 
 ## 13. Common failures
 
@@ -314,8 +314,8 @@ Acceptable evidence includes status codes, timestamps, redacted screenshots, and
 | Android cannot reach backend | Use `10.0.2.2` for emulator or the laptop LAN IP for a physical phone; verify firewall/private network |
 | Driver login fails | Use the exact active driver code and the latest password set by the administrator |
 | Start trip says no route assignment | Assign the driver to Route 01 in Routes & Capacity |
-| Start trip says roster/schedule/geometry missing | Publish the synthetic roster and a valid two-stop schedule with Mappls geometry |
+| Start trip says roster/schedule/geometry missing | Publish the synthetic roster and a valid two-stop schedule with Google Maps geometry |
 | Passenger shows no live data | Start the trip, enable driver sharing, and keep device time/network/location accurate |
 | Background GPS does not work in Expo Go | Use an Expo development build; test foreground fallback meanwhile |
-| Route map is not the final Mappls design | Native Mappls/frontend integration is deferred; verify backend geometry with `npm run verify:mappls` |
+| Route map is not the final Google Maps design | Native Google Maps/frontend integration is deferred; verify backend geometry with `npm run verify:googleMaps` |
 | SMTP or push is simulated | This is expected until real provider credentials and device testing are authorized |

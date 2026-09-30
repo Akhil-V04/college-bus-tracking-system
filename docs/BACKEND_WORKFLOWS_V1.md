@@ -12,7 +12,7 @@ Confirmation is serialized and atomic. A changed file or driver master returns `
 
 ## Schedule geometry and active-trip stability
 
-- `POST /schedules/:id/publish` validates the schedule, obtains Mappls route geometry, and stores the encoded polyline, distance, duration, fingerprint, provider, and generation time with the published version.
+- `POST /schedules/:id/publish` validates the schedule, obtains Google Maps route geometry, and stores the encoded polyline, distance, duration, fingerprint, provider, and generation time with the published version.
 - `POST /schedules/:id/geometry/regenerate` regenerates stored geometry for a published schedule.
 - `PUT /stops/:id/coordinates` pre-generates every affected published geometry and then commits the stop and geometries together. A provider failure leaves all prior coordinates and geometries unchanged.
 
@@ -22,7 +22,7 @@ Trip start captures route, schedule, roster, stop, and deadline evidence. Active
 
 - `GET /passenger/routes` supports route, area, major-stop, and active-state discovery.
 - `GET /passenger/routes/:routeNo` returns safe Bus Info, ordered published stops, fixed schedule, persisted geometry, active trip state, and live information when available.
-- `GET /passenger/stops/nearest?latitude=...&longitude=...` calculates distance to stored stops. Coordinates are validated and used transiently; they are not persisted and do not invoke Mappls Nearby.
+- `GET /passenger/stops/nearest?latitude=...&longitude=...` calculates distance to stored stops. Coordinates are validated and used transiently; they are not persisted and do not invoke Google Maps Nearby.
 - `GET /passenger/trips/:tripId/eta/:stopId` returns live ETA separately from the scheduled stop time, including confidence/stale or fallback state.
 
 Public DTOs exclude driver phone/licence, credentials, private passenger identifiers, advisor recipients, and administrator evidence.
@@ -75,4 +75,4 @@ The Render blueprint schedules only the dry-run report. Enabling destructive sch
 
 ## Verification boundary
 
-Run `npm run verify:backend-acceptance` from `backend`. It performs the current unit, hosted Supabase migration/restore, privacy, room isolation, auth/session, audit immutability, load, Mappls, and retention dry-run checks. After provisioning the deployment identity, run `npm run verify:runtime-role` with its `DATABASE_URL`. The acceptance command does not claim real SMTP delivery, Expo credentials/device delivery, approved college data, or road testing.
+Run `npm run verify:backend-acceptance` from `backend`. It performs the current unit, hosted Supabase migration/restore, privacy, room isolation, auth/session, audit immutability, load, Google Maps, and retention dry-run checks. After provisioning the deployment identity, run `npm run verify:runtime-role` with its `DATABASE_URL`. The acceptance command does not claim real SMTP delivery, Expo credentials/device delivery, approved college data, or road testing.

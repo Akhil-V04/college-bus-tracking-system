@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { scheduleVersionSchema, scheduleStopSchema } = require('../schemas');
 const { validate } = require('../crud');
 const { writeAdminAudit } = require('../lib/adminAudit');
-const { MapplsGeometryError, requestRouteGeometry } = require('../lib/mapplsGeometry');
+const { GoogleMapsGeometryError, requestRouteGeometry } = require('../lib/googleMapsGeometry');
 
 const router = express.Router();
 
@@ -230,7 +230,7 @@ router.post('/:id/publish', async (req, res) => {
   try {
     geometry = await requestRouteGeometry(schedule.stops);
   } catch (error) {
-    if (error instanceof MapplsGeometryError) {
+    if (error instanceof GoogleMapsGeometryError) {
       return res.status(error.statusCode).json({
         error: 'Route geometry could not be generated',
         code: error.code,
@@ -299,7 +299,7 @@ router.post('/:id/geometry/regenerate', async (req, res) => {
     });
     return res.json(updated);
   } catch (error) {
-    if (error instanceof MapplsGeometryError) {
+    if (error instanceof GoogleMapsGeometryError) {
       await prisma.scheduleVersion.update({
         where: { id },
         data: { geometryErrorCode: error.code },
