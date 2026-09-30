@@ -58,7 +58,7 @@ function safeProviderCode(value) {
 async function requestRouteGeometry(stops, options = {}) {
   const points = normalizeRoutePoints(stops);
   const apiKey = options.apiKey === undefined
-    ? process.env.GOOGLE_MAPS_API_KEY
+    ? process.env.BACKEND_GOOGLE_MAPS_API_KEY
     : options.apiKey;
     
   if (!apiKey || !String(apiKey).trim()) {

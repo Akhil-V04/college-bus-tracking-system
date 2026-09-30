@@ -35,7 +35,7 @@ module.exports = {
       ],
       config: {
         googleMaps: {
-          apiKey: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+          apiKey: process.env.MOBILE_GOOGLE_MAPS_API_KEY
         }
       }
     },
