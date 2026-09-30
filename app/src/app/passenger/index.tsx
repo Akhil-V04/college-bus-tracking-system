@@ -104,6 +104,28 @@ export default function PassengerDashboard() {
           <Text style={styles.menuChevron}>›</Text>
         </Pressable>
 
+        <Pressable
+          style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+          onPress={() => router.push('/passenger/report-issue')}
+        >
+          <View style={styles.menuIconBox}>
+            <Text style={styles.menuIconEmoji}>⚠️</Text>
+          </View>
+          <Text style={styles.menuLabel}>Report an Issue</Text>
+          <Text style={styles.menuChevron}>›</Text>
+        </Pressable>
+
+        <Pressable
+          style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+          onPress={() => router.push('/passenger/assistant')}
+        >
+          <View style={styles.menuIconBox}>
+            <Text style={styles.menuIconEmoji}>💬</Text>
+          </View>
+          <Text style={styles.menuLabel}>Transport Assistant</Text>
+          <Text style={styles.menuChevron}>›</Text>
+        </Pressable>
+
         {/* Routes Section */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Available Routes</Text>

@@ -18,6 +18,8 @@ export default function PassengerLayout() {
       <Stack.Screen name="search" options={{ headerShown: false }} />
       <Stack.Screen name="[routeNo]" options={{ headerShown: false }} />
       <Stack.Screen name="emergency" options={{ headerShown: false }} />
+      <Stack.Screen name="report-issue" options={{ headerShown: false }} />
+      <Stack.Screen name="assistant" options={{ headerShown: false }} />
     </Stack>
   );
 }

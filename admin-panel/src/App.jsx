@@ -12,6 +12,8 @@ import LateAlertsScreen from './screens/LateAlertsScreen';
 import AuditLogScreen from './screens/AuditLogScreen';
 import OperationsScreen from './screens/OperationsScreen';
 import SessionsScreen from './screens/SessionsScreen';
+import IssuesScreen from './screens/IssuesScreen';
+import KnowledgeScreen from './screens/KnowledgeScreen';
 
 export default function App() {
   return (
@@ -30,6 +32,8 @@ export default function App() {
             <Route path="operations" element={<OperationsScreen />} />
             <Route path="audit-log" element={<AuditLogScreen />} />
             <Route path="sessions" element={<SessionsScreen />} />
+            <Route path="issues" element={<IssuesScreen />} />
+            <Route path="knowledge" element={<KnowledgeScreen />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

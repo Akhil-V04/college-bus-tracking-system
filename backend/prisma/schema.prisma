@@ -146,6 +146,7 @@ model RouteService {
   emergencyReports  EmergencyReport[]
   segmentSamples    SegmentTravelSample[]
   segmentAggregates SegmentTravelAggregate[]
+  Issue             Issue[]
 
   @@index([name])
 }
@@ -631,9 +632,11 @@ model FeedbackReport {
   createdAt       DateTime         @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime         @updatedAt @db.Timestamptz(3)
   resolvedAt      DateTime?        @db.Timestamptz(3)
+  issueId         String?          @db.Uuid
 
   routeService RouteService? @relation(fields: [routeServiceId], references: [id], onDelete: SetNull)
   trip         Trip?         @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  issue        Issue?        @relation("IssueReports", fields: [issueId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@index([fingerprintHash, createdAt])
@@ -684,4 +687,83 @@ model EmergencyAssistance {
 
   @@unique([emergencyReportId, candidateDriverId])
   @@index([candidateDriverId, status])
+}
+
+// ==========================================
+// AI ISSUE INTELLIGENCE & RAG MODELS
+// ==========================================
+
+model Issue {
+  id             String           @id @default(uuid()) @db.Uuid
+  title          String
+  category       FeedbackCategory
+  routeServiceId Int?
+  status         FeedbackStatus   @default(NEW)
+  reportCount    Int              @default(0)
+  firstReportAt  DateTime         @db.Timestamptz(3)
+  latestReportAt DateTime         @db.Timestamptz(3)
+  createdAt      DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime         @updatedAt @db.Timestamptz(3)
+
+  routeService RouteService?    @relation(fields: [routeServiceId], references: [id], onDelete: SetNull)
+  reports      FeedbackReport[] @relation("IssueReports")
+
+  @@index([status, createdAt])
+  @@index([routeServiceId, status])
+}
+
+model ReportEmbedding {
+  id             String   @id @default(uuid()) @db.Uuid
+  reportId       String   @unique @db.Uuid
+  // embeddingVector Unsupported("vector(768)")?
+  embeddingArray Float[] // Fallback if pgvector isn't used yet
+  modelVersion   String
+  generatedAt    DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model KnowledgeDocument {
+  id         String   @id @default(uuid()) @db.Uuid
+  title      String
+  sourceType String // e.g. "POLICY", "FAQ"
+  content    String   @db.Text
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  chunks KnowledgeChunk[]
+}
+
+model KnowledgeChunk {
+  id         String   @id @default(uuid()) @db.Uuid
+  documentId String   @db.Uuid
+  chunkIndex Int
+  content    String   @db.Text
+  tokenCount Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  document  KnowledgeDocument   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  embedding KnowledgeEmbedding?
+
+  @@unique([documentId, chunkIndex])
+}
+
+model KnowledgeEmbedding {
+  chunkId        String   @id @db.Uuid
+  // embeddingVector Unsupported("vector(768)")?
+  embeddingArray Float[] // Fallback if pgvector isn't used yet
+  modelVersion   String
+  generatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  chunk KnowledgeChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+}
+
+model AssistantConversation {
+  id             String   @id @default(uuid()) @db.Uuid
+  sessionId      String // passenger tracking context, IP hash, etc.
+  role           String // "USER" or "ASSISTANT"
+  content        String   @db.Text
+  sourceChunkIds String[] @db.Uuid // If assistant, the chunks it used
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([sessionId, createdAt])
 }

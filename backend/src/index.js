@@ -23,6 +23,9 @@ const operationsRoutes = require('./routes/operations');
 const pushSubscriptionRoutes = require('./routes/push-subscriptions');
 const feedbackRoutes = require('./routes/feedback');
 const emergencyRoutes = require('./routes/emergencies');
+const issuesRoutes = require('./routes/issues');
+const assistantRoutes = require('./routes/assistant');
+const knowledgeRoutes = require('./routes/knowledge');
 const setupSocket = require('./socket');
 const { setupStaleTripMonitor } = require('./lib/staleTripMonitor');
 const { setupNotificationOutboxWorker } = require('./lib/notificationOutbox');
@@ -93,6 +96,9 @@ function mountApi(router) {
   router.use('/push-subscriptions', pushSubscriptionRoutes);
   router.use('/feedback', feedbackRoutes);
   router.use('/emergencies', emergencyRoutes);
+  router.use('/issues', issuesRoutes);
+  router.use('/assistant', assistantRoutes);
+  router.use('/knowledge', knowledgeRoutes);
 }
 
 // Existing clients remain compatible while new clients use the stable v1 prefix.
