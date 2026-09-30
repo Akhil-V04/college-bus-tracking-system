@@ -1,8 +1,8 @@
 const crypto = require('crypto');
 
-const DEFAULT_BASE_URL = 'https://maps.googleapis.com/maps/api/directions/json';
+const DEFAULT_BASE_URL = 'https://routes.googleapis.com/directions/v2:computeRoutes';
 const DEFAULT_TIMEOUT_MS = 10_000;
-const MAX_ROUTE_POINTS = 27; // 1 origin + 1 destination + 25 waypoints max for basic Google Maps API
+const MAX_ROUTE_POINTS = 27; // 1 origin + 1 destination + 25 intermediate waypoints
 
 class GoogleMapsGeometryError extends Error {
   constructor(code, message, statusCode = 502) {
@@ -55,6 +55,10 @@ function safeProviderCode(value) {
   return normalized.slice(0, 80) || 'UNKNOWN';
 }
 
+function pointToLocation(point) {
+  return { location: { latLng: { latitude: point.latitude, longitude: point.longitude } } };
+}
+
 async function requestRouteGeometry(stops, options = {}) {
   const points = normalizeRoutePoints(stops);
   const apiKey = options.apiKey === undefined
@@ -65,24 +69,19 @@ async function requestRouteGeometry(stops, options = {}) {
     throw new GoogleMapsGeometryError('NOT_CONFIGURED', 'Google Maps route geometry is not configured', 503);
   }
 
-  const baseUrl = String(options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
-  const url = new URL(baseUrl);
+  const url = String(options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
   
-  const origin = points[0];
-  const destination = points[points.length - 1];
-  
-  url.searchParams.set('origin', `${origin.latitude},${origin.longitude}`);
-  url.searchParams.set('destination', `${destination.latitude},${destination.longitude}`);
+  const payload = {
+    origin: pointToLocation(points[0]),
+    destination: pointToLocation(points[points.length - 1]),
+    travelMode: 'DRIVE',
+    polylineQuality: 'HIGH_QUALITY',
+  };
   
   if (points.length > 2) {
-    const waypoints = points.slice(1, -1)
-      .map(p => `${p.latitude},${p.longitude}`)
-      .join('|');
-    url.searchParams.set('waypoints', waypoints);
+    payload.intermediates = points.slice(1, -1).map(pointToLocation);
   }
   
-  url.searchParams.set('key', String(apiKey).trim());
-
   const timeoutMs = positiveInteger(
     options.timeoutMs || process.env.GOOGLE_MAPS_REQUEST_TIMEOUT_MS,
     DEFAULT_TIMEOUT_MS
@@ -94,8 +93,13 @@ async function requestRouteGeometry(stops, options = {}) {
 
   try {
     const response = await (options.fetchImpl || fetch)(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': String(apiKey).trim(),
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline',
+      },
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
     
@@ -110,35 +114,19 @@ async function requestRouteGeometry(stops, options = {}) {
       throw new GoogleMapsGeometryError('INVALID_RESPONSE', 'Google Maps returned an invalid route response');
     }
     
-    if (body.status !== 'OK') {
-      throw new GoogleMapsGeometryError(
-        `PROVIDER_${safeProviderCode(body.status)}`,
-        'Google Maps could not generate route geometry'
-      );
-    }
-    
     const route = body.routes?.[0];
-    if (!route || !route.overview_polyline || !route.overview_polyline.points) {
+    if (!route || !route.polyline || !route.polyline.encodedPolyline) {
       throw new GoogleMapsGeometryError('NO_GEOMETRY', 'Google Maps returned no route geometry');
-    }
-    
-    let totalDistance = 0;
-    let totalDuration = 0;
-    if (route.legs) {
-      for (const leg of route.legs) {
-        if (leg.distance?.value) totalDistance += leg.distance.value;
-        if (leg.duration?.value) totalDuration += leg.duration.value;
-      }
     }
 
     return {
-      geometryPolyline: route.overview_polyline.points,
+      geometryPolyline: route.polyline.encodedPolyline,
       geometryFormat: 'polyline5',
-      geometryDistanceMeters: totalDistance > 0 ? totalDistance : null,
-      geometryDurationSeconds: totalDuration > 0 ? totalDuration : null,
+      geometryDistanceMeters: typeof route.distanceMeters === 'number' ? route.distanceMeters : null,
+      geometryDurationSeconds: typeof route.duration === 'string' ? parseInt(route.duration, 10) : null,
       geometryGeneratedAt: new Date(),
       geometryFingerprint: routeGeometryFingerprint(stops),
-      geometryProvider: 'GOOGLE',
+      geometryProvider: 'GOOGLE_ROUTES_API',
       geometryErrorCode: null,
     };
   } catch (error) {
