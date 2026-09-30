@@ -64,6 +64,9 @@ export default function PassengerDashboard() {
           </View>
           <Text style={styles.headerTitle}>Campus Transit</Text>
         </View>
+        <Pressable onPress={() => router.push('/passenger/notifications')} style={({pressed}) => [{ opacity: pressed ? 0.7 : 1, padding: 8 }]}>
+          <Text style={{ fontSize: 22 }}>🔔</Text>
+        </Pressable>
       </View>
 
       <ScrollView

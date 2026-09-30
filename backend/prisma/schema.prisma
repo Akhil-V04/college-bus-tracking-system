@@ -694,16 +694,19 @@ model EmergencyAssistance {
 // ==========================================
 
 model Issue {
-  id             String           @id @default(uuid()) @db.Uuid
-  title          String
-  category       FeedbackCategory
-  routeServiceId Int?
-  status         FeedbackStatus   @default(NEW)
-  reportCount    Int              @default(0)
-  firstReportAt  DateTime         @db.Timestamptz(3)
-  latestReportAt DateTime         @db.Timestamptz(3)
-  createdAt      DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime         @updatedAt @db.Timestamptz(3)
+  id                 String           @id @default(uuid()) @db.Uuid
+  title              String
+  category           FeedbackCategory
+  routeServiceId     Int?
+  status             FeedbackStatus   @default(NEW)
+  reportCount        Int              @default(0)
+  firstReportAt      DateTime         @db.Timestamptz(3)
+  latestReportAt     DateTime         @db.Timestamptz(3)
+  representativeText String?          @db.Text
+  embeddingArray     Float[] // Centroid embedding
+  modelVersion       String?
+  createdAt          DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(3)
 
   routeService RouteService?    @relation(fields: [routeServiceId], references: [id], onDelete: SetNull)
   reports      FeedbackReport[] @relation("IssueReports")
@@ -712,13 +715,52 @@ model Issue {
   @@index([routeServiceId, status])
 }
 
-model ReportEmbedding {
-  id             String   @id @default(uuid()) @db.Uuid
-  reportId       String   @unique @db.Uuid
-  // embeddingVector Unsupported("vector(768)")?
-  embeddingArray Float[] // Fallback if pgvector isn't used yet
-  modelVersion   String
-  generatedAt    DateTime @default(now()) @db.Timestamptz(3)
+// ==========================================
+// ADMIN BROADCAST NOTIFICATIONS
+// ==========================================
+
+enum NotificationPriority {
+  NORMAL
+  IMPORTANT
+  URGENT
+}
+
+enum NotificationTargetType {
+  GLOBAL
+  ROUTE
+}
+
+model AdminNotification {
+  id               Int                    @id @default(autoincrement())
+  title            String
+  message          String                 @db.Text
+  priority         NotificationPriority   @default(NORMAL)
+  targetType       NotificationTargetType @default(GLOBAL)
+  status           String                 @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED
+  publishedAt      DateTime               @default(now()) @db.Timestamptz(3)
+  expiresAt        DateTime?              @db.Timestamptz(3)
+  createdByAdminId String
+  createdAt        DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @db.Timestamptz(3)
+
+  targetRoutes AdminNotificationRoute[]
+
+  @@index([status, expiresAt])
+  @@index([targetType])
+}
+
+model AdminNotificationRoute {
+  id             Int @id @default(autoincrement())
+  notificationId Int
+  routeServiceId Int
+
+  notification AdminNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  // We use routeServiceId instead of routeNo directly to maintain referential integrity
+  // Note: we don't strictly relation this to RouteService if routes can be deleted, 
+  // but it's safe to Cascade delete if the route is deleted.
+
+  @@unique([notificationId, routeServiceId])
+  @@index([routeServiceId])
 }
 
 model KnowledgeDocument {

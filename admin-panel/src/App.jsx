@@ -14,6 +14,7 @@ import OperationsScreen from './screens/OperationsScreen';
 import SessionsScreen from './screens/SessionsScreen';
 import IssuesScreen from './screens/IssuesScreen';
 import KnowledgeScreen from './screens/KnowledgeScreen';
+import NotificationsScreen from './screens/NotificationsScreen';
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="sessions" element={<SessionsScreen />} />
             <Route path="issues" element={<IssuesScreen />} />
             <Route path="knowledge" element={<KnowledgeScreen />} />
+            <Route path="notifications" element={<NotificationsScreen />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

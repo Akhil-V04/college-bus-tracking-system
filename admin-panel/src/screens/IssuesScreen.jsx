@@ -105,6 +105,25 @@ export default function IssuesScreen() {
               <div><strong>Status:</strong> <StatusBadge value={selectedIssue.status} /></div>
               <div><strong>First reported:</strong> {new Date(selectedIssue.firstReportAt).toLocaleString('en-IN')}</div>
               <div><strong>Latest report:</strong> {new Date(selectedIssue.latestReportAt).toLocaleString('en-IN')}</div>
+              {selectedIssue.representativeText && (
+                <div><strong>Representative Text:</strong> <br/><i>"{selectedIssue.representativeText}"</i></div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+               <button className="button button-ghost" onClick={async () => {
+                 const targetId = prompt('Enter the ID of the issue you want to merge this into:');
+                 if (targetId) {
+                   try {
+                     await api.post(`/issues/${selectedIssue.id}/merge`, { targetIssueId: targetId });
+                     setIssues(prev => prev.filter(i => i.id !== selectedIssue.id));
+                     setSelectedIssue(null);
+                     setMessage({ type: 'success', text: 'Issue merged successfully.' });
+                   } catch(err) {
+                     setMessage({ type: 'error', text: errorMessage(err, 'Merge failed.') });
+                   }
+                 }
+               }}>Merge into another issue</button>
             </div>
 
             <h3 style={{ marginBottom: 12 }}>Linked Reports</h3>

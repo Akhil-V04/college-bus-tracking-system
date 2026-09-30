@@ -7,13 +7,13 @@ const MATCH_THRESHOLD = 0.82;
 const TIME_WINDOW_HOURS = 12;
 
 /**
- * Process a new feedback report for semantic clustering.
+ * Process a new feedback report for semantic clustering using centroid embeddings.
  * 
  * @param {Object} report The saved FeedbackReport object
  */
 async function processReportForClustering(report) {
   try {
-    // 1. Generate Embedding for the report
+    // 1. Generate temporary embedding for the report
     const textToEmbed = `Category: ${report.category}. Description: ${report.description}. ${report.additionalInfo || ''}`;
     const embedding = await generateEmbedding(textToEmbed);
     
@@ -21,66 +21,44 @@ async function processReportForClustering(report) {
       return null;
     }
 
-    // Save the report embedding
-    await prisma.reportEmbedding.create({
-      data: {
-        reportId: report.id,
-        embeddingArray: embedding,
-        modelVersion: process.env.EMBEDDING_MODEL || 'text-embedding-004'
-      }
-    });
-
-    // 2. Find Candidate Issues based on deterministic context
-    // We only want to cluster with recent issues on the same route/category
+    // 2. Find Active Issues based on deterministic context
+    // We only want to cluster with recent issues on the same route/category that are not resolved
     const recentTime = new Date(Date.now() - TIME_WINDOW_HOURS * 60 * 60 * 1000);
     
-    // Find reports in the same context to check their embeddings
-    const contextReports = await prisma.feedbackReport.findMany({
+    const candidateIssues = await prisma.issue.findMany({
       where: {
-        id: { not: report.id },
         category: report.category,
         routeServiceId: report.routeServiceId,
-        createdAt: { gte: recentTime }
+        status: { in: ['NEW', 'UNDER_REVIEW'] },
+        latestReportAt: { gte: recentTime }
       },
       select: {
         id: true,
-        issueId: true
+        embeddingArray: true
       }
     });
     
-    if (contextReports.length === 0) {
-      return await createNewIssue(report);
+    if (candidateIssues.length === 0) {
+      return await createNewIssue(report, embedding);
     }
     
-    const contextReportIds = contextReports.map(r => r.id);
-    
-    // Get embeddings for those context reports
-    const embeddings = await prisma.reportEmbedding.findMany({
-      where: {
-        reportId: { in: contextReportIds }
-      }
-    });
-    
-    // 3. Perform semantic similarity search
+    // 3. Perform semantic similarity search against Issue Centroids
     const matches = findSimilar(
       embedding, 
-      embeddings.map(e => ({ id: e.reportId, embeddingArray: e.embeddingArray })),
+      candidateIssues.filter(i => i.embeddingArray && i.embeddingArray.length > 0),
       MATCH_THRESHOLD
     );
     
     if (matches.length > 0) {
       // Find the issue associated with the best match
-      const bestMatchReportId = matches[0].id;
-      const matchReport = contextReports.find(r => r.id === bestMatchReportId);
+      const bestMatchIssueId = matches[0].id;
       
-      if (matchReport && matchReport.issueId) {
-        // Attach to existing issue
-        return await attachToIssue(report.id, matchReport.issueId);
-      }
+      // Attach to existing issue
+      return await attachToIssue(report, bestMatchIssueId);
     }
     
     // 4. Create a new issue if no matches
-    return await createNewIssue(report);
+    return await createNewIssue(report, embedding);
     
   } catch (error) {
     console.error('Error clustering report:', error);
@@ -89,7 +67,7 @@ async function processReportForClustering(report) {
   }
 }
 
-async function createNewIssue(report) {
+async function createNewIssue(report, embedding) {
   const issue = await prisma.issue.create({
     data: {
       title: `${report.category} Issue (Auto-generated)`,
@@ -98,7 +76,10 @@ async function createNewIssue(report) {
       status: 'NEW',
       reportCount: 1,
       firstReportAt: report.createdAt,
-      latestReportAt: report.createdAt
+      latestReportAt: report.createdAt,
+      representativeText: report.description,
+      embeddingArray: embedding,
+      modelVersion: process.env.EMBEDDING_MODEL || 'text-embedding-004'
     }
   });
   
@@ -110,10 +91,10 @@ async function createNewIssue(report) {
   return issue;
 }
 
-async function attachToIssue(reportId, issueId) {
+async function attachToIssue(report, issueId) {
   // Attach report
   await prisma.feedbackReport.update({
-    where: { id: reportId },
+    where: { id: report.id },
     data: { issueId: issueId }
   });
   
@@ -132,3 +113,4 @@ async function attachToIssue(reportId, issueId) {
 module.exports = {
   processReportForClustering
 };
+

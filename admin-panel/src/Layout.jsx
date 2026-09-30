@@ -16,6 +16,7 @@ const navigation = [
 
   { to: '/issues', label: 'AI Issues', icon: '◆' },
   { to: '/knowledge', label: 'Knowledge base', icon: '▣' },
+  { to: '/notifications', label: 'Notifications', icon: '🔔' },
 ];
 
 export default function Layout() {

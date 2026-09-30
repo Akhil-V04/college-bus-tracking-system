@@ -99,6 +99,7 @@ function mountApi(router) {
   router.use('/issues', issuesRoutes);
   router.use('/assistant', assistantRoutes);
   router.use('/knowledge', knowledgeRoutes);
+  router.use('/admin-notifications', require('./routes/admin-notifications'));
 }
 
 // Existing clients remain compatible while new clients use the stable v1 prefix.
