@@ -7,9 +7,11 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { PrismaClient } = require('@prisma/client');
 
-const sourceUrl = new URL(process.env.DATABASE_URL || '');
-if (!['postgresql:', 'postgres:'].includes(sourceUrl.protocol)) {
-  throw new Error('Backup/restore verification requires a PostgreSQL DATABASE_URL');
+const runtimeUrl = new URL(process.env.DATABASE_URL || '');
+const sourceUrl = new URL(process.env.DIRECT_URL || '');
+if (!['postgresql:', 'postgres:'].includes(runtimeUrl.protocol) ||
+    !['postgresql:', 'postgres:'].includes(sourceUrl.protocol)) {
+  throw new Error('Backup/restore verification requires PostgreSQL DATABASE_URL and DIRECT_URL');
 }
 
 const suffix = `${Date.now()}_${Math.random().toString(16).slice(2, 7)}`;
@@ -36,7 +38,7 @@ const pgEnv = {
   PGDATABASE: databaseName,
 };
 
-const main = new PrismaClient();
+const main = new PrismaClient({ datasources: { db: { url: sourceUrl.toString() } } });
 let scoped = null;
 let schemaExists = false;
 
@@ -46,7 +48,11 @@ function runCommand(command, args, env = process.env) {
     env,
     encoding: 'utf8',
     shell: false,
+    timeout: 60_000,
   });
+  if (result.error?.code === 'ETIMEDOUT') {
+    throw new Error(`${path.basename(command)} exceeded the 60-second verification limit`);
+  }
   if (result.status !== 0) {
     const detail = (result.stderr || result.error?.message || '').trim().slice(0, 2000);
     throw new Error(`${path.basename(command)} failed with exit code ${result.status}: ${detail}`);
@@ -59,6 +65,7 @@ function runPrisma(args) {
   return runCommand(process.execPath, [prismaCli, ...args], {
     ...process.env,
     DATABASE_URL: schemaUrl.toString(),
+    DIRECT_URL: schemaUrl.toString(),
   });
 }
 
@@ -118,7 +125,7 @@ async function verifyRestoredSchema() {
   ]);
   assert.equal(routes, 1);
   assert.equal(passengers, 2);
-  assert.equal(migrations[0].count, 5);
+  assert.equal(migrations[0].count, 8);
   assert.deepEqual(notificationColumns.map((row) => row.columnName).sort(), ['idempotencyKey', 'lockToken', 'nextAttemptAt']);
   assert.deepEqual(adminSessionColumns.map((row) => row.columnName).sort(), ['adminIdentifier', 'expiresAt', 'revokedAt']);
   assert.deepEqual(rateLimitColumns.map((row) => row.columnName).sort(), ['hits', 'key', 'resetAt']);

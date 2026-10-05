@@ -80,7 +80,7 @@ router.post('/login', loginRateLimiter, async (req, res) => {
     }
 
     const driver = await prisma.driver.findUnique({ where: { driverCode: String(identifier).trim() } });
-    const valid = driver && (await bcrypt.compare(password, driver.passwordHash));
+    const valid = driver && driver.status === 'ACTIVE' && (await bcrypt.compare(password, driver.passwordHash));
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
     const expiresAt = adminSessionExpiry(new Date(), AUTH_POLICY.driverTokenMinutes);
@@ -121,12 +121,13 @@ router.get('/me', requireAuth(['admin', 'driver']), async (req, res) => {
       driverCode: true,
       name: true,
       sessionVersion: true,
+      status: true,
       assignedRoute: {
         select: { id: true, routeNo: true, name: true, areaCovered: true, capacity: true },
       },
     },
   });
-  if (!driver || driver.sessionVersion !== req.user.sessionVersion) {
+  if (!driver || driver.status !== 'ACTIVE' || driver.sessionVersion !== req.user.sessionVersion) {
     return res.status(401).json({ error: 'Driver session has been revoked' });
   }
   return privateResponse(res).json({ role: 'driver', ...driver });

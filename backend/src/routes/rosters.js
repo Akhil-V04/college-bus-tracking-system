@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const multer = require('multer');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
@@ -7,6 +8,7 @@ const { createRateLimiters } = require('../middleware/security');
 const { rosterCreateSchema, rosterPassengerSchema } = require('../schemas');
 const { validate, parsePagination } = require('../crud');
 const { writeAdminAudit } = require('../lib/adminAudit');
+const { acquireRosterPublicationLock } = require('../lib/rosterPublicationLock');
 const {
   RosterExchangeError,
   buildRosterExportCsv,
@@ -217,12 +219,12 @@ router.get('/:id/export', async (req, res) => {
     const buffer = format === 'csv'
       ? buildRosterExportCsv(passengers)
       : await buildRosterExportXlsx(roster, passengers);
-    await writeAdminAudit(prisma, req, {
-      action: 'ROSTER_EXPORTED',
-      entityType: 'TransportRoster',
-      entityId: roster.id,
-      afterSummary: { format, passengerRows: passengers.length, academicYear: roster.academicYear, version: roster.version },
-    });
+    await prisma.$transaction((tx) => writeAdminAudit(tx, req, {
+        action: 'ROSTER_EXPORTED',
+        entityType: 'TransportRoster',
+        entityId: roster.id,
+        afterSummary: { format, passengerRows: passengers.length, academicYear: roster.academicYear, version: roster.version },
+      }));
     return sendDownload(
       res,
       buffer,
@@ -239,6 +241,13 @@ router.post('/:id/import/preview', rosterImportRateLimiter, receiveRosterFile, a
   const rosterId = Number(req.params.id);
   if (!Number.isInteger(rosterId) || rosterId <= 0) return res.status(400).json({ error: 'Invalid roster ID' });
   if (!req.file) return res.status(400).json({ error: 'Upload one file using the multipart field named file' });
+
+  const previewDigest = String(req.get('x-preview-digest') || '');
+  const rosterVersion = Number(req.get('x-roster-version'));
+  const actualDigest = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+  if (!/^[a-f0-9]{64}$/.test(previewDigest) || previewDigest !== actualDigest || req.body?.confirmed !== 'true') {
+    return res.status(409).json({ error: 'Preview this exact file and explicitly confirm it before import' });
+  }
   try {
     const preview = await previewRosterImport(prisma, rosterId, req.file.buffer, req.file.originalname);
     const { normalizedRows: _internalRows, ...clientPreview } = preview;
@@ -258,6 +267,9 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
     const imported = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "TransportRoster" WHERE "id" = ${rosterId} FOR UPDATE`;
       const { roster, context } = await loadValidationContext(tx, rosterId);
+      if (roster.version !== rosterVersion) {
+        throw new RosterExchangeError('Roster version changed; preview the file again', 409);
+      }
       const results = validateRosterRows(parsed.rows, context);
       const summary = summarizeResults(results);
       if (summary.invalidRows > 0) {
@@ -521,9 +533,53 @@ router.post('/:id/publish', async (req, res) => {
   const { roster, errors, warnings } = await validateRoster(id);
   if (!roster) return res.status(404).json({ error: 'Roster not found' });
   if (roster.status !== 'DRAFT') return res.status(409).json({ error: 'Only a draft roster can be published' });
+  if (req.body?.confirmed !== true) {
+    return res.status(400).json({ error: 'confirmed must be true to replace the published roster' });
+  }
   if (errors.length) return res.status(400).json({ error: 'Roster validation failed', errors, warnings });
 
   const published = await prisma.$transaction(async (tx) => {
+    await acquireRosterPublicationLock(tx);
+    const lockedRoster = await tx.transportRoster.findUnique({ where: { id } });
+    if (!lockedRoster || lockedRoster.status !== 'DRAFT') {
+      throw Object.assign(new Error('Roster changed while publication was waiting; reload and confirm again'), { statusCode: 409 });
+    }
+    const previous = await tx.transportRoster.findMany({
+      where: { status: 'PUBLISHED' }, select: { id: true, academicYear: true },
+    });
+    const previousIds = previous.map((item) => item.id);
+    const affectedTrips = previousIds.length ? (await tx.trip.findMany({
+      where: { rosterId: { in: previousIds } },
+      select: { id: true, rosterId: true, routeServiceId: true, status: true, rosterSnapshot: true },
+    })).filter((trip) => !trip.rosterSnapshot) : [];
+    for (const trip of affectedTrips) {
+      const passengers = await tx.rosterPassenger.findMany({
+        where: { rosterId: trip.rosterId, routeServiceId: trip.routeServiceId },
+        select: {
+          passengerType: true, name: true, rollNo: true, department: true, year: true,
+          section: true, boardingStopId: true,
+        },
+      });
+      const students = passengers
+        .filter((item) => item.passengerType === 'STUDENT')
+        .map(({ passengerType: _type, ...item }) => item);
+      const snapshot = {
+        rosterId: trip.rosterId,
+        academicYear: previous.find((item) => item.id === trip.rosterId)?.academicYear || null,
+        passengerCount: passengers.length,
+        studentCount: students.length,
+        facultyCount: passengers.length - students.length,
+        ...(trip.status === 'RUNNING' ? { students } : {}),
+      };
+      await tx.trip.update({
+        where: { id: trip.id },
+        data: {
+          rosterSnapshot: snapshot,
+          rosterSnapshotKind: trip.status === 'RUNNING' ? 'OPERATIONAL' : 'COMPACT',
+          snapshotCapturedAt: new Date(),
+        },
+      });
+    }
     const archived = await tx.transportRoster.updateMany({
       where: { status: 'PUBLISHED' },
       data: { status: 'ARCHIVED' },
@@ -537,10 +593,20 @@ router.post('/:id/publish', async (req, res) => {
       entityType: 'TransportRoster',
       entityId: id,
       beforeSummary: rosterAuditSummary(roster),
-      afterSummary: { ...rosterAuditSummary(updated), archivedRosters: archived.count },
+      afterSummary: {
+        ...rosterAuditSummary(updated),
+        archivedRosters: archived.count,
+        protectedTrips: affectedTrips.length,
+        passengerPurge: 'DEFERRED_PENDING_EXPLICIT_AUTHORIZATION',
+      },
     });
     return updated;
-  });
+  }).catch((error) => ({ publicationError: error }));
+  if (published.publicationError) {
+    const error = published.publicationError;
+    if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+    throw error;
+  }
   return res.json({ roster: published, warnings });
 });
 

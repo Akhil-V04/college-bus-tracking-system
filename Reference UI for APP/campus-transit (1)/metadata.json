@@ -1,0 +1,6 @@
+{
+  "name": "Campus Transit",
+  "description": "College campus transit and shuttle tracker with real-time route search, live telemetry, and emergency assistance.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

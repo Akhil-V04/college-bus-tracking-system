@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { etaRange, passedStopResult } = require('../src/lib/eta');
+const { etaRange, passedStopResult, segmentTravelSeconds } = require('../src/lib/eta');
 
 test('ETA ranges widen as confidence decreases and never become negative', () => {
   const high = etaRange(20, 'HIGH');
@@ -18,4 +18,11 @@ test('passed stop results never return a negative ETA and distinguish possible s
   assert.equal(skipped.status, 'POSSIBLY_SKIPPED');
   assert.equal(passed.etaMinutes, null);
   assert.equal(skipped.etaRangeMinutes, null);
+});
+
+test('live slow movement outweighs optimistic history and stationary evidence pauses ETA', () => {
+  assert.equal(segmentTravelSeconds(1000, 10, true, 120), 360);
+  assert.equal(segmentTravelSeconds(1000, 60, true, 120), 120);
+  assert.equal(segmentTravelSeconds(1000, 25, null, 180), 180);
+  assert.equal(segmentTravelSeconds(1000, 25, false, 180), null);
 });

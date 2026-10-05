@@ -3,9 +3,11 @@ const assert = require('node:assert/strict');
 
 const {
   buildAdminAuditData,
+  adminAuditHashData,
   changedFields,
   sanitizeAuditSummary,
 } = require('../src/lib/adminAudit');
+const { computeRecordHash } = require('../src/lib/hashChain');
 const { parseAuditQuery } = require('../src/routes/admin-audit-logs');
 
 test('audit summaries remove credentials, phone numbers, and passenger identifiers recursively', () => {
@@ -32,6 +34,25 @@ test('changedFields reports only allowed fields whose values changed', () => {
   assert.deepEqual(
     changedFields({ name: 'Old', phone: '1', capacity: 40 }, { name: 'New', phone: '2', capacity: 40 }, ['name', 'capacity']),
     ['name']
+  );
+});
+
+test('administrator audit hash input is deterministic and includes its previous link', () => {
+  const row = {
+    adminIdentifier: 'admin',
+    action: 'ROUTE_UPDATED',
+    entityType: 'RouteService',
+    entityId: '8',
+    beforeSummary: { capacity: 40 },
+    afterSummary: { capacity: 45 },
+    correlationId: 'request-1',
+    createdAt: new Date('2026-09-09T08:00:00.000Z'),
+    previousHash: 'previous',
+  };
+  assert.equal(computeRecordHash(adminAuditHashData(row)), computeRecordHash(adminAuditHashData({ ...row })));
+  assert.notEqual(
+    computeRecordHash(adminAuditHashData(row)),
+    computeRecordHash(adminAuditHashData({ ...row, previousHash: 'changed' }))
   );
 });
 

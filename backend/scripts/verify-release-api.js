@@ -36,7 +36,13 @@ async function main() {
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
     assert.match(operations.headers['cache-control'], /no-store/);
-    for (const key of ['runningTrips', 'staleRunningTrips', 'activeLateAlerts', 'pendingNotifications', 'failedNotifications', 'activeAdminSessions']) {
+    for (const key of [
+      'runningTrips', 'staleRunningTrips', 'activeLateAlerts',
+      'pendingNotifications', 'failedNotifications',
+      'pendingPushNotifications', 'failedPushNotifications', 'activePushSubscriptions',
+      'unresolvedFeedback', 'activeEmergencies', 'unverifiedEmergencies',
+      'openAssistanceOffers', 'activeAdminSessions',
+    ]) {
       assert.equal(Number.isInteger(operations.body[key]), true, `missing integer ${key}`);
     }
     await request(app)

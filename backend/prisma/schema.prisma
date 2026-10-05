@@ -10,8 +10,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum PassengerType {
@@ -59,6 +60,73 @@ enum NotificationStatus {
   FAILED
 }
 
+enum DriverStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum SegmentSampleClassification {
+  NORMAL
+  DISRUPTION
+}
+
+enum PushPlatform {
+  ANDROID
+  IOS
+}
+
+enum PushDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum FeedbackCategory {
+  DRIVER_BEHAVIOUR
+  DRIVING
+  BUS_CONDITION
+  ROUTE_STOP_ISSUE
+  SCHEDULE_ISSUE
+  APP_ISSUE
+  OTHER
+}
+
+enum FeedbackStatus {
+  NEW
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum EmergencyCategory {
+  BUS_BREAKDOWN
+  ACCIDENT
+}
+
+enum EmergencyReporterType {
+  PASSENGER
+  DRIVER
+  ADMIN
+}
+
+enum EmergencyStatus {
+  UNVERIFIED
+  CONFIRMED
+  ASSISTANCE_REQUESTED
+  ASSISTANCE_ACCEPTED
+  RESOLVED
+  CANCELLED
+  FALSE_REPORT
+}
+
+enum AssistanceStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  CLOSED
+}
+
 model RouteService {
   id          Int      @id @default(autoincrement())
   routeNo     String   @unique
@@ -69,10 +137,16 @@ model RouteService {
   createdAt   DateTime @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime @updatedAt @db.Timestamptz(3)
 
-  driver           Driver?           @relation(fields: [driverId], references: [id], onDelete: SetNull)
-  schedules        ScheduleVersion[]
-  rosterPassengers RosterPassenger[]
-  trips            Trip[]
+  driver            Driver?                  @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  schedules         ScheduleVersion[]
+  rosterPassengers  RosterPassenger[]
+  trips             Trip[]
+  stopAlerts        StopAlertSubscription[]
+  feedbackReports   FeedbackReport[]
+  emergencyReports  EmergencyReport[]
+  segmentSamples    SegmentTravelSample[]
+  segmentAggregates SegmentTravelAggregate[]
+  Issue             Issue[]
 
   @@index([name])
 }
@@ -87,25 +161,36 @@ model Stop {
 
   scheduleStops    ScheduleStop[]
   rosterPassengers RosterPassenger[]
+  stopAlerts       StopAlertSubscription[]
 
   @@index([name])
 }
 
 model ScheduleVersion {
-  id             Int            @id @default(autoincrement())
-  routeServiceId Int
-  name           String
-  direction      String         @default("MORNING")
-  status         ScheduleStatus @default(DRAFT)
-  version        Int            @default(1)
-  effectiveFrom  DateTime?      @db.Timestamptz(3)
-  publishedAt    DateTime?      @db.Timestamptz(3)
-  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+  id                      Int            @id @default(autoincrement())
+  routeServiceId          Int
+  name                    String
+  direction               String         @default("MORNING")
+  status                  ScheduleStatus @default(DRAFT)
+  version                 Int            @default(1)
+  effectiveFrom           DateTime?      @db.Timestamptz(3)
+  publishedAt             DateTime?      @db.Timestamptz(3)
+  geometryPolyline        String?        @db.Text
+  geometryFormat          String?
+  geometryDistanceMeters  Float?
+  geometryDurationSeconds Float?
+  geometryGeneratedAt     DateTime?      @db.Timestamptz(3)
+  geometryFingerprint     String?
+  geometryProvider        String?
+  geometryErrorCode       String?
+  createdAt               DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt               DateTime       @updatedAt @db.Timestamptz(3)
 
-  routeService RouteService   @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
-  stops        ScheduleStop[]
-  trips        Trip[]
+  routeService      RouteService             @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  stops             ScheduleStop[]
+  trips             Trip[]
+  segmentSamples    SegmentTravelSample[]
+  segmentAggregates SegmentTravelAggregate[]
 
   @@unique([routeServiceId, direction, version])
   @@index([routeServiceId, status])
@@ -120,9 +205,13 @@ model ScheduleStop {
   createdAt         DateTime @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime @updatedAt @db.Timestamptz(3)
 
-  scheduleVersion ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Cascade)
-  stop            Stop            @relation(fields: [stopId], references: [id], onDelete: Restrict)
-  tripEvents      TripStopEvent[]
+  scheduleVersion       ScheduleVersion          @relation(fields: [scheduleVersionId], references: [id], onDelete: Cascade)
+  stop                  Stop                     @relation(fields: [stopId], references: [id], onDelete: Restrict)
+  tripEvents            TripStopEvent[]
+  segmentSamplesFrom    SegmentTravelSample[]    @relation("SegmentSampleFrom")
+  segmentSamplesTo      SegmentTravelSample[]    @relation("SegmentSampleTo")
+  segmentAggregatesFrom SegmentTravelAggregate[] @relation("SegmentAggregateFrom")
+  segmentAggregatesTo   SegmentTravelAggregate[] @relation("SegmentAggregateTo")
 
   @@unique([scheduleVersionId, stopId])
   @@unique([scheduleVersionId, sequenceOrder])
@@ -130,18 +219,26 @@ model ScheduleStop {
 }
 
 model Driver {
-  id             Int      @id @default(autoincrement())
-  driverCode     String   @unique
-  name           String
-  phone          String   @unique
-  licenseNo      String
-  passwordHash   String
-  sessionVersion Int      @default(1)
-  createdAt      DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  id                 Int          @id @default(autoincrement())
+  driverCode         String       @unique
+  name               String
+  phone              String       @unique
+  licenseNo          String
+  passwordHash       String
+  sessionVersion     Int          @default(1)
+  status             DriverStatus @default(ACTIVE)
+  deactivatedAt      DateTime?    @db.Timestamptz(3)
+  deactivationReason String?
+  createdAt          DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @db.Timestamptz(3)
 
-  assignedRoute RouteService?
-  trips         Trip[]
+  assignedRoute       RouteService?
+  trips               Trip[]
+  transfersFrom       TripDriverTransfer[]     @relation("TransferFromDriver")
+  transfersTo         TripDriverTransfer[]     @relation("TransferToDriver")
+  pushSubscriptions   PushDeviceSubscription[]
+  emergenciesReported EmergencyReport[]        @relation("EmergencyReporterDriver")
+  assistanceOffers    EmergencyAssistance[]    @relation("AssistanceDriver")
 }
 
 model AdminSession {
@@ -165,14 +262,15 @@ model RateLimitBucket {
 }
 
 model TransportRoster {
-  id           Int          @id @default(autoincrement())
-  name         String
-  academicYear String
-  status       RosterStatus @default(DRAFT)
-  version      Int          @default(1)
-  publishedAt  DateTime?    @db.Timestamptz(3)
-  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(3)
+  id                 Int          @id @default(autoincrement())
+  name               String
+  academicYear       String
+  status             RosterStatus @default(DRAFT)
+  version            Int          @default(1)
+  publishedAt        DateTime?    @db.Timestamptz(3)
+  passengersPurgedAt DateTime?    @db.Timestamptz(3)
+  createdAt          DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @db.Timestamptz(3)
 
   passengers RosterPassenger[]
   trips      Trip[]
@@ -225,26 +323,44 @@ model ClassAdvisor {
 }
 
 model Trip {
-  id                Int        @id @default(autoincrement())
-  routeServiceId    Int
-  driverId          Int
-  rosterId          Int
-  scheduleVersionId Int
-  date              DateTime   @db.Timestamptz(3)
-  startTime         DateTime?  @db.Timestamptz(3)
-  endTime           DateTime?  @db.Timestamptz(3)
-  status            TripStatus @default(SCHEDULED)
-  currentStopIndex  Int        @default(0)
-  createdAt         DateTime   @default(now()) @db.Timestamptz(3)
-  updatedAt         DateTime   @updatedAt @db.Timestamptz(3)
+  id                     Int        @id @default(autoincrement())
+  routeServiceId         Int
+  driverId               Int
+  rosterId               Int
+  scheduleVersionId      Int
+  date                   DateTime   @db.Timestamptz(3)
+  startTime              DateTime?  @db.Timestamptz(3)
+  endTime                DateTime?  @db.Timestamptz(3)
+  collegeDeadlineAt      DateTime?  @db.Timestamptz(3)
+  actualCollegeArrivalAt DateTime?  @db.Timestamptz(3)
+  actualDelayMinutes     Int?
+  routeSnapshot          Json?
+  scheduleSnapshot       Json?
+  rosterSnapshot         Json?
+  rosterSnapshotKind     String?
+  snapshotCapturedAt     DateTime?  @db.Timestamptz(3)
+  currentEta             Json?
+  currentEtaAt           DateTime?  @db.Timestamptz(3)
+  segmentAggregatedAt    DateTime?  @db.Timestamptz(3)
+  status                 TripStatus @default(SCHEDULED)
+  currentStopIndex       Int        @default(0)
+  createdAt              DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt              DateTime   @updatedAt @db.Timestamptz(3)
 
-  routeService    RouteService    @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
-  driver          Driver          @relation(fields: [driverId], references: [id], onDelete: Restrict)
-  roster          TransportRoster @relation(fields: [rosterId], references: [id], onDelete: Restrict)
-  scheduleVersion ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Restrict)
-  liveLocations   LiveLocation[]
-  stopEvents      TripStopEvent[]
-  lateAlerts      LateAlert[]
+  routeService         RouteService             @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  driver               Driver                   @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  roster               TransportRoster          @relation(fields: [rosterId], references: [id], onDelete: Restrict)
+  scheduleVersion      ScheduleVersion          @relation(fields: [scheduleVersionId], references: [id], onDelete: Restrict)
+  liveLocations        LiveLocation[]
+  stopEvents           TripStopEvent[]
+  lateAlerts           LateAlert[]
+  transfers            TripDriverTransfer[]
+  etaSnapshots         EtaCalibrationSnapshot[]
+  segmentSamples       SegmentTravelSample[]
+  stopAlertDeliveries  StopAlertDelivery[]
+  feedbackReports      FeedbackReport[]
+  emergencyReports     EmergencyReport[]
+  assistanceCandidates EmergencyAssistance[]    @relation("AssistanceCandidateTrip")
 
   @@index([routeServiceId, status])
   @@index([driverId, status])
@@ -338,8 +454,358 @@ model AdminAuditLog {
   entityId        String?
   beforeSummary   Json?
   afterSummary    Json?
+  correlationId   String?
+  previousHash    String?
+  recordHash      String?
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([entityType, entityId])
   @@index([createdAt])
+}
+
+model TripDriverTransfer {
+  id              Int      @id @default(autoincrement())
+  tripId          Int
+  fromDriverId    Int
+  toDriverId      Int
+  adminIdentifier String
+  reason          String?
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  trip       Trip   @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  fromDriver Driver @relation("TransferFromDriver", fields: [fromDriverId], references: [id], onDelete: Restrict)
+  toDriver   Driver @relation("TransferToDriver", fields: [toDriverId], references: [id], onDelete: Restrict)
+
+  @@index([tripId, createdAt])
+  @@index([fromDriverId])
+  @@index([toDriverId])
+}
+
+model EtaCalibrationSnapshot {
+  id           Int      @id @default(autoincrement())
+  tripId       Int
+  calculatedAt DateTime @default(now()) @db.Timestamptz(3)
+  payload      Json
+
+  trip Trip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([calculatedAt])
+  @@index([tripId, calculatedAt])
+}
+
+model SegmentTravelSample {
+  id                 Int                         @id @default(autoincrement())
+  tripId             Int
+  routeServiceId     Int
+  scheduleVersionId  Int
+  fromScheduleStopId Int
+  toScheduleStopId   Int
+  startedAt          DateTime                    @db.Timestamptz(3)
+  endedAt            DateTime                    @db.Timestamptz(3)
+  durationSeconds    Int
+  weekday            Int
+  timeWindow         String
+  classification     SegmentSampleClassification @default(NORMAL)
+  deviationScore     Float?
+  createdAt          DateTime                    @default(now()) @db.Timestamptz(3)
+
+  trip             Trip            @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  routeService     RouteService    @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  scheduleVersion  ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Restrict)
+  fromScheduleStop ScheduleStop    @relation("SegmentSampleFrom", fields: [fromScheduleStopId], references: [id], onDelete: Restrict)
+  toScheduleStop   ScheduleStop    @relation("SegmentSampleTo", fields: [toScheduleStopId], references: [id], onDelete: Restrict)
+
+  @@unique([tripId, fromScheduleStopId, toScheduleStopId])
+  @@index([routeServiceId, weekday, timeWindow])
+}
+
+model SegmentTravelAggregate {
+  id                 Int      @id @default(autoincrement())
+  routeServiceId     Int
+  scheduleVersionId  Int
+  fromScheduleStopId Int
+  toScheduleStopId   Int
+  weekday            Int
+  timeWindow         String
+  sampleCount        Int
+  medianSeconds      Float
+  averageSeconds     Float?
+  madSeconds         Float?
+  confidence         String
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+
+  routeService     RouteService    @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  scheduleVersion  ScheduleVersion @relation(fields: [scheduleVersionId], references: [id], onDelete: Restrict)
+  fromScheduleStop ScheduleStop    @relation("SegmentAggregateFrom", fields: [fromScheduleStopId], references: [id], onDelete: Restrict)
+  toScheduleStop   ScheduleStop    @relation("SegmentAggregateTo", fields: [toScheduleStopId], references: [id], onDelete: Restrict)
+
+  @@unique([routeServiceId, scheduleVersionId, fromScheduleStopId, toScheduleStopId, weekday, timeWindow])
+  @@index([routeServiceId, weekday, timeWindow])
+}
+
+model PushDeviceSubscription {
+  id                   String       @id @default(uuid()) @db.Uuid
+  pushToken            String       @unique
+  tokenHash            String       @unique
+  managementSecretHash String
+  platform             PushPlatform @default(ANDROID)
+  driverId             Int?
+  active               Boolean      @default(true)
+  lastSeenAt           DateTime     @default(now()) @db.Timestamptz(3)
+  expiresAt            DateTime?    @db.Timestamptz(3)
+  createdAt            DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(3)
+
+  driver     Driver?                  @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  stopAlerts StopAlertSubscription[]
+  outbox     PushNotificationOutbox[]
+
+  @@index([active, expiresAt])
+  @@index([driverId])
+}
+
+model StopAlertSubscription {
+  id                       String   @id @default(uuid()) @db.Uuid
+  pushDeviceSubscriptionId String   @db.Uuid
+  routeServiceId           Int
+  stopId                   Int
+  thresholdsMinutes        Int[]
+  active                   Boolean  @default(true)
+  createdAt                DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime @updatedAt @db.Timestamptz(3)
+
+  device       PushDeviceSubscription @relation(fields: [pushDeviceSubscriptionId], references: [id], onDelete: Cascade)
+  routeService RouteService           @relation(fields: [routeServiceId], references: [id], onDelete: Cascade)
+  stop         Stop                   @relation(fields: [stopId], references: [id], onDelete: Cascade)
+  deliveries   StopAlertDelivery[]
+
+  @@unique([pushDeviceSubscriptionId, routeServiceId, stopId])
+  @@index([routeServiceId, stopId, active])
+}
+
+model StopAlertDelivery {
+  id               Int                @id @default(autoincrement())
+  subscriptionId   String             @db.Uuid
+  tripId           Int
+  thresholdMinutes Int
+  status           PushDeliveryStatus
+  idempotencyKey   String             @unique
+  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
+  sentAt           DateTime?          @db.Timestamptz(3)
+
+  subscription StopAlertSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  trip         Trip                  @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriptionId, tripId, thresholdMinutes])
+  @@index([tripId, status])
+}
+
+model PushNotificationOutbox {
+  id                       Int                @id @default(autoincrement())
+  pushDeviceSubscriptionId String             @db.Uuid
+  idempotencyKey           String             @unique
+  payload                  Json
+  status                   PushDeliveryStatus @default(PENDING)
+  attempts                 Int                @default(0)
+  nextAttemptAt            DateTime           @default(now()) @db.Timestamptz(3)
+  lastAttemptAt            DateTime?          @db.Timestamptz(3)
+  lastError                String?
+  providerReceiptId        String?
+  sentAt                   DateTime?          @db.Timestamptz(3)
+  createdAt                DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime           @updatedAt @db.Timestamptz(3)
+
+  device PushDeviceSubscription @relation(fields: [pushDeviceSubscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+}
+
+model FeedbackReport {
+  id              String           @id @default(uuid()) @db.Uuid
+  category        FeedbackCategory
+  routeServiceId  Int?
+  tripId          Int?
+  description     String
+  additionalInfo  String?
+  fingerprintHash String
+  status          FeedbackStatus   @default(NEW)
+  createdAt       DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @db.Timestamptz(3)
+  resolvedAt      DateTime?        @db.Timestamptz(3)
+  issueId         String?          @db.Uuid
+
+  routeService RouteService? @relation(fields: [routeServiceId], references: [id], onDelete: SetNull)
+  trip         Trip?         @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  issue        Issue?        @relation("IssueReports", fields: [issueId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([fingerprintHash, createdAt])
+}
+
+model EmergencyReport {
+  id                 String                @id @default(uuid()) @db.Uuid
+  category           EmergencyCategory
+  reporterType       EmergencyReporterType
+  reporterDriverId   Int?
+  tripId             Int
+  routeServiceId     Int
+  status             EmergencyStatus       @default(UNVERIFIED)
+  description        String?
+  incidentLatitude   Float?
+  incidentLongitude  Float?
+  incidentLocationAt DateTime?             @db.Timestamptz(3)
+  incidentSource     String?
+  confirmedBy        String?
+  confirmedAt        DateTime?             @db.Timestamptz(3)
+  resolvedAt         DateTime?             @db.Timestamptz(3)
+  createdAt          DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime              @updatedAt @db.Timestamptz(3)
+
+  reporterDriver Driver?               @relation("EmergencyReporterDriver", fields: [reporterDriverId], references: [id], onDelete: SetNull)
+  trip           Trip                  @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  routeService   RouteService          @relation(fields: [routeServiceId], references: [id], onDelete: Restrict)
+  assistance     EmergencyAssistance[]
+
+  @@index([status, createdAt])
+  @@index([tripId, status])
+}
+
+model EmergencyAssistance {
+  id                String           @id @default(uuid()) @db.Uuid
+  emergencyReportId String           @db.Uuid
+  candidateTripId   Int
+  candidateDriverId Int
+  distanceMeters    Float?
+  status            AssistanceStatus @default(OFFERED)
+  respondedAt       DateTime?        @db.Timestamptz(3)
+  createdAt         DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @db.Timestamptz(3)
+
+  emergency       EmergencyReport @relation(fields: [emergencyReportId], references: [id], onDelete: Cascade)
+  candidateTrip   Trip            @relation("AssistanceCandidateTrip", fields: [candidateTripId], references: [id], onDelete: Restrict)
+  candidateDriver Driver          @relation("AssistanceDriver", fields: [candidateDriverId], references: [id], onDelete: Restrict)
+
+  @@unique([emergencyReportId, candidateDriverId])
+  @@index([candidateDriverId, status])
+}
+
+// ==========================================
+// AI ISSUE INTELLIGENCE & RAG MODELS
+// ==========================================
+
+model Issue {
+  id                 String           @id @default(uuid()) @db.Uuid
+  title              String
+  category           FeedbackCategory
+  routeServiceId     Int?
+  status             FeedbackStatus   @default(NEW)
+  reportCount        Int              @default(0)
+  firstReportAt      DateTime         @db.Timestamptz(3)
+  latestReportAt     DateTime         @db.Timestamptz(3)
+  representativeText String?          @db.Text
+  embeddingArray     Float[] // Centroid embedding
+  modelVersion       String?
+  createdAt          DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime         @updatedAt @db.Timestamptz(3)
+
+  routeService RouteService?    @relation(fields: [routeServiceId], references: [id], onDelete: SetNull)
+  reports      FeedbackReport[] @relation("IssueReports")
+
+  @@index([status, createdAt])
+  @@index([routeServiceId, status])
+}
+
+// ==========================================
+// ADMIN BROADCAST NOTIFICATIONS
+// ==========================================
+
+enum NotificationPriority {
+  NORMAL
+  IMPORTANT
+  URGENT
+}
+
+enum NotificationTargetType {
+  GLOBAL
+  ROUTE
+}
+
+model AdminNotification {
+  id               Int                    @id @default(autoincrement())
+  title            String
+  message          String                 @db.Text
+  priority         NotificationPriority   @default(NORMAL)
+  targetType       NotificationTargetType @default(GLOBAL)
+  status           String                 @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED
+  publishedAt      DateTime               @default(now()) @db.Timestamptz(3)
+  expiresAt        DateTime?              @db.Timestamptz(3)
+  createdByAdminId String
+  createdAt        DateTime               @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @db.Timestamptz(3)
+
+  targetRoutes AdminNotificationRoute[]
+
+  @@index([status, expiresAt])
+  @@index([targetType])
+}
+
+model AdminNotificationRoute {
+  id             Int @id @default(autoincrement())
+  notificationId Int
+  routeServiceId Int
+
+  notification AdminNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  // We use routeServiceId instead of routeNo directly to maintain referential integrity
+  // Note: we don't strictly relation this to RouteService if routes can be deleted, 
+  // but it's safe to Cascade delete if the route is deleted.
+
+  @@unique([notificationId, routeServiceId])
+  @@index([routeServiceId])
+}
+
+model KnowledgeDocument {
+  id         String   @id @default(uuid()) @db.Uuid
+  title      String
+  sourceType String // e.g. "POLICY", "FAQ"
+  content    String   @db.Text
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+
+  chunks KnowledgeChunk[]
+}
+
+model KnowledgeChunk {
+  id         String   @id @default(uuid()) @db.Uuid
+  documentId String   @db.Uuid
+  chunkIndex Int
+  content    String   @db.Text
+  tokenCount Int
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  document  KnowledgeDocument   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  embedding KnowledgeEmbedding?
+
+  @@unique([documentId, chunkIndex])
+}
+
+model KnowledgeEmbedding {
+  chunkId        String   @id @db.Uuid
+  // embeddingVector Unsupported("vector(768)")?
+  embeddingArray Float[] // Fallback if pgvector isn't used yet
+  modelVersion   String
+  generatedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  chunk KnowledgeChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+}
+
+model AssistantConversation {
+  id             String   @id @default(uuid()) @db.Uuid
+  sessionId      String // passenger tracking context, IP hash, etc.
+  role           String // "USER" or "ASSISTANT"
+  content        String   @db.Text
+  sourceChunkIds String[] @db.Uuid // If assistant, the chunks it used
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([sessionId, createdAt])
 }

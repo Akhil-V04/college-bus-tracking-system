@@ -1,13 +1,12 @@
 require('dotenv').config();
 
 const assert = require('node:assert/strict');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../src/lib/prisma');
 const {
   claimNotificationBatch,
   deliverClaimedNotification,
 } = require('../src/lib/notificationOutbox');
 
-const prisma = new PrismaClient();
 const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 const created = {};
 
@@ -74,6 +73,7 @@ async function createNotification(label) {
       recipient: `${label}@example.edu`,
       idempotencyKey: `outbox-integration-${suffix}-${label}`,
       payload: { advisorName: 'Integration Advisor', routeNo: created.route.routeNo, students: [] },
+      nextAttemptAt: new Date(0),
     },
   });
 }

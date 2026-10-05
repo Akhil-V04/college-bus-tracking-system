@@ -13,6 +13,10 @@ const navigation = [
   { to: '/operations', label: 'Operations', icon: '⌁' },
   { to: '/audit-log', label: 'Audit history', icon: '✓' },
   { to: '/sessions', label: 'Sessions', icon: '◌' },
+
+  { to: '/issues', label: 'AI Issues', icon: '◆' },
+  { to: '/knowledge', label: 'Knowledge base', icon: '▣' },
+  { to: '/notifications', label: 'Notifications', icon: '🔔' },
 ];
 
 export default function Layout() {

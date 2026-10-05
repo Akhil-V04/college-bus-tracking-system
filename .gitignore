@@ -17,6 +17,9 @@ backend/prisma/*.db
 backend/prisma/*.db-journal
 
 # React Native / Expo
+.expo/
+app/.expo/
+app/web-build/
 mobile-app/.expo/
 mobile-app/web-build/
 mobile-app/.metro-health-check*

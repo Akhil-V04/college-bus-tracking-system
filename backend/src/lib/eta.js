@@ -6,6 +6,8 @@ const {
   distanceToRouteMeters,
   locationFreshness,
 } = require('./liveTracking');
+const { operationalStops } = require('./tripSchedule');
+const { timeWindowFor } = require('./segmentStatistics');
 
 const DEFAULT_SPEED_KMH = 25;
 const MAX_SPEED_KMH = 90;
@@ -61,6 +63,23 @@ function etaRange(minutes, confidence) {
   return { min: Math.max(0, Math.floor(minutes - margin)), max: Math.ceil(minutes + margin) };
 }
 
+function segmentTravelSeconds(distanceMeters, speedKmh, moving, historicalSeconds = null) {
+  if (moving === false) return null;
+  const liveSeconds = speedKmh > 0 ? (distanceMeters / 1000 / speedKmh) * 3600 : null;
+  if (moving === true && liveSeconds != null && historicalSeconds != null) {
+    return Math.max(liveSeconds, historicalSeconds);
+  }
+  if (historicalSeconds != null) return historicalSeconds;
+  return liveSeconds;
+}
+
+function indiaWeekday(date) {
+  const name = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata', weekday: 'short',
+  }).format(date);
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(name);
+}
+
 function passedStopResult(tripId, selectedStopId, event, latest) {
   const possiblySkipped = event?.status === 'POSSIBLY_SKIPPED';
   return {
@@ -91,7 +110,7 @@ async function estimateArrival(tripId, selectedStopId = null) {
   });
   if (!trip) return null;
 
-  const stops = trip.scheduleVersion.stops;
+  const stops = operationalStops(trip);
   const selectedIndex =
     selectedStopId == null ? null : stops.findIndex((item) => item.stopId === Number(selectedStopId));
   if (selectedStopId != null && selectedIndex < 0) {
@@ -224,6 +243,19 @@ async function estimateArrival(tripId, selectedStopId = null) {
   }
 
   const { speedKmh, confidence, moving } = await estimateSpeed(tripId);
+  const aggregates = await prisma.segmentTravelAggregate.findMany({
+    where: {
+      routeServiceId: trip.routeServiceId,
+      scheduleVersionId: trip.scheduleVersionId,
+      weekday: indiaWeekday(latest.receivedAt),
+      timeWindow: timeWindowFor(latest.receivedAt),
+    },
+    select: { fromScheduleStopId: true, toScheduleStopId: true, medianSeconds: true },
+  });
+  const historicalByPair = new Map(aggregates.map((item) => [
+    `${item.fromScheduleStopId}:${item.toScheduleStopId}`,
+    item.medianSeconds,
+  ]));
   const stopResults = [];
   for (let index = 0; index < currentIndex; index += 1) {
     const event = eventByScheduleStop.get(stops[index].id);
@@ -238,30 +270,35 @@ async function estimateArrival(tripId, selectedStopId = null) {
     });
   }
 
-  let cumulativeKm =
-    haversineDistance(
-      latest.latitude,
-      latest.longitude,
-      stops[currentIndex].stop.latitude,
-      stops[currentIndex].stop.longitude
-    ) / 1000;
+  let cumulativeMeters = haversineDistance(
+    latest.latitude,
+    latest.longitude,
+    stops[currentIndex].stop.latitude,
+    stops[currentIndex].stop.longitude
+  );
+  let cumulativeSeconds = segmentTravelSeconds(cumulativeMeters, speedKmh, moving);
   for (let index = currentIndex; index < stops.length; index += 1) {
     if (index > currentIndex) {
-      cumulativeKm +=
-        haversineDistance(
-          stops[index - 1].stop.latitude,
-          stops[index - 1].stop.longitude,
-          stops[index].stop.latitude,
-          stops[index].stop.longitude
-        ) / 1000;
+      const segmentMeters = haversineDistance(
+        stops[index - 1].stop.latitude,
+        stops[index - 1].stop.longitude,
+        stops[index].stop.latitude,
+        stops[index].stop.longitude
+      );
+      cumulativeMeters += segmentMeters;
+      const historical = historicalByPair.get(`${stops[index - 1].id}:${stops[index].id}`) ?? null;
+      const segmentSeconds = segmentTravelSeconds(segmentMeters, speedKmh, moving, historical);
+      cumulativeSeconds = cumulativeSeconds == null || segmentSeconds == null
+        ? null
+        : cumulativeSeconds + segmentSeconds;
     }
-    const minutes = moving === false ? null : Math.max(0, Math.round((cumulativeKm / speedKmh) * 60));
+    const minutes = cumulativeSeconds == null ? null : Math.max(0, Math.round(cumulativeSeconds / 60));
     stopResults.push({
       stopId: stops[index].stop.id,
       name: stops[index].stop.name,
       scheduledTime: stops[index].scheduledTime,
       status: index === currentIndex ? 'ARRIVING' : 'UPCOMING',
-      distanceKm: Math.round(cumulativeKm * 100) / 100,
+      distanceKm: Math.round((cumulativeMeters / 1000) * 100) / 100,
       etaMinutes: minutes,
       etaRangeMinutes: minutes == null ? null : etaRange(minutes, confidence),
     });
@@ -330,4 +367,5 @@ module.exports = {
   estimateSpeed,
   etaRange,
   passedStopResult,
+  segmentTravelSeconds,
 };
