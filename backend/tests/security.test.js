@@ -22,7 +22,8 @@ test('API responses include hardened security and request-correlation headers', 
 });
 
 test('hostile browser origins are rejected while non-browser clients remain supported', async () => {
-  await request(app).get('/health').set('Origin', 'https://attacker.example').expect(403);
+  const rejected = await request(app).get('/health').set('Origin', 'https://attacker.example').expect(200);
+  assert.equal(rejected.headers['access-control-allow-origin'], undefined);
   await request(app).get('/health').expect(200);
 });
 

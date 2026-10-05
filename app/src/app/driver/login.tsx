@@ -71,14 +71,20 @@ export default function DriverLoginScreen() {
             autoCapitalize="characters"
             autoCorrect={false}
             value={identifier}
-            onChangeText={setIdentifier}
+            onChangeText={(text) => {
+              setIdentifier(text);
+              if (login.isError) login.reset();
+            }}
             placeholder="For example DRV-001"
           />
           <Field
             label="Password"
             secureTextEntry
             value={password}
-            onChangeText={setPassword}
+            onChangeText={(text) => {
+              setPassword(text);
+              if (login.isError) login.reset();
+            }}
             placeholder="Your driver password"
             onSubmitEditing={submit}
           />
