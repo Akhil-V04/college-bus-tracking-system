@@ -52,7 +52,9 @@ const corsOptions = {
   credentials: true,
   origin(origin, callback) {
     if (!origin || configuredOrigins.has(origin)) return callback(null, true);
-    return callback(new Error('Origin is not allowed by CORS'));
+    // Returning false prevents CORS headers from being added (blocking browsers)
+    // without returning 403, allowing mobile apps that send random Origin headers to work.
+    return callback(null, false);
   },
 };
 
@@ -110,9 +112,6 @@ app.use('/api/v1', apiV1);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((error, _req, res, _next) => {
-  if (error.message === 'Origin is not allowed by CORS') {
-    return res.status(403).json({ error: error.message });
-  }
   console.error('[unhandled]', error);
   return res.status(500).json({ error: 'Internal server error' });
 });

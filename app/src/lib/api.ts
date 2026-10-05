@@ -8,6 +8,12 @@ const configuredUrl = (process.env.EXPO_PUBLIC_API_URL || fallbackUrl).replace(/
 export const API_URL = configuredUrl.endsWith('/api/v1') ? configuredUrl : configuredUrl + '/api/v1';
 export const API_ORIGIN = API_URL.replace(/\/api\/v1$/, '');
 
+console.log('--- API CONFIGURATION DEBUG ---');
+console.log('Platform:', Platform.OS);
+console.log('EXPO_PUBLIC_API_URL from env:', process.env.EXPO_PUBLIC_API_URL);
+console.log('Final API_URL:', API_URL);
+console.log('-------------------------------');
+
 export class ApiError extends Error {
   status: number;
 
