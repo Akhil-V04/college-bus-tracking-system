@@ -1,6 +1,6 @@
 module.exports = {
   expo: {
-    name: "College Bus Tracker",
+    name: "College Bus Manage",
     slug: "college-bus-tracker",
     version: "1.1.0",
     orientation: "portrait",
@@ -45,7 +45,7 @@ module.exports = {
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow College Bus Tracker to use your location to share live bus position during trips.",
+          "locationAlwaysAndWhenInUsePermission": "Allow College Bus Manage to use your location to share live bus position during trips.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }
