@@ -16,7 +16,7 @@ const checks = [
   'verify:admin-cookie-auth',
   'verify:release-api',
   'verify:load-limits',
-  'verify:mappls',
+  'verify:google-maps',
   'maintenance:retention',
 ];
 
@@ -37,19 +37,12 @@ const retryableChecks = new Set([
 ]);
 for (const check of checks) {
   const connectionLimit = check === 'verify:load-limits' ? 5 : 1;
-  const checkEnvironment = check === 'verify:supabase'
-    ? {
-      ...process.env,
-      DATABASE_URL: withConnectionLimit(process.env.DATABASE_URL, connectionLimit),
-      DIRECT_URL: withConnectionLimit(process.env.DIRECT_URL, connectionLimit),
-      DATABASE_CONNECTION_LIMIT: String(connectionLimit),
-    }
-    : {
-      ...process.env,
-      DATABASE_URL: withConnectionLimit(directUrl || runtimeUrl, connectionLimit),
-      DIRECT_URL: directUrl,
-      DATABASE_CONNECTION_LIMIT: String(connectionLimit),
-    };
+  const checkEnvironment = {
+    ...process.env,
+    DATABASE_URL: withConnectionLimit(process.env.DATABASE_URL, connectionLimit),
+    DIRECT_URL: withConnectionLimit(process.env.DIRECT_URL, connectionLimit),
+    DATABASE_CONNECTION_LIMIT: String(connectionLimit),
+  };
   const maxAttempts = retryableChecks.has(check) ? 3 : 1;
   let passed = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

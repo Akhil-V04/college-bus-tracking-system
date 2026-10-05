@@ -125,7 +125,7 @@ async function verifyRestoredSchema() {
   ]);
   assert.equal(routes, 1);
   assert.equal(passengers, 2);
-  assert.equal(migrations[0].count, 6);
+  assert.equal(migrations[0].count, 8);
   assert.deepEqual(notificationColumns.map((row) => row.columnName).sort(), ['idempotencyKey', 'lockToken', 'nextAttemptAt']);
   assert.deepEqual(adminSessionColumns.map((row) => row.columnName).sort(), ['adminIdentifier', 'expiresAt', 'revokedAt']);
   assert.deepEqual(rateLimitColumns.map((row) => row.columnName).sort(), ['hits', 'key', 'resetAt']);

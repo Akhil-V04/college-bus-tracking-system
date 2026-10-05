@@ -50,7 +50,7 @@ async function main() {
   assert.equal(readiness.response.status, 200);
   assert.deepEqual(readiness.body, { status: 'ready', database: 'ok' });
   assert.equal(JSON.stringify(readiness.body).toLowerCase().includes('password'), false);
-  assert.equal(JSON.stringify(readiness.body).toLowerCase().includes('mappls'), false);
+  assert.equal(JSON.stringify(readiness.body).toLowerCase().includes('google_maps'), false);
 
   const routes = await jsonRequest('/api/v1/passenger/routes');
   assert.equal(routes.response.status, 200);

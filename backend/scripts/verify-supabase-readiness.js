@@ -1,15 +1,17 @@
 require('dotenv').config();
 
 const prisma = require('../src/lib/prisma');
+const { PrismaClient } = require('@prisma/client');
 const { connectionMode, migrationConnectionSupported } = require('../src/lib/databaseConnectionPolicy');
 
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 async function queryReadiness() {
+  const adminPrisma = new PrismaClient({ datasources: { db: { url: process.env.DIRECT_URL } } });
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const rows = await prisma.$queryRaw`
+      const rows = await adminPrisma.$queryRaw`
         SELECT 1::int AS ok,
           (SELECT COUNT(*)::int FROM "_prisma_migrations") AS migrations,
           (SELECT COUNT(*)::int FROM "_prisma_migrations" WHERE "finished_at" IS NULL OR "rolled_back_at" IS NOT NULL) AS "failedMigrations",
@@ -19,12 +21,14 @@ async function queryReadiness() {
           (SELECT COUNT(*)::int FROM information_schema.role_table_grants
             WHERE table_schema = 'public' AND grantee IN ('anon', 'authenticated')) AS "exposedGrants"
       `;
+      await adminPrisma.$disconnect();
       return { snapshot: rows[0], attempts: attempt };
     } catch (error) {
       lastError = error;
       if (attempt < 3) await wait(attempt * 1000);
     }
   }
+  await adminPrisma.$disconnect();
   throw lastError;
 }
 
@@ -52,7 +56,7 @@ async function main() {
     anonOrAuthenticatedTableGrants: Number(snapshot?.exposedGrants || 0),
     runtimeConnectionMode,
     migrationConnectionMode,
-    mapplsConfigured: Boolean(process.env.MAPPLS_ACCESS_TOKEN),
+    googleMapsConfigured: Boolean(process.env.BACKEND_GOOGLE_MAPS_API_KEY),
   }));
 }
 

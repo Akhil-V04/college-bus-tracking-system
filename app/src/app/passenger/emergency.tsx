@@ -243,7 +243,11 @@ const styles = StyleSheet.create({
   contactIconText: { fontSize: 14 },
   contactLabel: { color: colors.accent, fontSize: 12, fontWeight: fontWeight.bold, textAlign: 'center' },
   sosModal: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: 'rgba(127, 29, 29, 0.9)',
     justifyContent: 'center',
     alignItems: 'center',

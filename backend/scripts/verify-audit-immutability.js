@@ -1,7 +1,8 @@
 require('dotenv').config();
 
 const assert = require('node:assert/strict');
-const prisma = require('../src/lib/prisma');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient({ datasources: { db: { url: process.env.DIRECT_URL } } });
 
 async function expectAppendOnlyRejection(tx, sql, id, operation) {
   const savepoint = `audit_${operation}_probe`;

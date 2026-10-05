@@ -34,12 +34,12 @@ async function main() {
       const scheduleA = await tx.scheduleVersion.create({ data: {
         routeServiceId: routeA.id, name: 'Runtime Schedule A', status: 'PUBLISHED', version: 1,
         publishedAt: now, geometryPolyline: 'synthetic-polyline', geometryFormat: 'polyline5',
-        geometryProvider: 'MAPPLS', geometryFingerprint: `rw-${suffix}`,
+        geometryProvider: 'GOOGLE_ROUTES_API', geometryFingerprint: `rw-${suffix}`,
       } });
       const scheduleB = await tx.scheduleVersion.create({ data: {
         routeServiceId: routeB.id, name: 'Runtime Schedule B', status: 'PUBLISHED', version: 1,
         publishedAt: now, geometryPolyline: 'synthetic-polyline', geometryFormat: 'polyline5',
-        geometryProvider: 'MAPPLS', geometryFingerprint: `rw-b-${suffix}`,
+        geometryProvider: 'GOOGLE_ROUTES_API', geometryFingerprint: `rw-b-${suffix}`,
       } });
       const scheduleStopsA = await Promise.all([
         tx.scheduleStop.create({ data: { scheduleVersionId: scheduleA.id, stopId: stopA.id, sequenceOrder: 0, scheduledTime: '08:00' } }),

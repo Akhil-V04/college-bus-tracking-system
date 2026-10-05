@@ -51,7 +51,8 @@ function runPrisma(args) {
 }
 
 async function verifyRole() {
-  const rows = await main.$queryRawUnsafe(`
+  const runtime = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  const rows = await runtime.$queryRawUnsafe(`
     SELECT current_user AS "currentUser",
            r.rolsuper AS "isSuperuser",
            r.rolcreatedb AS "canCreateDatabase",
@@ -62,6 +63,7 @@ async function verifyRole() {
       JOIN pg_database d ON d.datname = current_database()
      WHERE r.rolname = current_user
   `);
+  await runtime.$disconnect();
   assert.equal(rows.length, 1);
   const role = rows[0];
   assert.equal(role.isSuperuser, false, 'configured PostgreSQL role must not be a superuser');
@@ -152,7 +154,7 @@ async function verifySchemaAndSeed() {
        FROM "${schemaName}"."_prisma_migrations"
       ORDER BY migration_name`
   );
-  assert.equal(migrations.length, 6);
+  assert.equal(migrations.length, 8);
   assert.ok(migrations.every((migration) => migration.finishedAt && !migration.rolledBackAt));
   return {
     migratedTables: requiredTables.length,

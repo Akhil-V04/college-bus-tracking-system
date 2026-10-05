@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const { MapplsGeometryError, requestRouteGeometry } = require('../src/lib/mapplsGeometry');
+const { GoogleMapsGeometryError, requestRouteGeometry } = require('../src/lib/googleMapsGeometry');
 
 async function main() {
   const geometry = await requestRouteGeometry([
@@ -18,7 +18,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  const code = error instanceof MapplsGeometryError ? error.code : 'UNEXPECTED';
-  console.error(JSON.stringify({ provider: 'MAPPLS', ok: false, code }));
+  const code = error instanceof GoogleMapsGeometryError ? error.code : 'UNEXPECTED';
+  console.error(JSON.stringify({ provider: 'GOOGLE_ROUTES_API', ok: false, code }));
   process.exitCode = 1;
 });

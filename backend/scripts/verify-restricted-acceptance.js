@@ -16,7 +16,7 @@ const checks = [
   'verify:admin-sessions',
   'verify:admin-cookie-auth',
   'verify:load-limits',
-  'verify:mappls',
+  'verify:google-maps',
   'maintenance:retention',
 ];
 
@@ -69,6 +69,5 @@ console.log(JSON.stringify({
   durationSeconds: Math.round((Date.now() - startedAt) / 1000),
   runtimeRole: process.env.EXPECTED_RUNTIME_DB_ROLE || 'bus_tracker_runtime',
   migrationCredentialUsed: false,
-  destructivePassengerPurge: false,
-  providers: 'simulated-except-mappls-cloud-probe',
+  providers: 'simulated-except-google-maps-cloud-probe',
 }));

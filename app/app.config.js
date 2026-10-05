@@ -2,7 +2,7 @@ module.exports = {
   expo: {
     name: "College Bus Tracker",
     slug: "college-bus-tracker",
-    version: "1.0.0",
+    version: "1.1.0",
     orientation: "portrait",
     icon: "./assets/icon.png",
     scheme: "college-bus",
@@ -53,6 +53,11 @@ module.exports = {
     ],
     experiments: {
       typedRoutes: true
+    },
+    extra: {
+      eas: {
+        projectId: "c90f7a3b-9002-43cd-bac2-8bd6d5f811f6"
+      }
     }
   }
 };

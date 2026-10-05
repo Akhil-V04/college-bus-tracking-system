@@ -6,10 +6,17 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     },
     "skipLibCheck": true
   },
-  "include": ["**/*.ts", "**/*.tsx", "expo-env.d.ts"],
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "expo-env.d.ts",
+    ".expo/types/**/*.ts"
+  ],
   "extends": "expo/tsconfig.base"
 }
