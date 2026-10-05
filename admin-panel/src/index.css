@@ -2,7 +2,14 @@
 
 :root {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  color: #F8FAFC; background: #090F16; font-synthesis: none; text-rendering: optimizeLegibility;
+  color: #172033; background: #f3f6f8; font-synthesis: none; text-rendering: optimizeLegibility;
+  --ink:#172033; --muted:#667085; --line:#dfe5e9; --surface:#fff; --canvas:#f3f6f8;
+  --navy:#102a43; --teal:#EA580C; --teal-dark:#C2410C; --teal-soft:rgba(234, 88, 12, 0.15);
+  --red:#b42318; --green:#16794b; --warning:#b45309; --danger-bg:#fef2f2; --danger-border:#fecaca;
+}
+
+[data-theme="dark"] {
+  color: #F8FAFC; background: #090F16;
   --ink:#F8FAFC; --muted:#94A3B8; --line:#283545; --surface:#161C24; --canvas:#090F16;
   --navy:#F8FAFC; --teal:#EA580C; --teal-dark:#C2410C; --teal-soft:rgba(234, 88, 12, 0.15);
   --red:#EF4444; --green:#14B8A6; --warning:#F59E0B; --danger-bg:#2A1418; --danger-border:#5A1E24;

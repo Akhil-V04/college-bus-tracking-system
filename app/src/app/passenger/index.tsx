@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useRef, useState, useMemo } from 'react';
 import {
   Animated,
   FlatList,
@@ -18,9 +18,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, LoadingState, Pill } from '@/components/ui';
-import { colors, fontSize, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontSize, fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { RouteSummary } from '@/types/api';
+import { useTheme } from "@/contexts/ThemeContext";
 
 /* ─── Types ─── */
 type Message = {
@@ -39,6 +40,7 @@ const SUGGESTIONS = [
 
 /* ─── Route Card ─── */
 function RouteCard({ route }: { route: RouteSummary }) {
+    const styles = useStyles();
   const full = route.assignedPassengerCount >= route.capacity;
   return (
     <Pressable
@@ -80,6 +82,8 @@ function RouteCard({ route }: { route: RouteSummary }) {
 
 /* ─── Assistant Overlay Chat ─── */
 function AssistantOverlay({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+    const { colors } = useTheme();
+    const overlayStyles = useOverlayStyles();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -243,6 +247,7 @@ function AssistantOverlay({ visible, onClose }: { visible: boolean; onClose: () 
 
 /* ─── Main Dashboard ─── */
 export default function PassengerDashboard() {
+    const styles = useStyles();
   const [assistantOpen, setAssistantOpen] = useState(false);
 
   const routes = useQuery({
@@ -393,7 +398,9 @@ export default function PassengerDashboard() {
 }
 
 /* ─── Dashboard Styles ─── */
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     backgroundColor: colors.surfaceElevated,
@@ -567,10 +574,13 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.9 }],
   },
   fabEmoji: { fontSize: 26 },
-});
+}), [colors]);
+};
 
 /* ─── Overlay Styles ─── */
-const overlayStyles = StyleSheet.create({
+const useOverlayStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   blurFill: {
     flex: 1,
     backgroundColor: 'rgba(9, 15, 22, 0.3)',
@@ -731,4 +741,5 @@ const overlayStyles = StyleSheet.create({
   },
   sendBtnDisabled: { opacity: 0.35 },
   sendBtnText: { color: colors.textOnAccent, fontSize: 18, fontWeight: fontWeight.bold },
-});
+}), [colors]);
+};

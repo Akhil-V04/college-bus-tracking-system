@@ -1,16 +1,20 @@
-import { PropsWithChildren } from 'react';
+import { PropsWithChildren, useMemo } from 'react';
 import { StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 
-import { colors, radius, spacing } from '@/constants/theme';
+import { radius, spacing } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export function Card({
   children,
   style,
 }: PropsWithChildren<{ style?: StyleProp<ViewStyle> }>) {
+    const styles = useStyles();
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -19,4 +23,5 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     gap: spacing.sm,
   },
-});
+}), [colors]);
+};

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Socket } from 'socket.io-client';
 
@@ -9,7 +9,7 @@ import {
   AppHeader, Button, Card, EmptyState, ErrorState,
   LabelValue, LoadingState, Notice, Pill, Screen, SectionTitle,
 } from '@/components/ui';
-import { colors, fontWeight, spacing } from '@/constants/theme';
+import { fontWeight, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { clearDriverToken, getDriverToken } from '@/lib/auth';
 import {
@@ -18,12 +18,14 @@ import {
 } from '@/lib/backgroundLocation';
 import { createLiveSocket } from '@/lib/socket';
 import { DriverProfile, DriverTrip } from '@/types/api';
+import { useTheme } from "@/contexts/ThemeContext";
 
 type TripResponse = { trip: DriverTrip | null };
 type StartResponse = { tripId: number; resumed: boolean; routeNo: string };
 type LocationAck = { ok: boolean; stored?: boolean; error?: string; timestamp?: string };
 
 export default function DriverConsoleScreen() {
+    const styles = useStyles();
   const queryClient = useQueryClient();
   const [token, setToken] = useState<string | null | undefined>(undefined);
   const [sharing, setSharing] = useState(false);
@@ -210,7 +212,11 @@ export default function DriverConsoleScreen() {
         eyebrow="Driver console"
         title={'Hello, ' + driver.name}
         subtitle={driver.assignedRoute ? 'Assigned to Route ' + driver.assignedRoute.routeNo : 'No route is currently assigned'}
-        action={<Pill tone={trip ? 'success' : 'neutral'}>{trip ? 'Trip running' : 'Off trip'}</Pill>}
+        action={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <Pill tone={trip ? 'success' : 'neutral'}>{trip ? 'Trip running' : 'Off trip'}</Pill>
+                      </View>
+        }
       />
 
       <Card>
@@ -277,7 +283,10 @@ export default function DriverConsoleScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   help: { color: colors.textSecondary, lineHeight: 21 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-});
+}), [colors]);
+};

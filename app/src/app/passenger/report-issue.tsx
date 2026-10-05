@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -13,8 +13,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { colors, fontSize, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontSize, fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
+import { useTheme } from "@/contexts/ThemeContext";
 
 const CATEGORIES = [
   { key: 'DRIVER_BEHAVIOUR', label: 'Driver Behaviour', icon: '👤' },
@@ -134,6 +135,8 @@ function simpleHash(str: string): string {
 }
 
 export default function ReportIssueScreen() {
+    const { colors } = useTheme();
+    const styles = useStyles();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
   const [description, setDescription] = useState('');
@@ -433,7 +436,9 @@ export default function ReportIssueScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
@@ -650,4 +655,5 @@ const styles = StyleSheet.create({
   },
   backButtonPressed: { backgroundColor: colors.surfaceHover },
   backButtonText: { color: colors.textPrimary, fontSize: fontSize.base, fontWeight: fontWeight.semibold },
-});
+}), [colors]);
+};

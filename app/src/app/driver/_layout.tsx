@@ -1,8 +1,8 @@
 import { Stack } from 'expo-router';
-
-import { colors } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export default function DriverLayout() {
+    const { colors } = useTheme();
   return (
     <Stack
       screenOptions={{

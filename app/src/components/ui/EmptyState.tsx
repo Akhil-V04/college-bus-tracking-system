@@ -1,9 +1,12 @@
 import { StyleSheet, Text } from 'react-native';
 
 import { Card } from './Card';
-import { colors, spacing, fontWeight } from '@/constants/theme';
+import { spacing, fontWeight } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
+import { useMemo } from "react";
 
 export function EmptyState({ title, message }: { title: string; message: string }) {
+    const styles = useStyles();
   return (
     <Card style={styles.state}>
       <Text style={styles.emptyTitle}>{title}</Text>
@@ -12,8 +15,11 @@ export function EmptyState({ title, message }: { title: string; message: string 
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   state: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xl },
   stateText: { color: colors.textSecondary, textAlign: 'center', lineHeight: 21 },
   emptyTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: fontWeight.extrabold },
-});
+}), [colors]);
+};

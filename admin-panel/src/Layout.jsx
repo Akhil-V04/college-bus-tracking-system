@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { NavLink, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './auth';
 
@@ -22,6 +22,16 @@ const navigation = [
 export default function Layout() {
   const { checking, isLoggedIn, user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem('admin-theme');
+    return saved === 'dark';
+  });
+
+  // Apply theme class to html root
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    localStorage.setItem('admin-theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
 
   if (checking) return <div className="app-loading"><div className="spinner" /><p>Checking administrator session…</p></div>;
   if (!isLoggedIn) return <Navigate to="/login" replace />;
@@ -44,7 +54,7 @@ export default function Layout() {
         <div className="sidebar-footer">
           <span className="admin-label">Signed in as</span>
           <strong>{user?.id || 'Administrator'}</strong>
-          <button type="button" className="button button-ghost button-wide" onClick={logout}>Sign out</button>
+          
         </div>
       </aside>
 
@@ -58,7 +68,17 @@ export default function Layout() {
             <p className="topbar-title">College transport administration</p>
             <p className="topbar-date">{new Intl.DateTimeFormat('en-IN', { dateStyle: 'full' }).format(new Date())}</p>
           </div>
-          <span className="system-pill"><i /> System online</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button 
+              type="button" 
+              onClick={() => setIsDark(!isDark)}
+              className="button button-ghost"
+              aria-label="Toggle theme"
+            >
+              {isDark ? '☀️ Light' : '🌙 Dark'}
+            </button>
+            <span className="system-pill"><i /> System online</span>
+          </div>
         </header>
         <main className="page-content"><Outlet /></main>
       </div>

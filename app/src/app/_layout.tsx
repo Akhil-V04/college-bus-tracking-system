@@ -1,12 +1,13 @@
+import { ThemeProvider } from '@/contexts/ThemeContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
-
-import { colors } from '@/constants/theme';
 import '@/lib/backgroundLocation';
+import { useTheme } from "@/contexts/ThemeContext";
 
-export default function RootLayout() {
+function RootApp() {
+    const { colors } = useTheme();
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: {
       queries: {

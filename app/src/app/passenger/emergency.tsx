@@ -1,12 +1,15 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button, Notice } from '@/components/ui';
-import { colors, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontWeight, radius, spacing } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export default function EmergencyScreen() {
+    const { colors } = useTheme();
+    const styles = useStyles();
   const [mobileNumber, setMobileNumber] = useState('');
   const [serviceType, setServiceType] = useState<'service' | 'bus'>('service');
   const [serviceValue, setServiceValue] = useState('');
@@ -123,7 +126,9 @@ export default function EmergencyScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     backgroundColor: colors.accent,
@@ -189,4 +194,5 @@ const styles = StyleSheet.create({
   },
   contactIconText: { fontSize: 14 },
   contactLabel: { color: colors.accent, fontSize: 12, fontWeight: fontWeight.bold, textAlign: 'center' },
-});
+}), [colors]);
+};

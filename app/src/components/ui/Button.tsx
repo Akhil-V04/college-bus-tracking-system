@@ -1,6 +1,8 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 
-import { colors, radius, spacing, fontWeight } from '@/constants/theme';
+import { radius, spacing, fontWeight } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
+import { useMemo } from "react";
 
 type ButtonProps = {
   label: string;
@@ -19,7 +21,9 @@ export function Button({
   variant = 'primary',
   size = 'md',
 }: ButtonProps) {
-  const variantStyle = variantStyles[variant];
+    const { colors } = useTheme();
+    const styles = useStyles();
+  const variantStyles = useVariantStyles(); const textStyles = useTextStyles(); const variantStyle = variantStyles[variant];
   const variantTextStyle = textStyles[variant];
   const sizeStyle = size === 'lg' ? styles.buttonLg : undefined;
   return (
@@ -46,7 +50,9 @@ export function Button({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   button: {
     minHeight: 48,
     borderRadius: radius.md,
@@ -59,18 +65,25 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.5 },
   buttonPressed: { opacity: 0.82 },
   buttonText: { fontSize: 15, fontWeight: fontWeight.extrabold, letterSpacing: 0.5 },
-});
+}), [colors]);
+};
 
-const variantStyles = StyleSheet.create({
+const useVariantStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   primary: { backgroundColor: colors.accent, borderColor: colors.accent },
   secondary: { backgroundColor: colors.surface, borderColor: colors.accent },
   danger: { backgroundColor: colors.danger, borderColor: colors.danger },
   ghost: { backgroundColor: colors.transparent, borderColor: colors.transparent },
-});
+}), [colors]);
+};
 
-const textStyles = StyleSheet.create({
+const useTextStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   primary: { color: colors.white },
   secondary: { color: colors.accent },
   danger: { color: colors.white },
   ghost: { color: colors.textSecondary },
-});
+}), [colors]);
+};

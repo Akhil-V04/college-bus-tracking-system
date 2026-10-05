@@ -1,7 +1,8 @@
-import { ReactNode } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ReactNode, useMemo } from 'react';
+import { StyleSheet, Text, View, Pressable } from 'react-native';
 
-import { colors, spacing, fontWeight } from '@/constants/theme';
+import { spacing, fontWeight } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export function AppHeader({
   eyebrow,
@@ -14,6 +15,8 @@ export function AppHeader({
   subtitle?: string;
   action?: ReactNode;
 }) {
+    const styles = useStyles();
+  const { isDark, toggleTheme } = useTheme();
   return (
     <View style={styles.header}>
       <View style={styles.headerText}>
@@ -21,12 +24,19 @@ export function AppHeader({
         <Text style={styles.title}>{title}</Text>
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
-      {action}
+      <View style={styles.actionsContainer}>
+        <Pressable onPress={toggleTheme} style={styles.themeToggle}>
+          <Text style={styles.themeToggleText}>{isDark ? '☀️' : '🌙'}</Text>
+        </Pressable>
+        {action}
+      </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -35,6 +45,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   headerText: { flex: 1, gap: spacing.xs },
+  actionsContainer: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  themeToggle: { padding: spacing.xs, borderRadius: 20, backgroundColor: colors.surfaceHover },
+  themeToggleText: { fontSize: 18 },
   eyebrow: {
     color: colors.accent,
     fontSize: 12,
@@ -44,4 +57,5 @@ const styles = StyleSheet.create({
   },
   title: { color: colors.textPrimary, fontSize: 28, fontWeight: fontWeight.extrabold, lineHeight: 34 },
   subtitle: { color: colors.textSecondary, fontSize: 14, lineHeight: 21 },
-});
+}), [colors]);
+};

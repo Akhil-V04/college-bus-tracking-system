@@ -2,7 +2,9 @@ import { StyleSheet, Text } from 'react-native';
 
 import { Button } from './Button';
 import { Card } from './Card';
-import { colors, spacing, fontWeight } from '@/constants/theme';
+import { spacing, fontWeight } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
+import { useMemo } from "react";
 
 export function ErrorState({
   message,
@@ -11,6 +13,7 @@ export function ErrorState({
   message: string;
   retry?: () => void;
 }) {
+    const styles = useStyles();
   return (
     <Card style={styles.state}>
       <Text style={styles.errorTitle}>Something went wrong</Text>
@@ -20,8 +23,11 @@ export function ErrorState({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   state: { alignItems: 'center', justifyContent: 'center', gap: spacing.md, paddingVertical: spacing.xl },
   stateText: { color: colors.textSecondary, textAlign: 'center', lineHeight: 21 },
   errorTitle: { color: colors.danger, fontSize: 18, fontWeight: fontWeight.extrabold },
-});
+}), [colors]);
+};

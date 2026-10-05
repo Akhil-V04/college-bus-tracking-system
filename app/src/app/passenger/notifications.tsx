@@ -4,8 +4,10 @@ import { StyleSheet, Text, View, FlatList, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, LoadingState, Pill } from '@/components/ui';
-import { colors, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
+import { useTheme } from "@/contexts/ThemeContext";
+import { useMemo } from "react";
 
 type AdminNotification = {
   id: number;
@@ -17,6 +19,8 @@ type AdminNotification = {
 };
 
 function NotificationCard({ item }: { item: AdminNotification }) {
+    const { colors } = useTheme();
+    const styles = useStyles();
   const isUrgent = item.priority === 'URGENT';
   const isImportant = item.priority === 'IMPORTANT';
   
@@ -47,6 +51,8 @@ function NotificationCard({ item }: { item: AdminNotification }) {
 }
 
 export default function NotificationsScreen() {
+    const { colors } = useTheme();
+    const styles = useStyles();
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ['admin-notifications'],
     queryFn: () => apiRequest<AdminNotification[]>('/admin-notifications'),
@@ -90,7 +96,9 @@ export default function NotificationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -138,4 +146,5 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginTop: 4,
   }
-});
+}), [colors]);
+};

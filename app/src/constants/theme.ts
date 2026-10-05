@@ -3,7 +3,7 @@
  * Primary palette: deep navy background with burnt-orange accents.
  */
 
-export const colors = {
+export const darkColors = {
   // Backgrounds
   background: '#090F16',
   surface: '#161C24',
@@ -51,6 +51,58 @@ export const colors = {
   white: '#FFFFFF',
   black: '#000000',
 } as const;
+
+export const lightColors = {
+  // Backgrounds
+  background: '#F8FAFC',
+  surface: '#FFFFFF',
+  surfaceElevated: '#F1F5F9',
+  surfaceHover: '#F1F5F9',
+
+  // Borders
+  border: '#E2E8F0',
+  borderSubtle: '#F1F5F9',
+  borderAccent: 'rgba(234, 88, 12, 0.3)',
+
+  // Accent (orange)
+  accent: '#EA580C',
+  accentHover: '#C2410C',
+  accentPressed: '#d94e07',
+  accentLight: '#F97316',
+  accentBg: 'rgba(234, 88, 12, 0.1)',
+  accentBgStrong: 'rgba(234, 88, 12, 0.15)',
+
+  // Text
+  textPrimary: '#0F172A',
+  textSecondary: '#475569',
+  textMuted: '#64748B',
+  textOnAccent: '#FFFFFF',
+
+  // Semantic
+  success: '#0D9488',
+  successBg: '#F0FDFA',
+  successText: '#0F766E',
+  danger: '#DC2626',
+  dangerBg: '#FEF2F2',
+  dangerBorder: '#FECACA',
+  dangerText: '#B91C1C',
+  warning: '#D97706',
+  warningBg: '#FFFBEB',
+  info: '#0284C7',
+  infoBg: '#F0F9FF',
+
+  // Special
+  purple: '#8B5CF6',
+  live: '#EA580C',
+  passed: '#0D9488',
+  upcoming: '#94A3B8',
+  transparent: 'transparent',
+  white: '#FFFFFF',
+  black: '#000000',
+} as const;
+
+export type ThemeColors = typeof darkColors;
+export const colors = darkColors; // Temporarily keep 'colors' for smooth refactoring
 
 export const spacing = {
   xxs: 2,

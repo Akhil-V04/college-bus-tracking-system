@@ -1,15 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui';
-import { colors, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { RouteSummary } from '@/types/api';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export default function SearchScreen() {
+    const styles = useStyles();
   const [filterText, setFilterText] = useState('');
 
   const routes = useQuery({
@@ -107,7 +109,9 @@ export default function SearchScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     backgroundColor: colors.accent,
@@ -212,4 +216,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderRadius: 2,
   },
-});
+}), [colors]);
+};

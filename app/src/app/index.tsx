@@ -1,13 +1,15 @@
 import { router } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontWeight, radius, spacing } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 type Role = 'passenger' | 'driver';
 
 export default function RoleSelectionScreen() {
+    const styles = useStyles();
   const [selectedRole, setSelectedRole] = useState<Role>('passenger');
 
   // Animated splash
@@ -120,7 +122,9 @@ export default function RoleSelectionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -260,4 +264,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   continueArrow: { color: colors.white, fontSize: 20, fontWeight: fontWeight.bold },
-});
+}), [colors]);
+};

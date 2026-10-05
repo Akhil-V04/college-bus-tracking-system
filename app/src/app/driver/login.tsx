@@ -1,13 +1,14 @@
 import { useMutation } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button, Card, Field, Notice } from '@/components/ui';
-import { colors, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { saveDriverToken } from '@/lib/auth';
+import { useTheme } from "@/contexts/ThemeContext";
 
 type LoginResponse = {
   token: string;
@@ -17,6 +18,7 @@ type LoginResponse = {
 };
 
 export default function DriverLoginScreen() {
+    const styles = useStyles();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
 
@@ -122,7 +124,9 @@ export default function DriverLoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     backgroundColor: colors.accent,
@@ -183,4 +187,5 @@ const styles = StyleSheet.create({
   },
   ghostBtnPressed: { backgroundColor: colors.surface },
   ghostBtnText: { color: colors.textSecondary, fontWeight: fontWeight.bold, fontSize: 15 },
-});
+}), [colors]);
+};

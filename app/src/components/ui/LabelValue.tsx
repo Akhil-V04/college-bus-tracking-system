@@ -1,9 +1,11 @@
-import { ReactNode } from 'react';
+import { ReactNode, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, spacing, fontWeight } from '@/constants/theme';
+import { spacing, fontWeight } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export function LabelValue({ label, value }: { label: string; value: ReactNode }) {
+    const styles = useStyles();
   return (
     <View style={styles.labelValue}>
       <Text style={styles.label}>{label}</Text>
@@ -16,7 +18,9 @@ export function LabelValue({ label, value }: { label: string; value: ReactNode }
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   labelValue: { gap: spacing.xs },
   label: {
     color: colors.textMuted,
@@ -26,4 +30,5 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   value: { color: colors.textPrimary, fontSize: 16, fontWeight: fontWeight.bold },
-});
+}), [colors]);
+};

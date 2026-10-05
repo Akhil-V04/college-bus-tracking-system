@@ -5,10 +5,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Card, EmptyState, ErrorState, LabelValue, LoadingState, Notice, Pill, SectionTitle } from '@/components/ui';
-import { colors, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { createLiveSocket } from '@/lib/socket';
 import { BusUpdate, EtaResult, RouteDetail, RouteRoster } from '@/types/api';
+import { useTheme } from "@/contexts/ThemeContext";
 
 type TabType = 'MY ROUTE' | 'FULL ROUTE' | 'BUS INFO';
 
@@ -39,6 +40,8 @@ function etaTitle(eta?: EtaResult | null) {
 }
 
 export default function RouteDetailsScreen() {
+    const { colors } = useTheme();
+    const styles = useStyles();
   const params = useLocalSearchParams<{ routeNo: string }>();
   const routeNo = Array.isArray(params.routeNo) ? params.routeNo[0] : params.routeNo;
   const [activeTab, setActiveTab] = useState<TabType>('MY ROUTE');
@@ -353,7 +356,9 @@ export default function RouteDetailsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     backgroundColor: colors.accent,
@@ -490,4 +495,5 @@ const styles = StyleSheet.create({
   footerLiveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent },
   footerBusLabel: { color: colors.textPrimary, fontWeight: fontWeight.bold, fontSize: 14 },
   footerEta: { color: colors.textSecondary, fontSize: 12, fontWeight: fontWeight.medium },
-});
+}), [colors]);
+};

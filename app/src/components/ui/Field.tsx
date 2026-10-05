@@ -1,12 +1,16 @@
 import { StyleSheet, Text, TextInput, TextInputProps, View } from 'react-native';
 
-import { colors, radius, spacing, fontWeight } from '@/constants/theme';
+import { radius, spacing, fontWeight } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
+import { useMemo } from "react";
 
 export function Field({
   label,
   error,
   ...props
 }: TextInputProps & { label: string; error?: string | null }) {
+    const { colors } = useTheme();
+    const styles = useStyles();
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -20,7 +24,9 @@ export function Field({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   field: { gap: spacing.xs },
   fieldLabel: { color: colors.textSecondary, fontSize: 14, fontWeight: fontWeight.bold },
   input: {
@@ -35,4 +41,5 @@ const styles = StyleSheet.create({
   },
   inputMultiline: { minHeight: 100, paddingTop: 12, textAlignVertical: 'top' },
   errorText: { color: colors.danger, fontSize: 13 },
-});
+}), [colors]);
+};

@@ -1,12 +1,17 @@
-import { PropsWithChildren } from 'react';
+import { PropsWithChildren, useMemo } from 'react';
 import { StyleSheet, Text } from 'react-native';
 
-import { colors, fontWeight } from '@/constants/theme';
+import { fontWeight } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export function SectionTitle({ children }: PropsWithChildren) {
+    const styles = useStyles();
   return <Text style={styles.sectionTitle}>{children}</Text>;
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   sectionTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: fontWeight.extrabold },
-});
+}), [colors]);
+};

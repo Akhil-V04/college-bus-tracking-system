@@ -1,7 +1,9 @@
 import { StyleSheet, Text, View } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 
-import { colors, fontWeight, radius } from '@/constants/theme';
+import { fontWeight, radius } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
+import { useMemo } from "react";
 
 type MapStop = {
   id: number;
@@ -21,6 +23,8 @@ type RouteMapProps = {
 };
 
 export default function RouteMap({ stops, bus }: RouteMapProps) {
+    const { colors } = useTheme();
+    const styles = useStyles();
   if (stops.length === 0) {
     return (
       <View style={styles.placeholder}>
@@ -88,7 +92,9 @@ export default function RouteMap({ stops, bus }: RouteMapProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: {
     height: 280,
     borderRadius: radius.md,
@@ -123,7 +129,8 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   busMarkerText: { fontSize: 18 },
-});
+}), [colors]);
+};
 
 // Dark Google Maps styling
 const darkMapStyle = [

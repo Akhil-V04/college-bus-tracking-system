@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useMemo } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -11,8 +11,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { colors, fontSize, fontWeight, radius, spacing } from '@/constants/theme';
+import { fontSize, fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
+import { useTheme } from "@/contexts/ThemeContext";
 
 type Message = {
   id: string;
@@ -29,6 +30,8 @@ const SUGGESTIONS = [
 ];
 
 export default function AssistantScreen() {
+    const { colors } = useTheme();
+    const styles = useStyles();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -189,7 +192,9 @@ export default function AssistantScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: 'row',
@@ -311,4 +316,5 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: { opacity: 0.4 },
   sendButtonText: { color: colors.textOnAccent, fontSize: fontSize.xl, fontWeight: fontWeight.bold },
-});
+}), [colors]);
+};

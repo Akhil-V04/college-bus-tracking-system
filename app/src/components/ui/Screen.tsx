@@ -1,4 +1,4 @@
-import { PropsWithChildren } from 'react';
+import { PropsWithChildren, useMemo } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -10,7 +10,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, spacing } from '@/constants/theme';
+import { spacing } from '@/constants/theme';
+import { useTheme } from "@/contexts/ThemeContext";
 
 export function Screen({
   children,
@@ -18,6 +19,7 @@ export function Screen({
   contentStyle,
   noPadding,
 }: PropsWithChildren<{ scroll?: boolean; contentStyle?: StyleProp<ViewStyle>; noPadding?: boolean }>) {
+    const styles = useStyles();
   const body = scroll ? (
     <ScrollView
       contentContainerStyle={[styles.screenContent, noPadding && styles.noPadding, contentStyle]}
@@ -44,7 +46,9 @@ export function Screen({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = () => {
+  const { colors } = useTheme();
+  return useMemo(() => StyleSheet.create({
   fill: { flex: 1 },
   safeArea: { flex: 1, backgroundColor: colors.background },
   screenContent: {
@@ -55,4 +59,5 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   noPadding: { padding: 0, paddingBottom: 0 },
-});
+}), [colors]);
+};
