@@ -51,12 +51,29 @@ export default function AssistantScreen() {
     setInput('');
     setLoading(true);
 
-    if (SUGGESTED_ANSWERS[text]) {
+    const lowerText = text.toLowerCase();
+    
+    // Fast keyword matching on frontend for immediate response
+    let matchedAnswer = null;
+    if (lowerText.match(/(break\s*down|broken|accident|emergency)/i)) {
+      matchedAnswer = SUGGESTED_ANSWERS['What should I do if my bus breaks down?'];
+    } else if (lowerText.match(/(transport rules|rules|regulations|allowed)/i)) {
+      matchedAnswer = SUGGESTED_ANSWERS['What are the transport rules?'];
+    } else if (lowerText.match(/(report.*problem|report.*issue|complain)/i)) {
+      matchedAnswer = SUGGESTED_ANSWERS['How do I report a bus problem?'];
+    } else if (lowerText.match(/(who can use|who is allowed|eligibility)/i)) {
+      matchedAnswer = SUGGESTED_ANSWERS['Who can use the college transport?'];
+    } else if (SUGGESTED_ANSWERS[text]) {
+      matchedAnswer = SUGGESTED_ANSWERS[text];
+    }
+
+    if (matchedAnswer) {
       setTimeout(() => {
         const assistantMessage: Message = {
           id: `assistant-${Date.now()}`,
           role: 'ASSISTANT',
-          content: SUGGESTED_ANSWERS[text],
+          content: matchedAnswer,
+          sources: ['Pre-built Knowledge'],
         };
         setMessages((prev) => [...prev, assistantMessage]);
         setLoading(false);

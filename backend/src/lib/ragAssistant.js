@@ -13,10 +13,45 @@ Do NOT hallucinate live GPS locations or ETAs. If the user asks where a bus is o
 Be concise, helpful, and polite.`;
 
 /**
+ * Fast-path predefined answers to save time and API costs
+ */
+const PREBUILT_ANSWERS = [
+  {
+    keywords: /(break\s*down|broken|accident|emergency)/i,
+    answer: 'In case of a bus breakdown, remain seated calmly and wait for the driver\'s instructions. The driver will report the incident via the driver console and a replacement bus will be arranged. You can also report the issue via the "Report Issue" button.'
+  },
+  {
+    keywords: /(transport rules|rules|regulations|allowed)/i,
+    answer: 'Passengers must carry their valid ID cards, remain seated while the bus is moving, and adhere to the designated route and stop. Unauthorized passengers are strictly prohibited.'
+  },
+  {
+    keywords: /(report.*problem|report.*issue|complain)/i,
+    answer: 'You can report any bus-related problems directly through the "Report Issue" section on your dashboard. Select the issue type, add a brief description, and submit. The transport administration will receive the report instantly.'
+  },
+  {
+    keywords: /(who can use|who is allowed|eligibility)/i,
+    answer: 'The college transport is exclusively for assigned students and faculty members who have registered for the academic year. Unauthorized passengers are not allowed to board the buses.'
+  }
+];
+
+/**
  * Handle a chat message using RAG
  */
 async function generateAnswer(question, sessionId = 'anonymous') {
   try {
+    // 0. Fast-path check for common questions
+    const matched = PREBUILT_ANSWERS.find(p => p.keywords.test(question));
+    if (matched) {
+      // Save conversation quickly
+      await prisma.assistantConversation.create({
+        data: { sessionId, role: 'USER', content: question, sourceChunkIds: [] }
+      });
+      await prisma.assistantConversation.create({
+        data: { sessionId, role: 'ASSISTANT', content: matched.answer, sourceChunkIds: [] }
+      });
+      return { answer: matched.answer, sources: ['Pre-built Knowledge'] };
+    }
+
     // 1. Embed the user's question
     const queryEmbedding = await generateEmbedding(question);
     
