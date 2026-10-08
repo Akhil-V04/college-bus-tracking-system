@@ -4,8 +4,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const API_KEY = process.env.AI_API_KEY || 'fake-key-for-tests';
 const genAI = new GoogleGenerativeAI(API_KEY);
 
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'text-embedding-004';
-const LLM_MODEL = process.env.LLM_MODEL || 'gemini-1.5-flash';
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'gemini-embedding-2';
+const LLM_MODEL = process.env.LLM_MODEL || 'gemini-3.5-flash-lite';
 
 async function generateEmbedding(text) {
   if (!text) return [];
@@ -22,15 +22,37 @@ async function generateEmbedding(text) {
 
 async function generateText(prompt, systemInstruction = null) {
   try {
-    const model = genAI.getGenerativeModel({ 
-      model: LLM_MODEL,
-      systemInstruction: systemInstruction ? { role: 'system', parts: [{text: systemInstruction}] } : undefined
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey) throw new Error('GROQ_API_KEY is missing');
+    
+    const messages = [];
+    if (systemInstruction) {
+      messages.push({ role: 'system', content: systemInstruction });
+    }
+    messages.push({ role: 'user', content: prompt });
+    
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3.8-27b',
+        messages: messages,
+        temperature: 0.2
+      })
     });
     
-    const result = await model.generateContent(prompt);
-    return result.response.text();
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Groq API error: ${response.status} ${errText}`);
+    }
+    
+    const data = await response.json();
+    return data.choices[0].message.content;
   } catch (error) {
-    console.error('Failed to generate text:', error);
+    console.error('Failed to generate text (Groq):', error);
     throw error;
   }
 }

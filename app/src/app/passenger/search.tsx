@@ -30,7 +30,7 @@ export default function SearchScreen() {
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Pressable
-            onPress={() => router.back()}
+            onPress={() => { if (router.canGoBack()) if (router.canGoBack()) router.back(); else router.replace('/'); else router.replace('/'); }}
             style={styles.backBtn}
           >
             <Text style={styles.backIcon}>←</Text>

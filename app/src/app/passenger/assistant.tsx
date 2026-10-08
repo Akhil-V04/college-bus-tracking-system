@@ -22,12 +22,14 @@ type Message = {
   sources?: string[];
 };
 
-const SUGGESTIONS = [
-  'What should I do if my bus breaks down?',
-  'What are the transport rules?',
-  'How do I report a bus problem?',
-  'What are the timings for RT03?',
-];
+const SUGGESTED_ANSWERS: Record<string, string> = {
+  'What should I do if my bus breaks down?': 'In case of a bus breakdown, remain seated calmly and wait for the driver\'s instructions. The driver will report the incident via the driver console and a replacement bus will be arranged. You can also report the issue via the "Report Issue" button.',
+  'What are the transport rules?': 'Passengers must carry their valid ID cards, remain seated while the bus is moving, and adhere to the designated route and stop. Unauthorized passengers are strictly prohibited.',
+  'How do I report a bus problem?': 'You can report any bus-related problems directly through the "Report Issue" section on your dashboard. Select the issue type, add a brief description, and submit. The transport administration will receive the report instantly.',
+  'Who can use the college transport?': 'The college transport is exclusively for assigned students and faculty members who have registered for the academic year. Unauthorized passengers are not allowed to board the buses.',
+};
+
+const SUGGESTIONS = Object.keys(SUGGESTED_ANSWERS);
 
 export default function AssistantScreen() {
     const { colors } = useTheme();
@@ -48,6 +50,19 @@ export default function AssistantScreen() {
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setLoading(true);
+
+    if (SUGGESTED_ANSWERS[text]) {
+      setTimeout(() => {
+        const assistantMessage: Message = {
+          id: `assistant-${Date.now()}`,
+          role: 'ASSISTANT',
+          content: SUGGESTED_ANSWERS[text],
+        };
+        setMessages((prev) => [...prev, assistantMessage]);
+        setLoading(false);
+      }, 400);
+      return;
+    }
 
     try {
       const response = await apiRequest<{ answer: string; sources: string[] }>(
@@ -73,7 +88,7 @@ export default function AssistantScreen() {
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
         role: 'ASSISTANT',
-        content: 'Sorry, the assistant is temporarily unavailable. Please try again later.',
+        content: `API Error: ${err.message || String(err)}`,
       };
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
@@ -114,7 +129,7 @@ export default function AssistantScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backArrow}>
+        <Pressable onPress={() => { if (router.canGoBack()) if (router.canGoBack()) router.back(); else router.replace('/'); else router.replace('/'); }} style={styles.backArrow}>
           <Text style={styles.backArrowText}>‹</Text>
         </Pressable>
         <View>

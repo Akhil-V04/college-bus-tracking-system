@@ -269,7 +269,7 @@ export default function ReportIssueScreen() {
           </Text>
           <Pressable
             style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
-            onPress={() => router.back()}
+            onPress={() => { if (router.canGoBack()) if (router.canGoBack()) router.back(); else router.replace('/'); else router.replace('/'); }}
           >
             <Text style={styles.backButtonText}>Back to Home</Text>
           </Pressable>
@@ -338,7 +338,7 @@ export default function ReportIssueScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} style={styles.backArrow}>
+        <Pressable onPress={() => { if (router.canGoBack()) if (router.canGoBack()) router.back(); else router.replace('/'); else router.replace('/'); }} style={styles.backArrow}>
           <Text style={styles.backArrowText}>‹</Text>
         </Pressable>
         <Text style={styles.headerTitle}>Report an Issue</Text>

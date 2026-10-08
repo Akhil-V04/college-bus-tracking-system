@@ -229,7 +229,7 @@ eas build --profile production --platform android
 
 ## Known Issues
 
-- The AI assistant requires a valid Gemini API key (`AI_API_KEY`) to answer user prompts; otherwise it will hang or error out.
+- The AI assistant requires a valid Gemini API key (`AI_API_KEY`) for generating document embeddings, and a Groq API key (`GROQ_API_KEY`) for chat responses. If either is missing, it will hang or error out.
 
 ## Important Development Rules
 

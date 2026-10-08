@@ -65,7 +65,7 @@ export default function NotificationsScreen() {
           headerTitle: 'Notifications',
           headerShown: true,
           headerLeft: () => (
-            <Pressable onPress={() => router.back()} style={{ marginRight: 16 }}>
+            <Pressable onPress={() => { if (router.canGoBack()) if (router.canGoBack()) router.back(); else router.replace('/'); else router.replace('/'); }} style={{ marginRight: 16 }}>
               <Text style={{ fontSize: 24, color: colors.textPrimary }}>‹</Text>
             </Pressable>
           )

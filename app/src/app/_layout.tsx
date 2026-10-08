@@ -34,3 +34,5 @@ function RootApp() {
     </QueryClientProvider>
   );
 }
+
+export default function RootLayout() { return <ThemeProvider><RootApp /></ThemeProvider>; }
