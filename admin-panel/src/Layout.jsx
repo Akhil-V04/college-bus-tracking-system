@@ -5,6 +5,7 @@ import { useAuth } from './auth';
 const navigation = [
   { to: '/', label: 'Overview', icon: '⌂', end: true },
   { to: '/routes', label: 'Routes & capacity', icon: '↝' },
+  { to: '/stops', label: 'Stops & Map', icon: '📍' },
   { to: '/schedules', label: 'Schedules', icon: '◷' },
   { to: '/rosters', label: 'Annual rosters', icon: '▤' },
   { to: '/drivers', label: 'Drivers', icon: '◉' },

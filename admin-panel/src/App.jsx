@@ -15,6 +15,7 @@ import SessionsScreen from './screens/SessionsScreen';
 import IssuesScreen from './screens/IssuesScreen';
 import KnowledgeScreen from './screens/KnowledgeScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
+import StopsScreen from './screens/StopsScreen';
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/" element={<Layout />}>
             <Route index element={<Dashboard />} />
             <Route path="routes" element={<RouteServicesScreen />} />
+            <Route path="stops" element={<StopsScreen />} />
             <Route path="schedules" element={<SchedulesScreen />} />
             <Route path="rosters" element={<RostersScreen />} />
             <Route path="drivers" element={<DriversScreen />} />
