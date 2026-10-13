@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api, { errorMessage } from '../api';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, StatusBadge } from '../components';
 
@@ -129,7 +130,12 @@ export default function SchedulesScreen() {
     <>
       <PageHeader eyebrow="Timetable management" title="Schedules"
         description="Build draft stop timelines, validate their order, and publish one active version per route and direction."
-        actions={<button className="button button-primary" onClick={() => setCreating(true)}>+ New schedule</button>} />
+        actions={
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Link to="/schedule-builder" className="button button-secondary">🗺️ Map Builder</Link>
+            <button className="button button-primary" onClick={() => setCreating(true)}>+ New schedule</button>
+          </div>
+        } />
       <Notice message={message} onDismiss={() => setMessage(null)} />
       {loading ? <LoadingState label="Loading schedules…" /> : schedules.length === 0 ? (
         <EmptyState title="No schedules yet" description="Create a draft schedule and add at least two ordered stops." />
@@ -141,7 +147,16 @@ export default function SchedulesScreen() {
               <td><div className="cell-title">Route {schedule.routeService.routeNo}</div><div className="cell-subtitle">{schedule.routeService.name}</div></td>
               <td>{schedule.name}</td><td>{schedule.direction}</td><td>v{schedule.version}</td><td>{schedule._count.stops}</td>
               <td><StatusBadge value={schedule.status} /></td>
-              <td><button className="text-button" onClick={() => openDetail(schedule.id)}>Manage</button></td>
+              <td>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <button className="text-button" onClick={() => openDetail(schedule.id)}>Manage</button>
+                  {schedule.status === 'DRAFT' && (
+                    <Link to="/schedule-builder" className="text-button" style={{ color: 'var(--brand-primary, #0284c7)' }}>
+                      🗺️ Map
+                    </Link>
+                  )}
+                </div>
+              </td>
             </tr>)}</tbody>
           </table>
         </div>
@@ -161,7 +176,14 @@ export default function SchedulesScreen() {
 
       {(detail || detailLoading) && <Modal wide title={detail ? `${detail.name} · Route ${detail.routeService.routeNo}` : 'Loading schedule'} description={detail ? `Version ${detail.version} · ${detail.direction}` : undefined} onClose={() => setDetail(null)}>
         {detailLoading && !detail ? <LoadingState label="Loading schedule stops…" /> : detail && <div className="modal-body">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18 }}><StatusBadge value={detail.status} /><div className="row-actions"><button className="button button-secondary" onClick={validateSchedule}>Validate</button>{detail.status === 'DRAFT' && <button className="button button-primary" onClick={publishSchedule}>Publish</button>}</div></div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+            <StatusBadge value={detail.status} />
+            <div className="row-actions">
+              <Link to="/schedule-builder" className="button button-secondary">🗺️ Map Builder</Link>
+              <button className="button button-secondary" onClick={validateSchedule}>Validate</button>
+              {detail.status === 'DRAFT' && <button className="button button-primary" onClick={publishSchedule}>Publish</button>}
+            </div>
+          </div>
           {detail.stops.length === 0 ? <EmptyState title="No stops in this draft" description="Add the first stop below." /> : <div className="panel table-wrap"><table className="data-table"><thead><tr><th>Order</th><th>Stop</th><th>Time</th><th /></tr></thead><tbody>{detail.stops.map((entry) => <tr key={entry.id}><td>{entry.sequenceOrder}</td><td>{entry.stop.name}</td><td>{entry.scheduledTime}</td><td>{detail.status === 'DRAFT' && <button className="text-button text-button-danger" onClick={() => removeStop(entry)}>Remove</button>}</td></tr>)}</tbody></table></div>}
           {detail.status === 'DRAFT' && <form onSubmit={addStop} style={{ marginTop: 20 }}><h3 style={{ color: 'var(--navy)', fontSize: 15 }}>Add stop</h3><div className="form-grid"><div className="form-span"><Field label="Stop"><select value={stopForm.stopId} onChange={(event) => setStopForm({ ...stopForm, stopId: event.target.value })} required><option value="">Select stop</option>{stops.map((stop) => <option key={stop.id} value={stop.id}>{stop.name}</option>)}</select></Field></div><Field label="Sequence"><input type="number" min="0" value={stopForm.sequenceOrder} onChange={(event) => setStopForm({ ...stopForm, sequenceOrder: event.target.value })} required /></Field><Field label="Scheduled arrival"><input type="time" value={stopForm.scheduledTime} onChange={(event) => setStopForm({ ...stopForm, scheduledTime: event.target.value })} required /></Field></div><div className="modal-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? 'Adding…' : 'Add stop'}</button></div></form>}
         </div>}
