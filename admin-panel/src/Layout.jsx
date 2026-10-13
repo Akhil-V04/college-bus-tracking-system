@@ -7,6 +7,7 @@ const navigation = [
   { to: '/routes', label: 'Routes & capacity', icon: '↝' },
   { to: '/stops', label: 'Stops & Map', icon: '📍' },
   { to: '/schedules', label: 'Schedules', icon: '◷' },
+  { to: '/schedule-builder', label: 'Map Builder', icon: '🗺️' },
   { to: '/rosters', label: 'Annual rosters', icon: '▤' },
   { to: '/drivers', label: 'Drivers', icon: '◉' },
   { to: '/class-advisors', label: 'Class advisors', icon: '◎' },
