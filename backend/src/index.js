@@ -83,6 +83,7 @@ app.get('/health/ready', async (_req, res) => {
 });
 
 function mountApi(router) {
+  router.get('/health', (_req, res) => res.json({ status: 'ok', version: '2.1.0' }));
   router.use('/auth', authRoutes);
   router.use('/route-services', routeServiceRoutes);
   router.use('/stops', stopRoutes);

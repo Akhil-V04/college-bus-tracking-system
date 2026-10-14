@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { NavLink, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './auth';
+import api from './api';
 
 const navigation = [
   { to: '/', label: 'Overview', icon: '⌂', end: true },
@@ -29,11 +30,32 @@ export default function Layout() {
     return saved === 'dark';
   });
 
+  const [backendOnline, setBackendOnline] = useState(null); // null = checking, true = online, false = offline
+
   // Apply theme class to html root
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
     localStorage.setItem('admin-theme', isDark ? 'dark' : 'light');
   }, [isDark]);
+
+  // Periodic live health check of backend server
+  useEffect(() => {
+    let mounted = true;
+    async function checkHealth() {
+      try {
+        await api.get('/health', { timeout: 3500 });
+        if (mounted) setBackendOnline(true);
+      } catch (_error) {
+        if (mounted) setBackendOnline(false);
+      }
+    }
+    checkHealth();
+    const timer = setInterval(checkHealth, 8000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
 
   if (checking) return <div className="app-loading"><div className="spinner" /><p>Checking administrator session…</p></div>;
   if (!isLoggedIn) return <Navigate to="/login" replace />;
@@ -79,7 +101,21 @@ export default function Layout() {
             >
               {isDark ? '☀️ Light' : '🌙 Dark'}
             </button>
-            <span className="system-pill"><i /> System online</span>
+            {backendOnline === true && (
+              <span className="system-pill" title="Backend server is running and healthy">
+                <i /> System online
+              </span>
+            )}
+            {backendOnline === false && (
+              <span className="system-pill system-pill-offline" title="Backend server is offline or unreachable">
+                <i /> System offline
+              </span>
+            )}
+            {backendOnline === null && (
+              <span className="system-pill system-pill-checking" title="Checking backend connection...">
+                <i /> Connecting…
+              </span>
+            )}
           </div>
         </header>
         <main className="page-content"><Outlet /></main>
