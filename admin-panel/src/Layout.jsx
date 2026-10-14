@@ -4,23 +4,45 @@ import { useAuth } from './auth';
 import api from './api';
 
 const navigation = [
-  { to: '/', label: 'Overview', icon: '⌂', end: true },
-  { to: '/routes', label: 'Routes & capacity', icon: '↝' },
-  { to: '/stops', label: 'Stops & Map', icon: '📍' },
-  { to: '/schedules', label: 'Schedules', icon: '◷' },
-  { to: '/schedule-builder', label: 'Map Builder', icon: '🗺️' },
-  { to: '/rosters', label: 'Annual rosters', icon: '▤' },
-  { to: '/drivers', label: 'Drivers', icon: '◉' },
-  { to: '/class-advisors', label: 'Class advisors', icon: '◎' },
-  { to: '/late-alerts', label: 'Late alerts', icon: '!' },
-  { to: '/operations', label: 'Operations', icon: '⌁' },
-  { to: '/audit-log', label: 'Audit history', icon: '✓' },
-  { to: '/sessions', label: 'Sessions', icon: '◌' },
-
-  { to: '/issues', label: 'AI Issues', icon: '◆' },
-  { to: '/knowledge', label: 'Knowledge base', icon: '▣' },
-  { to: '/notifications', label: 'Notifications', icon: '🔔' },
+  { to: '/', label: 'Overview', iconName: 'overview', fallback: '⌂', end: true },
+  { to: '/routes', label: 'Routes & capacity', iconName: 'routes', fallback: '↝' },
+  { to: '/stops', label: 'Stops & Map', iconName: 'stops', fallback: '📍' },
+  { to: '/schedules', label: 'Schedules', iconName: 'schedules', fallback: '◷' },
+  { to: '/schedule-builder', label: 'Map Builder', iconName: 'schedule-builder', fallback: '🗺️' },
+  { to: '/rosters', label: 'Annual rosters', iconName: 'rosters', fallback: '▤' },
+  { to: '/drivers', label: 'Drivers', iconName: 'drivers', fallback: '◉' },
+  { to: '/class-advisors', label: 'Class advisors', iconName: 'class-advisors', fallback: '◎' },
+  { to: '/late-alerts', label: 'Late alerts', iconName: 'late-alerts', fallback: '!' },
+  { to: '/operations', label: 'Operations', iconName: 'operations', fallback: '⌁' },
+  { to: '/audit-log', label: 'Audit history', iconName: 'audit-log', fallback: '✓' },
+  { to: '/sessions', label: 'Sessions', iconName: 'sessions', fallback: '◌' },
+  { to: '/issues', label: 'AI Issues', iconName: 'issues', fallback: '◆' },
+  { to: '/knowledge', label: 'Knowledge base', iconName: 'knowledge', fallback: '▣' },
+  { to: '/notifications', label: 'Notifications', iconName: 'notifications', fallback: '🔔' },
 ];
+
+function AdminSidebarIcon({ iconName, fallback }) {
+  const [loadError, setLoadError] = useState(false);
+  const [usePng, setUsePng] = useState(false);
+
+  if (loadError) {
+    return <span className="nav-icon" aria-hidden="true">{fallback}</span>;
+  }
+
+  return (
+    <span className="nav-icon" aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+      <img
+        src={`/icons/${iconName}.${usePng ? 'png' : 'svg'}`}
+        alt=""
+        style={{ width: 18, height: 18, objectFit: 'contain' }}
+        onError={() => {
+          if (!usePng) setUsePng(true);
+          else setLoadError(true);
+        }}
+      />
+    </span>
+  );
+}
 
 export default function Layout() {
   const { checking, isLoggedIn, user, logout } = useAuth();
@@ -71,7 +93,7 @@ export default function Layout() {
           {navigation.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setMenuOpen(false)}
               className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}>
-              <span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}
+              <AdminSidebarIcon iconName={item.iconName} fallback={item.fallback} />{item.label}
             </NavLink>
           ))}
         </nav>

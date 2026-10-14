@@ -18,6 +18,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, LoadingState, Pill } from '@/components/ui';
+import { AppIcon } from '@/components/AppIcon';
 import { fontSize, fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { RouteSummary } from '@/types/api';
@@ -307,12 +308,12 @@ export default function PassengerDashboard() {
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.headerIcon}>
-            <Text style={styles.headerIconEmoji}>🚌</Text>
+            <AppIcon name="bus" size={26} />
           </View>
           <Text style={styles.headerTitle}>Campus Transit</Text>
         </View>
         <Pressable onPress={() => router.push('/passenger/notifications')} style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1, padding: 8 }]}>
-          <Text style={{ fontSize: 22 }}>🔔</Text>
+          <AppIcon name="notifications" size={24} />
         </Pressable>
       </View>
 
@@ -326,7 +327,7 @@ export default function PassengerDashboard() {
           onPress={() => router.push('/passenger/search')}
         >
           <View style={styles.menuIconBox}>
-            <Text style={styles.menuIconEmoji}>🔍</Text>
+            <AppIcon name="search" size={22} />
           </View>
           <Text style={styles.menuLabel}>Search by Route Number</Text>
           <Text style={styles.menuChevron}>›</Text>
@@ -337,7 +338,7 @@ export default function PassengerDashboard() {
           onPress={() => router.push('/passenger/search')}
         >
           <View style={styles.menuIconBox}>
-            <Text style={styles.menuIconEmoji}>📍</Text>
+            <AppIcon name="pin" size={22} />
           </View>
           <Text style={styles.menuLabel}>Bus Stop Near Me</Text>
           <Text style={styles.menuChevron}>›</Text>
@@ -348,7 +349,7 @@ export default function PassengerDashboard() {
           onPress={() => router.push('/passenger/emergency')}
         >
           <View style={styles.menuIconBox}>
-            <Text style={styles.menuIconEmoji}>🚨</Text>
+            <AppIcon name="emergency" size={22} />
           </View>
           <Text style={styles.menuLabel}>Emergency</Text>
           <Text style={styles.menuChevron}>›</Text>
@@ -359,7 +360,7 @@ export default function PassengerDashboard() {
           onPress={() => router.push('/passenger/report-issue')}
         >
           <View style={styles.menuIconBox}>
-            <Text style={styles.menuIconEmoji}>⚠️</Text>
+            <AppIcon name="report" size={22} />
           </View>
           <Text style={styles.menuLabel}>Report an Issue</Text>
           <Text style={styles.menuChevron}>›</Text>
@@ -419,7 +420,7 @@ export default function PassengerDashboard() {
           onPress={() => setAssistantOpen(true)}
           style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
         >
-          <Text style={styles.fabEmoji}>💬</Text>
+          <AppIcon name="assistant" size={28} />
         </Pressable>
       </Animated.View>
 
