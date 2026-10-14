@@ -7,8 +7,52 @@ const CHUNK_SIZE = 500; // characters per chunk (roughly ~100-125 tokens)
 
 /**
  * Split document content into chunks
+ * Supports markdown route heading awareness (### Route N, etc.) so stops,
+ * timings, driver contacts, and notes stay together.
  */
 function chunkText(text, size = CHUNK_SIZE) {
+  if (!text) return [];
+
+  // If markdown document contains headings (e.g. ### Route 1, ## Core facts, etc.),
+  // split on headings so that route details, stops, driver contacts remain together.
+  if (/^###?\s+/m.test(text)) {
+    const rawSections = text.split(/(?=\n###?\s+)/g).map((s) => s.trim()).filter(Boolean);
+    const chunks = [];
+    let preamble = '';
+
+    for (const sec of rawSections) {
+      if (sec.startsWith('# ') || sec.startsWith('## Core') || sec.startsWith('## Transport') || sec.startsWith('## Overview')) {
+        preamble = preamble ? (preamble + '\n\n' + sec) : sec;
+      } else if (sec === '## Routes') {
+        continue;
+      } else {
+        if (preamble) {
+          chunks.push(preamble.trim());
+          preamble = '';
+        }
+        if (sec.length <= 1500) {
+          chunks.push(sec);
+        } else {
+          // Fallback split for unusually long individual section
+          const paragraphs = sec.split(/\n\n+/);
+          let curr = '';
+          for (const para of paragraphs) {
+            if ((curr + '\n\n' + para).length > size && curr.length > 0) {
+              chunks.push(curr.trim());
+              curr = para;
+            } else {
+              curr = curr ? curr + '\n\n' + para : para;
+            }
+          }
+          if (curr.trim()) chunks.push(curr.trim());
+        }
+      }
+    }
+    if (preamble) chunks.push(preamble.trim());
+    if (chunks.length > 0) return chunks;
+  }
+
+  // Fallback paragraph-based chunking
   const chunks = [];
   const paragraphs = text.split(/\n\n+/);
   let current = '';
@@ -122,4 +166,5 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+router.chunkText = chunkText;
 module.exports = router;
