@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import api, { errorMessage } from '../api';
-import { EmptyState, Field, LoadingState, Notice, PageHeader } from '../components';
+import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader } from '../components';
 
 // Fix leaflet default icon
 import iconUrl from 'leaflet/dist/images/marker-icon.png';
@@ -95,6 +95,51 @@ export default function ScheduleBuilderScreen() {
   // Step: 'place' = placing pins on map, 'details' = entering names/times
   const [step, setStep] = useState('place');
   const [activeLayer, setActiveLayer] = useState('roadmap');
+  const [creatingSchedule, setCreatingSchedule] = useState(false);
+  const [newScheduleForm, setNewScheduleForm] = useState({
+    routeServiceId: '',
+    name: '',
+    direction: 'MORNING',
+    includeVbit: true,
+  });
+
+  async function createScheduleAndOpenBuilder(event) {
+    if (event) event.preventDefault();
+    setSaving(true);
+    try {
+      const { data: created } = await api.post('/schedules', {
+        routeServiceId: Number(newScheduleForm.routeServiceId),
+        name: newScheduleForm.name.trim(),
+        direction: newScheduleForm.direction.trim().toUpperCase(),
+      });
+
+      if (newScheduleForm.includeVbit) {
+        let vbitStop = allStops.find((s) => (s.name || '').toUpperCase().includes('VBIT'));
+        if (!vbitStop) {
+          const { data: newStop } = await api.post('/stops', {
+            name: 'VBIT',
+            latitude: 17.47062,
+            longitude: 78.72558,
+          });
+          vbitStop = newStop;
+        }
+        await api.post(`/schedules/${created.id}/stops`, {
+          stopId: vbitStop.id,
+          sequenceOrder: 1,
+          scheduledTime: newScheduleForm.direction === 'EVENING' ? '16:30' : '09:30',
+        });
+      }
+
+      setCreatingSchedule(false);
+      setMessage({ type: 'success', text: 'Schedule created with VBIT College endpoint. Now add route stops on the map.' });
+      await load();
+      await loadScheduleDetail(created.id);
+    } catch (error) {
+      setMessage({ type: 'error', text: errorMessage(error, 'Could not create schedule.') });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -303,11 +348,33 @@ export default function ScheduleBuilderScreen() {
     const draftSchedules = schedules.filter(s => s.status === 'DRAFT');
     return (
       <>
-        <PageHeader eyebrow="Visual route builder" title="Schedule Map Builder"
-          description="Select a draft schedule to visually add stops by clicking on the map." />
+        <PageHeader
+          eyebrow="Visual route builder"
+          title="Schedule Map Builder"
+          description="Select a draft schedule to visually add stops by clicking on the map, or create a new draft schedule."
+          actions={
+            <button className="button button-primary" onClick={() => setCreatingSchedule(true)}>
+              + New draft schedule
+            </button>
+          }
+        />
         <Notice message={message} onDismiss={() => setMessage(null)} />
-        {loading ? <LoadingState label="Loading schedules…" /> : draftSchedules.length === 0 ? (
-          <EmptyState title="No draft schedules" description="Create a draft schedule from the Schedules screen first, then come here to add stops visually." />
+        {loading ? (
+          <LoadingState label="Loading schedules…" />
+        ) : draftSchedules.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <EmptyState
+              title="No draft schedules"
+              description="Create a new draft schedule to start placing stops and build route geometry on Google Maps."
+            />
+            <button
+              className="button button-primary"
+              style={{ marginTop: 16 }}
+              onClick={() => setCreatingSchedule(true)}
+            >
+              🎓 Create draft schedule with VBIT College
+            </button>
+          </div>
         ) : (
           <div className="panel table-wrap">
             <table className="data-table">
@@ -324,6 +391,75 @@ export default function ScheduleBuilderScreen() {
               ))}</tbody>
             </table>
           </div>
+        )}
+
+        {creatingSchedule && (
+          <Modal
+            title="Create draft schedule"
+            description="The schedule will open immediately in the Map Builder so you can place stops."
+            onClose={() => setCreatingSchedule(false)}
+          >
+            <form className="modal-body" onSubmit={createScheduleAndOpenBuilder}>
+              <div className="form-grid">
+                <div className="form-span">
+                  <Field label="Route">
+                    <select
+                      value={newScheduleForm.routeServiceId}
+                      onChange={(e) => setNewScheduleForm({ ...newScheduleForm, routeServiceId: e.target.value })}
+                      required
+                    >
+                      <option value="">Select route</option>
+                      {routes.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          Route {r.routeNo} — {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+                <div className="form-span">
+                  <Field label="Schedule name">
+                    <input
+                      value={newScheduleForm.name}
+                      maxLength={150}
+                      placeholder="e.g. Morning Regular Timetable"
+                      onChange={(e) => setNewScheduleForm({ ...newScheduleForm, name: e.target.value })}
+                      required
+                    />
+                  </Field>
+                </div>
+                <Field label="Direction">
+                  <select
+                    value={newScheduleForm.direction}
+                    onChange={(e) => setNewScheduleForm({ ...newScheduleForm, direction: e.target.value })}
+                  >
+                    <option value="MORNING">Morning / to college</option>
+                    <option value="EVENING">Evening / from college</option>
+                  </select>
+                </Field>
+              </div>
+
+              <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(26, 115, 232, 0.08)', borderRadius: 8, border: '1px solid rgba(26, 115, 232, 0.25)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: 'var(--navy)' }}>
+                  <input
+                    type="checkbox"
+                    checked={newScheduleForm.includeVbit}
+                    onChange={(e) => setNewScheduleForm({ ...newScheduleForm, includeVbit: e.target.checked })}
+                  />
+                  <span>🎓 Include <strong>VBIT College</strong> as default destination endpoint (at 09:30 AM)</span>
+                </label>
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="button button-secondary" onClick={() => setCreatingSchedule(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="button button-primary" disabled={saving}>
+                  {saving ? 'Creating…' : 'Create & open Map Builder'}
+                </button>
+              </div>
+            </form>
+          </Modal>
         )}
       </>
     );

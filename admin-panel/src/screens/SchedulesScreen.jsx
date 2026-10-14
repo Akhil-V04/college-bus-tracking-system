@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import api, { errorMessage } from '../api';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, StatusBadge } from '../components';
 
-const emptySchedule = { routeServiceId: '', name: '', direction: 'MORNING', effectiveFrom: '' };
+const emptySchedule = { routeServiceId: '', name: '', direction: 'MORNING', effectiveFrom: '', includeVbit: true };
 const emptyStop = { stopId: '', sequenceOrder: 0, scheduledTime: '07:00' };
 
 export default function SchedulesScreen() {
@@ -56,15 +56,33 @@ export default function SchedulesScreen() {
     event.preventDefault();
     setSaving(true);
     try {
-      await api.post('/schedules', {
+      const { data: created } = await api.post('/schedules', {
         routeServiceId: Number(form.routeServiceId),
         name: form.name.trim(),
         direction: form.direction.trim().toUpperCase(),
         effectiveFrom: form.effectiveFrom || null,
       });
+
+      if (form.includeVbit) {
+        let vbitStop = stops.find((s) => (s.name || '').toUpperCase().includes('VBIT'));
+        if (!vbitStop) {
+          const { data: newStop } = await api.post('/stops', {
+            name: 'VBIT',
+            latitude: 17.47062,
+            longitude: 78.72558,
+          });
+          vbitStop = newStop;
+        }
+        await api.post(`/schedules/${created.id}/stops`, {
+          stopId: vbitStop.id,
+          sequenceOrder: 1,
+          scheduledTime: form.direction === 'EVENING' ? '16:30' : '09:30',
+        });
+      }
+
       setCreating(false);
       setForm(emptySchedule);
-      setMessage({ type: 'success', text: 'Draft schedule created. Add its stops before publishing.' });
+      setMessage({ type: 'success', text: form.includeVbit ? 'Draft schedule created with VBIT College as default destination.' : 'Draft schedule created.' });
       await load();
     } catch (error) {
       setMessage({ type: 'error', text: errorMessage(error, 'Schedule could not be created.') });
@@ -169,6 +187,16 @@ export default function SchedulesScreen() {
             <div className="form-span"><Field label="Schedule name"><input value={form.name} maxLength={150} onChange={(event) => setForm({ ...form, name: event.target.value })} required /></Field></div>
             <Field label="Direction"><select value={form.direction} onChange={(event) => setForm({ ...form, direction: event.target.value })}><option value="MORNING">Morning / to college</option><option value="EVENING">Evening / from college</option></select></Field>
             <Field label="Effective from"><input type="date" value={form.effectiveFrom} onChange={(event) => setForm({ ...form, effectiveFrom: event.target.value })} /></Field>
+          </div>
+          <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(26, 115, 232, 0.08)', borderRadius: 8, border: '1px solid rgba(26, 115, 232, 0.25)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: 'var(--navy)' }}>
+              <input
+                type="checkbox"
+                checked={form.includeVbit}
+                onChange={(event) => setForm({ ...form, includeVbit: event.target.checked })}
+              />
+              <span>🎓 Set ending stop as <strong>VBIT College</strong> (default endpoint at 09:30 AM)</span>
+            </label>
           </div>
           <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setCreating(false)}>Cancel</button><button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Creating…' : 'Create draft'}</button></div>
         </form>

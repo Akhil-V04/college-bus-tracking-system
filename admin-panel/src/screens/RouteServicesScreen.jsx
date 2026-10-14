@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api, { errorMessage } from '../api';
 import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader } from '../components';
 
-const blankForm = { routeNo: '', name: '', areaCovered: '', capacity: 50, driverId: '' };
+const blankForm = { routeNo: '', name: '', areaCovered: '', capacity: 50, driverId: '', createDefaultSchedule: true };
 
 export default function RouteServicesScreen() {
   const [routes, setRoutes] = useState([]);
@@ -47,6 +47,7 @@ export default function RouteServicesScreen() {
       areaCovered: route.areaCovered,
       capacity: route.capacity,
       driverId: route.driverId ?? '',
+      createDefaultSchedule: false,
     });
   }
 
@@ -61,10 +62,39 @@ export default function RouteServicesScreen() {
         capacity: Number(form.capacity),
         driverId: form.driverId === '' ? null : Number(form.driverId),
       };
-      if (editing.id) await api.put(`/route-services/${editing.id}`, payload);
-      else await api.post('/route-services', payload);
+      if (editing.id) {
+        await api.put(`/route-services/${editing.id}`, payload);
+      } else {
+        const { data: createdRoute } = await api.post('/route-services', payload);
+        if (form.createDefaultSchedule) {
+          try {
+            const { data: createdSchedule } = await api.post('/schedules', {
+              routeServiceId: createdRoute.id,
+              name: `Route ${createdRoute.routeNo} Morning`,
+              direction: 'MORNING',
+            });
+            const stopRes = await api.get('/stops', { params: { limit: 100 } });
+            let vbitStop = (stopRes.data.items || []).find((s) => (s.name || '').toUpperCase().includes('VBIT'));
+            if (!vbitStop) {
+              const { data: newStop } = await api.post('/stops', {
+                name: 'VBIT',
+                latitude: 17.47062,
+                longitude: 78.72558,
+              });
+              vbitStop = newStop;
+            }
+            await api.post(`/schedules/${createdSchedule.id}/stops`, {
+              stopId: vbitStop.id,
+              sequenceOrder: 1,
+              scheduledTime: '09:30',
+            });
+          } catch (err) {
+            console.warn('Could not auto-create draft schedule with VBIT:', err);
+          }
+        }
+      }
       setEditing(null);
-      setMessage({ type: 'success', text: editing.id ? 'Route service updated.' : 'Route service created.' });
+      setMessage({ type: 'success', text: editing.id ? 'Route service updated.' : 'Route service created with VBIT College as default endpoint.' });
       await load();
     } catch (error) {
       setMessage({ type: 'error', text: errorMessage(error, 'Route could not be saved.') });
@@ -122,6 +152,18 @@ export default function RouteServicesScreen() {
               <div className="form-span"><Field label="Area covered"><textarea value={form.areaCovered} maxLength={500} onChange={(event) => setForm({ ...form, areaCovered: event.target.value })} required /></Field></div>
               <div className="form-span"><Field label="Assigned driver" hint="A driver can be assigned to only one route at a time."><select value={form.driverId} onChange={(event) => setForm({ ...form, driverId: event.target.value })}><option value="">No driver assigned</option>{drivers.filter((driver) => !driver.assignedRoute || driver.id === Number(form.driverId)).map((driver) => <option key={driver.id} value={driver.id}>{driver.driverCode} — {driver.name}</option>)}</select></Field></div>
             </div>
+            {!editing.id && (
+              <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(26, 115, 232, 0.08)', borderRadius: 8, border: '1px solid rgba(26, 115, 232, 0.25)' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13, color: 'var(--navy)' }}>
+                  <input
+                    type="checkbox"
+                    checked={form.createDefaultSchedule}
+                    onChange={(event) => setForm({ ...form, createDefaultSchedule: event.target.checked })}
+                  />
+                  <span>🎓 Automatically create draft morning schedule with <strong>VBIT College</strong> as destination</span>
+                </label>
+              </div>
+            )}
             <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Saving…' : 'Save route'}</button></div>
           </form>
         </Modal>
