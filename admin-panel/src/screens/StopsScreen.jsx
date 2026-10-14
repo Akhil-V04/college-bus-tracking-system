@@ -209,6 +209,29 @@ export default function StopsScreen() {
     return routes.find((r) => String(r.id) === String(selectedRouteId)) || null;
   }, [routes, selectedRouteId]);
 
+  // Parse known stops and timings from selectedRoute.areaCovered
+  const routePresetStops = useMemo(() => {
+    if (!selectedRoute?.areaCovered) return [];
+    const parts = selectedRoute.areaCovered.split(';').map((p) => p.trim()).filter(Boolean);
+    const presets = [];
+    for (const part of parts) {
+      const lastOpen = part.lastIndexOf('(');
+      const lastClose = part.lastIndexOf(')');
+      let name = part.replace(/\.\s*$/, '').trim();
+      let scheduledTime = '';
+      if (lastOpen !== -1 && lastClose > lastOpen) {
+        name = part.slice(0, lastOpen).replace(/\.\s*$/, '').trim();
+        const rawTime = part.slice(lastOpen + 1, lastClose).trim();
+        const tm = rawTime.match(/(\d{1,2}):(\d{2})/);
+        if (tm) scheduledTime = `${tm[1].padStart(2, '0')}:${tm[2]}`;
+      }
+      if (name && !name.toUpperCase().includes('VBIT')) {
+        presets.push({ name, scheduledTime: scheduledTime || '08:30' });
+      }
+    }
+    return presets;
+  }, [selectedRoute]);
+
   // 3. Click map to add stops in order (before VBIT College)
   function handleMapClick(latlng) {
     if (!selectedRouteId) {
@@ -225,16 +248,26 @@ export default function StopsScreen() {
       const intermediateCount = vbitIndex >= 0 ? vbitIndex : prev.length;
       const nextOrder = intermediateCount + 1;
 
-      // Suggest arrival time (07:30 + 15m intervals)
-      const startMinutes = 7 * 60 + 30;
-      const totalMinutes = startMinutes + (nextOrder - 1) * 15;
-      const hours = Math.floor(totalMinutes / 60);
-      const mins = totalMinutes % 60;
-      const defaultTime = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+      // Suggest the next stop from routePresetStops if available
+      const suggestedPreset = routePresetStops[intermediateCount] || null;
+
+      let defaultName = `Stop ${nextOrder}`;
+      let defaultTime = '08:30';
+
+      if (suggestedPreset) {
+        defaultName = suggestedPreset.name;
+        defaultTime = suggestedPreset.scheduledTime;
+      } else {
+        const startMinutes = 7 * 60 + 30;
+        const totalMinutes = startMinutes + (nextOrder - 1) * 15;
+        const hours = Math.floor(totalMinutes / 60);
+        const mins = totalMinutes % 60;
+        defaultTime = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+      }
 
       const newStop = {
         tempId: 'new-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
-        name: `Stop ${nextOrder}`,
+        name: defaultName,
         latitude: newLat,
         longitude: newLng,
         scheduledTime: defaultTime,
@@ -475,6 +508,29 @@ export default function StopsScreen() {
                 {saving ? 'Publishing…' : '🚀 Publish Live'}
               </button>
             </div>
+
+            {/* Route Stops Reference Banner */}
+            {selectedRoute.areaCovered && (
+              <div
+                style={{
+                  width: '100%',
+                  marginTop: 6,
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  background: 'rgba(234, 88, 12, 0.08)',
+                  border: '1px solid rgba(234, 88, 12, 0.25)',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div style={{ fontWeight: 750, color: '#EA580C', marginBottom: 2 }}>
+                  📋 Route {selectedRoute.routeNo} Scheduled Stops from Transport Document ({routePresetStops.length} stops):
+                </div>
+                <div style={{ color: 'var(--ink)', fontSize: 11.5, opacity: 0.9 }}>
+                  {selectedRoute.areaCovered}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -671,51 +727,93 @@ export default function StopsScreen() {
                         )}
                       </div>
 
-                      {/* Stop Name & Scheduled Time Inputs */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10 }}>
-                        <div>
-                          <label style={{ display: 'block', fontSize: 10, color: 'var(--muted)', fontWeight: 700, marginBottom: 3 }}>
-                            Stop Name
-                          </label>
-                          <input
-                            type="text"
-                            value={stop.name}
-                            disabled={isEnd}
-                            onChange={(e) => updateStop(idx, 'name', e.target.value)}
-                            placeholder="e.g. Uppal Depot"
-                            style={{
-                              width: '100%',
-                              padding: '8px 10px',
-                              borderRadius: 8,
-                              border: '1px solid var(--line)',
-                              background: isEnd ? 'transparent' : 'var(--surface)',
-                              color: 'var(--ink)',
-                              fontSize: 12,
-                              fontWeight: 600,
-                              outline: 'none',
-                            }}
-                          />
-                        </div>
-                        <div>
-                          <label style={{ display: 'block', fontSize: 10, color: 'var(--muted)', fontWeight: 700, marginBottom: 3 }}>
-                            Scheduled Arrival
-                          </label>
-                          <input
-                            type="time"
-                            value={stop.scheduledTime}
-                            onChange={(e) => updateStop(idx, 'scheduledTime', e.target.value)}
-                            style={{
-                              width: '100%',
-                              padding: '8px 10px',
-                              borderRadius: 8,
-                              border: '1px solid var(--line)',
-                              background: 'var(--surface)',
-                              color: 'var(--ink)',
-                              fontSize: 12,
-                              fontWeight: 600,
-                              outline: 'none',
-                            }}
-                          />
+                      {/* Stop Name & Scheduled Time Inputs with Route Preset Selector */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {!isEnd && routePresetStops.length > 0 && (
+                          <div>
+                            <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--teal)', fontWeight: 750, marginBottom: 3 }}>
+                              <span>📍 Select Stop Name from Route List:</span>
+                              <span style={{ fontSize: 9, color: 'var(--muted)' }}>Select preset or edit text below</span>
+                            </label>
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                const chosenName = e.target.value;
+                                if (!chosenName) return;
+                                const chosen = routePresetStops.find((p) => p.name === chosenName);
+                                updateStop(idx, 'name', chosenName);
+                                if (chosen?.scheduledTime) {
+                                  updateStop(idx, 'scheduledTime', chosen.scheduledTime);
+                                }
+                              }}
+                              style={{
+                                width: '100%',
+                                padding: '7px 10px',
+                                borderRadius: 8,
+                                border: '1.5px solid var(--teal)',
+                                background: 'rgba(20, 184, 166, 0.08)',
+                                color: 'var(--ink)',
+                                fontSize: 12,
+                                fontWeight: 700,
+                                outline: 'none',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <option value="">▼ Pick from Route {selectedRoute.routeNo} ({routePresetStops.length} stops available)...</option>
+                              {routePresetStops.map((preset, pIdx) => (
+                                <option key={preset.name + pIdx} value={preset.name}>
+                                  {pIdx + 1}. {preset.name} {preset.scheduledTime ? `(${preset.scheduledTime})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10 }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 10, color: 'var(--muted)', fontWeight: 700, marginBottom: 3 }}>
+                              Stop Name {isEnd ? '' : '(Editable, e.g. Lalapet 2)'}
+                            </label>
+                            <input
+                              type="text"
+                              value={stop.name}
+                              disabled={isEnd}
+                              onChange={(e) => updateStop(idx, 'name', e.target.value)}
+                              placeholder="e.g. Lalapet, Lalapet 2..."
+                              style={{
+                                width: '100%',
+                                padding: '8px 10px',
+                                borderRadius: 8,
+                                border: '1px solid var(--line)',
+                                background: isEnd ? 'transparent' : 'var(--surface)',
+                                color: 'var(--ink)',
+                                fontSize: 12,
+                                fontWeight: 600,
+                                outline: 'none',
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 10, color: 'var(--muted)', fontWeight: 700, marginBottom: 3 }}>
+                              Scheduled Arrival
+                            </label>
+                            <input
+                              type="time"
+                              value={stop.scheduledTime}
+                              onChange={(e) => updateStop(idx, 'scheduledTime', e.target.value)}
+                              style={{
+                                width: '100%',
+                                padding: '8px 10px',
+                                borderRadius: 8,
+                                border: '1px solid var(--line)',
+                                background: 'var(--surface)',
+                                color: 'var(--ink)',
+                                fontSize: 12,
+                                fontWeight: 600,
+                                outline: 'none',
+                              }}
+                            />
+                          </div>
                         </div>
                       </div>
 
@@ -909,6 +1007,42 @@ export default function StopsScreen() {
                         <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
                           Scheduled: <strong>{stop.scheduledTime}</strong>
                         </div>
+
+                        {!isEnd && routePresetStops.length > 0 && (
+                          <div style={{ marginBottom: 8 }}>
+                            <select
+                              value=""
+                              onChange={(e) => {
+                                const chosenName = e.target.value;
+                                if (!chosenName) return;
+                                const chosen = routePresetStops.find((p) => p.name === chosenName);
+                                updateStop(idx, 'name', chosenName);
+                                if (chosen?.scheduledTime) {
+                                  updateStop(idx, 'scheduledTime', chosen.scheduledTime);
+                                }
+                              }}
+                              style={{
+                                width: '100%',
+                                padding: '4px 6px',
+                                fontSize: 11,
+                                borderRadius: 6,
+                                border: '1px solid #14b8a6',
+                                background: '#f0fdfa',
+                                color: '#0f766e',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <option value="">▼ Pick from Route {selectedRoute.routeNo}...</option>
+                              {routePresetStops.map((preset, pIdx) => (
+                                <option key={preset.name + pIdx} value={preset.name}>
+                                  {pIdx + 1}. {preset.name} ({preset.scheduledTime})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
                         {!isEnd && (
                           <button
                             type="button"
