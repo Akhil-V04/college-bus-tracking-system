@@ -17,6 +17,10 @@
 }
 *{box-sizing:border-box} body{margin:0;min-width:320px;min-height:100vh;background:var(--canvas)}
 button,input,select,textarea{font:inherit} button{cursor:pointer} button:disabled{cursor:not-allowed;opacity:.55}
+select{color-scheme:dark}
+[data-theme="dark"] select,[data-theme="dark"] select option{background-color:#161C24 !important;color:#F8FAFC !important}
+[data-theme="light"] select,[data-theme="light"] select option{background-color:#ffffff !important;color:#172033 !important}
+select option:checked{background-color:#EA580C !important;color:#ffffff !important}
 
 .login-page{min-height:100vh;display:grid;place-items:center;padding:28px;overflow:hidden;position:relative;background:linear-gradient(145deg,#090F16,#161C24 52%,#090F16)}
 .login-orb{position:absolute;border-radius:999px;opacity:.18;background:var(--teal)}.login-orb-one{width:420px;height:420px;top:-190px;right:-100px}.login-orb-two{width:300px;height:300px;bottom:-130px;left:-80px}

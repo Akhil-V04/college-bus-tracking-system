@@ -108,7 +108,35 @@ router.get('/route/:routeServiceId/detail', async (req, res) => {
   });
   if (published) return res.json(published);
 
-  return res.status(404).json({ error: 'No schedule found for this route' });
+  // Return a clean default template schedule with VBIT College so all routes can be mapped immediately
+  const route = await prisma.routeService.findUnique({ where: { id: routeServiceId } });
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+
+  let vbitStop = await prisma.stop.findFirst({
+    where: { name: { contains: 'VBIT', mode: 'insensitive' } },
+  });
+  if (!vbitStop) {
+    vbitStop = await prisma.stop.create({
+      data: { name: 'VBIT College', latitude: 17.4705, longitude: 78.7255 }
+    });
+  }
+
+  return res.json({
+    id: null,
+    routeServiceId,
+    name: `Route ${route.routeNo} Morning Schedule`,
+    direction: 'MORNING',
+    status: 'NEW_ROUTE',
+    routeService: route,
+    stops: [
+      {
+        id: null,
+        sequenceOrder: 1,
+        scheduledTime: '09:25',
+        stop: vbitStop,
+      },
+    ],
+  });
 });
 
 router.post('/route/:routeServiceId/save-stops', async (req, res) => {

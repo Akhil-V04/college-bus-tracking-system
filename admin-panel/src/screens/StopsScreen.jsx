@@ -99,9 +99,12 @@ function MapClickHandler({ onClick, enabled }) {
 function FitBounds({ positions }) {
   const map = useMap();
   useEffect(() => {
-    if (positions.length > 0) {
+    if (positions && positions.length > 1) {
       const bounds = L.latLngBounds(positions);
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    } else if (positions && positions.length === 1) {
+      // When only VBIT is present, zoom out to show full Hyderabad city so admin can click starting stop anywhere
+      map.setView([17.43, 78.55], 11);
     }
   }, [positions, map]);
   return null;
@@ -748,20 +751,27 @@ export default function StopsScreen() {
                               }}
                               style={{
                                 width: '100%',
-                                padding: '7px 10px',
+                                padding: '8px 12px',
                                 borderRadius: 8,
-                                border: '1.5px solid var(--teal)',
-                                background: 'rgba(20, 184, 166, 0.08)',
-                                color: 'var(--ink)',
+                                border: '1.5px solid #EA580C',
+                                background: '#161C24',
+                                color: '#F8FAFC',
+                                colorScheme: 'dark',
                                 fontSize: 12,
                                 fontWeight: 700,
                                 outline: 'none',
                                 cursor: 'pointer',
                               }}
                             >
-                              <option value="">▼ Pick from Route {selectedRoute.routeNo} ({routePresetStops.length} stops available)...</option>
+                              <option value="" style={{ background: '#161C24', color: '#94A3B8' }}>
+                                ▼ Pick from Route {selectedRoute.routeNo} ({routePresetStops.length} stops available)...
+                              </option>
                               {routePresetStops.map((preset, pIdx) => (
-                                <option key={preset.name + pIdx} value={preset.name}>
+                                <option
+                                  key={preset.name + pIdx}
+                                  value={preset.name}
+                                  style={{ background: '#161C24', color: '#FFFFFF', padding: '6px 10px', fontWeight: 650 }}
+                                >
                                   {pIdx + 1}. {preset.name} {preset.scheduledTime ? `(${preset.scheduledTime})` : ''}
                                 </option>
                               ))}
@@ -829,12 +839,27 @@ export default function StopsScreen() {
 
             {/* Quick Action Buttons */}
             {selectedRoute && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+                <button
+                  type="button"
+                  className="button button-ghost"
+                  onClick={() => {
+                    if (confirm(`Reset stops for Route ${selectedRoute.routeNo} back to VBIT College destination only?`)) {
+                      setRouteStops([{ ...VBIT_ENDPOINT }]);
+                      setMessage({ type: 'info', text: `Stops cleared for Route ${selectedRoute.routeNo}. Click on the map to start placing stops.` });
+                    }
+                  }}
+                  style={{ fontSize: 11, padding: '8px 6px' }}
+                  title="Clear placed stops and start fresh for this route"
+                >
+                  🔄 Reset
+                </button>
                 <button
                   type="button"
                   className="button button-secondary"
                   disabled={saving || routeStops.length < 2}
                   onClick={() => saveRouteStops(false)}
+                  style={{ fontSize: 11, padding: '8px 6px' }}
                 >
                   {saving ? 'Saving…' : '💾 Save Draft'}
                 </button>
@@ -843,6 +868,7 @@ export default function StopsScreen() {
                   className="button button-primary"
                   disabled={saving || routeStops.length < 2}
                   onClick={() => saveRouteStops(true)}
+                  style={{ fontSize: 11, padding: '8px 6px' }}
                 >
                   {saving ? 'Publishing…' : '🚀 Publish Live'}
                 </button>
@@ -852,16 +878,52 @@ export default function StopsScreen() {
 
           {/* ─── Right Panel: Interactive Route Map with Colored Path ─── */}
           <div className="panel" style={{ position: 'relative', overflow: 'hidden', height: 'calc(100vh - 230px)', minHeight: 600 }}>
-            {/* Map Layer Switcher Toolbar */}
+            {/* Route Summary Pill on Map Top Left */}
+            {selectedRoute && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 14,
+                  left: 60,
+                  maxWidth: 'calc(100% - 80px)',
+                  zIndex: 1000,
+                  background: 'rgba(15, 23, 42, 0.92)',
+                  color: '#ffffff',
+                  padding: '7px 14px',
+                  borderRadius: 20,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  backdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                <span style={{ color: '#EA580C', flexShrink: 0 }}>●</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  Route {selectedRoute.routeNo} — {selectedRoute.name}
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: 500, flexShrink: 0 }}>
+                  ({routeStops.length} stops ending at VBIT)
+                </span>
+              </div>
+            )}
+
+            {/* Map Layer Switcher Toolbar positioned at BOTTOM RIGHT to prevent any overlap */}
             <div
               style={{
                 position: 'absolute',
-                top: 14,
+                bottom: 24,
                 right: 14,
                 zIndex: 1000,
                 display: 'flex',
                 gap: 6,
-                background: 'rgba(15, 23, 42, 0.85)',
+                background: 'rgba(15, 23, 42, 0.92)',
                 padding: 4,
                 borderRadius: 8,
                 backdropFilter: 'blur(8px)',
@@ -891,36 +953,6 @@ export default function StopsScreen() {
               ))}
             </div>
 
-            {/* Route Summary Pill on Map */}
-            {selectedRoute && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 14,
-                  left: 60,
-                  zIndex: 1000,
-                  background: 'rgba(15, 23, 42, 0.88)',
-                  color: '#ffffff',
-                  padding: '7px 14px',
-                  borderRadius: 20,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  backdropFilter: 'blur(8px)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                }}
-              >
-                <span style={{ color: '#EA580C' }}>●</span>
-                <span>Route {selectedRoute.routeNo} — {selectedRoute.name}</span>
-                <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: 500 }}>
-                  ({routeStops.length} stops ending at VBIT)
-                </span>
-              </div>
-            )}
-
             <MapContainer
               center={mapCenter}
               zoom={12}
@@ -940,11 +972,12 @@ export default function StopsScreen() {
               {/* Auto-fit map to show all stops */}
               {stopCoordinates.length > 0 && <FitBounds positions={stopCoordinates} />}
 
-              {/* ─── COLORED ROUTE PATH FROM START TO END ─── */}
+              {/* ─── COLORED ROUTE PATH FROM START TO END (interactive={false} to ensure click-through) ─── */}
               {publishedPolyline && publishedPolyline.length > 1 ? (
                 // High-resolution Google turn-by-turn road polyline
                 <Polyline
                   positions={publishedPolyline}
+                  interactive={false}
                   pathOptions={{
                     color: '#EA580C',
                     weight: 6,
@@ -957,6 +990,7 @@ export default function StopsScreen() {
                 <>
                   <Polyline
                     positions={stopCoordinates}
+                    interactive={false}
                     pathOptions={{
                       color: '#EA580C',
                       weight: 5,
@@ -966,6 +1000,7 @@ export default function StopsScreen() {
                   />
                   <Polyline
                     positions={stopCoordinates}
+                    interactive={false}
                     pathOptions={{
                       color: 'rgba(234, 88, 12, 0.25)',
                       weight: 12,
