@@ -287,6 +287,82 @@ export default function StopsScreen() {
     });
   }
 
+  // 3b. Add a specific preset stop from the route document
+  function addPresetStop(preset) {
+    const vbitIndex = routeStops.findIndex((s) => s.isEndpoint || s.name.toUpperCase().includes('VBIT'));
+    const intermediateStops = routeStops.filter((s) => !s.isEndpoint && !s.name.toUpperCase().includes('VBIT'));
+    const nextIdx = intermediateStops.length;
+
+    // Smart initial position: offset from last stop or start at city center
+    let baseLat = 17.4350;
+    let baseLng = 78.5300;
+    if (intermediateStops.length > 0) {
+      const lastStop = intermediateStops[intermediateStops.length - 1];
+      baseLat = Number((lastStop.latitude + 0.006).toFixed(5));
+      baseLng = Number((lastStop.longitude + 0.012).toFixed(5));
+    }
+
+    const defaultPreset = preset || routePresetStops[nextIdx] || null;
+    const name = defaultPreset?.name || (preset?.name ? preset.name : `Stop ${nextIdx + 1}`);
+    const scheduledTime = defaultPreset?.scheduledTime || '08:30';
+
+    const newStop = {
+      tempId: 'preset-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+      name,
+      latitude: baseLat,
+      longitude: baseLng,
+      scheduledTime,
+      isEndpoint: false,
+    };
+
+    setRouteStops((prev) => {
+      const idx = prev.findIndex((s) => s.isEndpoint || s.name.toUpperCase().includes('VBIT'));
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy.splice(idx, 0, newStop);
+        return copy;
+      }
+      return [...prev, newStop, { ...VBIT_ENDPOINT }];
+    });
+
+    setMessage({
+      type: 'info',
+      text: `Added "${name}"! Its marker is placed on the map — drag it to the exact street/junction location.`,
+    });
+  }
+
+  // 3c. Populate all preset stops from the transport document at once
+  function populateAllPresetStops() {
+    if (!routePresetStops || routePresetStops.length === 0) return;
+    const total = routePresetStops.length;
+
+    // Corridor from Hyderabad (Secunderabad / Uppal) towards Ghatkesar / VBIT
+    const startLat = 17.4200;
+    const startLng = 78.5200;
+    const endLat = 17.4650;
+    const endLng = 78.7050;
+
+    const newStops = routePresetStops.map((preset, idx) => {
+      const fraction = idx / Math.max(total, 1);
+      const lat = Number((startLat + fraction * (endLat - startLat)).toFixed(5));
+      const lng = Number((startLng + fraction * (endLng - startLng)).toFixed(5));
+      return {
+        tempId: 'preset-' + Date.now() + '-' + idx,
+        name: preset.name,
+        latitude: lat,
+        longitude: lng,
+        scheduledTime: preset.scheduledTime || '08:00',
+        isEndpoint: false,
+      };
+    });
+
+    setRouteStops([...newStops, { ...VBIT_ENDPOINT }]);
+    setMessage({
+      type: 'info',
+      text: `Loaded all ${total} stops for Route ${selectedRoute.routeNo}! You can drag markers on the map to fine-tune exact locations, edit names, or click Save/Publish.`,
+    });
+  }
+
   // 4. Update stop name or arrival time
   function updateStop(index, field, value) {
     setRouteStops((prev) => {
@@ -512,25 +588,73 @@ export default function StopsScreen() {
               </button>
             </div>
 
-            {/* Route Stops Reference Banner */}
+            {/* Route Stops Reference Banner with Clickable Chips & Auto-Populate */}
             {selectedRoute.areaCovered && (
               <div
                 style={{
                   width: '100%',
                   marginTop: 6,
-                  padding: '10px 14px',
-                  borderRadius: 8,
+                  padding: '12px 16px',
+                  borderRadius: 10,
                   background: 'rgba(234, 88, 12, 0.08)',
-                  border: '1px solid rgba(234, 88, 12, 0.25)',
-                  fontSize: 12,
-                  lineHeight: 1.6,
+                  border: '1px solid rgba(234, 88, 12, 0.3)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
                 }}
               >
-                <div style={{ fontWeight: 750, color: '#EA580C', marginBottom: 2 }}>
-                  📋 Route {selectedRoute.routeNo} Scheduled Stops from Transport Document ({routePresetStops.length} stops):
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                  <div style={{ fontWeight: 750, color: '#EA580C', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>📋 Route {selectedRoute.routeNo} Scheduled Stops from Document ({routePresetStops.length} stops):</span>
+                  </div>
+                  {routePresetStops.length > 0 && (
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={populateAllPresetStops}
+                      style={{ padding: '5px 12px', fontSize: 11.5, fontWeight: 700 }}
+                      title="Load all stops from the document into the route at once"
+                    >
+                      ⚡ Auto-Populate All {routePresetStops.length} Stops
+                    </button>
+                  )}
                 </div>
-                <div style={{ color: 'var(--ink)', fontSize: 11.5, opacity: 0.9 }}>
-                  {selectedRoute.areaCovered}
+
+                {/* Clickable stop chips */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {routePresetStops.map((preset, pIdx) => {
+                    const alreadyAdded = routeStops.some(
+                      (s) => !s.isEndpoint && s.name.trim().toLowerCase() === preset.name.trim().toLowerCase()
+                    );
+                    return (
+                      <button
+                        key={preset.name + pIdx}
+                        type="button"
+                        onClick={() => addPresetStop(preset)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '5px 10px',
+                          borderRadius: 6,
+                          fontSize: 11.5,
+                          fontWeight: 650,
+                          cursor: 'pointer',
+                          background: alreadyAdded ? 'rgba(34, 197, 94, 0.15)' : 'var(--surface)',
+                          color: alreadyAdded ? '#22C55E' : 'var(--ink)',
+                          border: alreadyAdded ? '1px solid rgba(34, 197, 94, 0.5)' : '1px solid var(--line)',
+                          transition: 'all 0.15s ease',
+                        }}
+                        title={alreadyAdded ? `Stop "${preset.name}" is already in the route (click to add another)` : `Click to add ${preset.name} (${preset.scheduledTime})`}
+                      >
+                        <span style={{ fontWeight: 800 }}>{alreadyAdded ? '✓' : '＋'}</span>
+                        <span>{preset.name}</span>
+                        {preset.scheduledTime && (
+                          <span style={{ fontSize: 10.5, opacity: 0.75 }}>({preset.scheduledTime})</span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -650,6 +774,52 @@ export default function StopsScreen() {
               <LoadingState label="Loading stops for route…" />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 'calc(100vh - 360px)', overflowY: 'auto', paddingRight: 4 }}>
+                {/* Empty State Callout when route has 0 pickup stops */}
+                {routeStops.length === 1 && selectedRoute && (
+                  <div
+                    style={{
+                      padding: 16,
+                      borderRadius: 12,
+                      background: 'rgba(234, 88, 12, 0.08)',
+                      border: '1.5px dashed rgba(234, 88, 12, 0.45)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                      textAlign: 'center',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 750, color: '#EA580C' }}>
+                      📍 No pickup stops marked yet for Route {selectedRoute.routeNo}
+                    </div>
+                    <p style={{ margin: 0, fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5 }}>
+                      Select stops from the dropdown below, click the chips above, or click on the map to place pins.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {routePresetStops.length > 0 && (
+                        <button
+                          type="button"
+                          className="button button-primary"
+                          onClick={populateAllPresetStops}
+                          style={{ justifyContent: 'center', padding: '9px 14px', fontSize: 12, fontWeight: 700 }}
+                        >
+                          ⚡ Auto-Populate All {routePresetStops.length} Stops from Document
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="button button-secondary"
+                        onClick={() => addPresetStop(routePresetStops[0])}
+                        style={{ justifyContent: 'center', padding: '8px 12px', fontSize: 11.5 }}
+                      >
+                        ➕ Add First Stop ({routePresetStops[0]?.name || 'Stop 1'})
+                      </button>
+                    </div>
+                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                      💡 Or simply click anywhere on the Hyderabad map to place your first stop pin!
+                    </span>
+                  </div>
+                )}
+
                 {routeStops.map((stop, idx) => {
                   const isFirst = idx === 0 && !stop.isEndpoint;
                   const isEnd = stop.isEndpoint || (stop.name || '').toUpperCase().includes('VBIT');
@@ -837,6 +1007,65 @@ export default function StopsScreen() {
               </div>
             )}
 
+            {/* Always-Available Add Pickup Stop Action Bar */}
+            {selectedRoute && (
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'center',
+                  background: 'var(--surface)',
+                  padding: '10px 12px',
+                  borderRadius: 10,
+                  border: '1px solid var(--line)',
+                  marginTop: 4,
+                }}
+              >
+                {routePresetStops.length > 0 && (
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (!val) return;
+                      const chosen = routePresetStops.find((p) => p.name === val);
+                      addPresetStop(chosen || { name: val, scheduledTime: '08:30' });
+                      e.target.value = '';
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '8px 10px',
+                      borderRadius: 8,
+                      border: '1.5px solid #EA580C',
+                      background: '#161C24',
+                      color: '#F8FAFC',
+                      colorScheme: 'dark',
+                      fontSize: 11.5,
+                      fontWeight: 650,
+                      outline: 'none',
+                    }}
+                  >
+                    <option value="" style={{ background: '#161C24', color: '#94A3B8' }}>
+                      ➕ Pick stop to add from Route {selectedRoute.routeNo}...
+                    </option>
+                    {routePresetStops.map((preset, pIdx) => (
+                      <option key={'picker-' + preset.name + pIdx} value={preset.name} style={{ background: '#161C24', color: '#FFFFFF' }}>
+                        {pIdx + 1}. {preset.name} {preset.scheduledTime ? `(${preset.scheduledTime})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  className="button button-ghost"
+                  onClick={() => addPresetStop(null)}
+                  style={{ fontSize: 11.5, padding: '7px 10px', whiteSpace: 'nowrap' }}
+                  title="Add custom stop to sequence"
+                >
+                  ➕ Add Stop
+                </button>
+              </div>
+            )}
+
             {/* Quick Action Buttons */}
             {selectedRoute && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 8, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
@@ -877,7 +1106,7 @@ export default function StopsScreen() {
           </div>
 
           {/* ─── Right Panel: Interactive Route Map with Colored Path ─── */}
-          <div className="panel" style={{ position: 'relative', overflow: 'hidden', height: 'calc(100vh - 230px)', minHeight: 600 }}>
+          <div className="panel" style={{ position: 'relative', overflow: 'hidden', height: 'calc(100vh - 240px)', minHeight: 520 }}>
             {/* Route Summary Pill on Map Top Left */}
             {selectedRoute && (
               <div
@@ -914,11 +1143,32 @@ export default function StopsScreen() {
               </div>
             )}
 
+            {/* Helpful Map Floating Hint */}
+            <div
+              style={{
+                position: 'absolute',
+                top: 50,
+                left: 60,
+                zIndex: 999,
+                background: 'rgba(15, 23, 42, 0.88)',
+                color: 'rgba(255, 255, 255, 0.85)',
+                padding: '4px 12px',
+                borderRadius: 14,
+                fontSize: 11,
+                fontWeight: 600,
+                backdropFilter: 'blur(6px)',
+                border: '1px solid rgba(255, 255, 255, 0.12)',
+                pointerEvents: 'none',
+              }}
+            >
+              📍 Click map to add stops &bull; Drag numbered pins to move &bull; Final stop: VBIT
+            </div>
+
             {/* Map Layer Switcher Toolbar positioned at BOTTOM RIGHT to prevent any overlap */}
             <div
               style={{
                 position: 'absolute',
-                bottom: 24,
+                bottom: 20,
                 right: 14,
                 zIndex: 1000,
                 display: 'flex',
