@@ -84,6 +84,174 @@ router.get('/route/:routeServiceId', async (req, res) => {
 
 router.use(requireAuth(['admin']));
 
+router.get('/route/:routeServiceId/detail', async (req, res) => {
+  const routeServiceId = Number(req.params.routeServiceId);
+  if (!Number.isInteger(routeServiceId)) return res.status(400).json({ error: 'Invalid routeServiceId' });
+
+  const draft = await prisma.scheduleVersion.findFirst({
+    where: { routeServiceId, status: 'DRAFT' },
+    orderBy: { version: 'desc' },
+    include: {
+      routeService: true,
+      stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+    },
+  });
+  if (draft) return res.json(draft);
+
+  const published = await prisma.scheduleVersion.findFirst({
+    where: { routeServiceId, status: 'PUBLISHED' },
+    orderBy: { publishedAt: 'desc' },
+    include: {
+      routeService: true,
+      stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+    },
+  });
+  if (published) return res.json(published);
+
+  return res.status(404).json({ error: 'No schedule found for this route' });
+});
+
+router.post('/route/:routeServiceId/save-stops', async (req, res) => {
+  const routeServiceId = Number(req.params.routeServiceId);
+  if (!Number.isInteger(routeServiceId)) return res.status(400).json({ error: 'Invalid routeServiceId' });
+
+  const route = await prisma.routeService.findUnique({ where: { id: routeServiceId } });
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+
+  const { name, direction = 'MORNING', stops: rawStops = [], publish = false } = req.body;
+
+  if (!Array.isArray(rawStops) || rawStops.length < 2) {
+    return res.status(400).json({ error: 'A route must have at least 2 stops (start pickup and college destination)' });
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const resolvedStops = [];
+      for (let i = 0; i < rawStops.length; i++) {
+        const item = rawStops[i];
+        let stopId = item.stopId;
+        if (!stopId) {
+          const existing = await tx.stop.findFirst({
+            where: {
+              OR: [
+                { name: item.name.trim() },
+                {
+                  latitude: { gte: item.latitude - 0.0001, lte: item.latitude + 0.0001 },
+                  longitude: { gte: item.longitude - 0.0001, lte: item.longitude + 0.0001 },
+                },
+              ],
+            },
+          });
+          if (existing) {
+            stopId = existing.id;
+          } else {
+            const createdStop = await tx.stop.create({
+              data: {
+                name: item.name.trim() || `Stop ${i + 1}`,
+                latitude: Number(Number(item.latitude).toFixed(5)),
+                longitude: Number(Number(item.longitude).toFixed(5)),
+              },
+            });
+            stopId = createdStop.id;
+          }
+        }
+        resolvedStops.push({
+          stopId,
+          scheduledTime: item.scheduledTime || (i === rawStops.length - 1 ? '09:30' : `07:${String(30 + i * 15).padStart(2, '0')}`),
+          sequenceOrder: i + 1,
+        });
+      }
+
+      let schedule = await tx.scheduleVersion.findFirst({
+        where: { routeServiceId, direction, status: 'DRAFT' },
+        orderBy: { version: 'desc' },
+      });
+
+      if (!schedule) {
+        const latest = await tx.scheduleVersion.findFirst({
+          where: { routeServiceId, direction },
+          orderBy: { version: 'desc' },
+          select: { version: true },
+        });
+        schedule = await tx.scheduleVersion.create({
+          data: {
+            routeServiceId,
+            direction,
+            name: name || `${route.routeNo} Timetable`,
+            version: (latest?.version || 0) + 1,
+          },
+        });
+      } else if (name) {
+        schedule = await tx.scheduleVersion.update({
+          where: { id: schedule.id },
+          data: { name },
+        });
+      }
+
+      await tx.scheduleStop.deleteMany({ where: { scheduleVersionId: schedule.id } });
+      for (const item of resolvedStops) {
+        await tx.scheduleStop.create({
+          data: {
+            scheduleVersionId: schedule.id,
+            stopId: item.stopId,
+            sequenceOrder: item.sequenceOrder,
+            scheduledTime: item.scheduledTime,
+          },
+        });
+      }
+
+      if (publish) {
+        const stopsWithCoords = await tx.scheduleStop.findMany({
+          where: { scheduleVersionId: schedule.id },
+          orderBy: { sequenceOrder: 'asc' },
+          include: { stop: true },
+        });
+
+        let geometry;
+        try {
+          geometry = await requestRouteGeometry(stopsWithCoords);
+        } catch {
+          geometry = fallbackRouteGeometry(stopsWithCoords, 'GOOGLE_MAPS_UNAVAILABLE');
+        }
+
+        await tx.scheduleVersion.updateMany({
+          where: { routeServiceId, direction, status: 'PUBLISHED' },
+          data: { status: 'ARCHIVED' },
+        });
+
+        schedule = await tx.scheduleVersion.update({
+          where: { id: schedule.id },
+          data: {
+            status: 'PUBLISHED',
+            publishedAt: new Date(),
+            ...geometry,
+          },
+        });
+      }
+
+      await writeAdminAudit(tx, req, {
+        action: publish ? 'SCHEDULE_PUBLISHED' : 'SCHEDULE_UPDATED',
+        entityType: 'ScheduleVersion',
+        entityId: schedule.id,
+        afterSummary: scheduleAuditSummary(schedule),
+      });
+
+      return tx.scheduleVersion.findUnique({
+        where: { id: schedule.id },
+        include: {
+          routeService: true,
+          stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+        },
+      });
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error('[schedules/save-stops]', error);
+    return res.status(500).json({ error: error.message || 'Failed to save route stops' });
+  }
+});
+
 router.get('/', async (req, res) => {
   const schedules = await prisma.scheduleVersion.findMany({
     include: { routeService: true, _count: { select: { stops: true } } },
