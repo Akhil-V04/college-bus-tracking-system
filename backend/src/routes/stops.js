@@ -5,7 +5,7 @@ const { stopSchema } = require('../schemas');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../crud');
 const { writeAdminAudit } = require('../lib/adminAudit');
-const { GoogleMapsGeometryError, requestRouteGeometry } = require('../lib/googleMapsGeometry');
+const { GoogleMapsGeometryError, requestRouteGeometry, fallbackRouteGeometry } = require('../lib/googleMapsGeometry');
 
 const router = express.Router();
 
@@ -20,22 +20,16 @@ router.put('/:id/coordinates', requireAuth(['admin']), async (req, res) => {
     include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
   });
   const regenerated = [];
-  try {
-    for (const schedule of schedules) {
-      const points = schedule.stops.map((entry) => entry.stopId === id
-        ? { ...entry, stop: { ...entry.stop, ...data } }
-        : entry);
+  for (const schedule of schedules) {
+    const points = schedule.stops.map((entry) => entry.stopId === id
+      ? { ...entry, stop: { ...entry.stop, ...data } }
+      : entry);
+    try {
       regenerated.push({ id: schedule.id, geometry: await requestRouteGeometry(points) });
+    } catch (error) {
+      console.warn(`[stops/coordinates] Google Maps geometry unavailable for schedule ${schedule.id} (${error.code || error.message}), using fallback interpolation.`);
+      regenerated.push({ id: schedule.id, geometry: fallbackRouteGeometry(points, error.code || 'GOOGLE_MAPS_UNAVAILABLE') });
     }
-  } catch (error) {
-    if (error instanceof GoogleMapsGeometryError) {
-      return res.status(error.statusCode).json({
-        error: 'Stop coordinates were not changed because published geometry could not be regenerated',
-        code: error.code,
-      });
-    }
-    console.error('[stops/coordinates/geometry]', error);
-    return res.status(500).json({ error: 'Stop coordinates were not changed' });
   }
   try {
     const updated = await prisma.$transaction(async (tx) => {

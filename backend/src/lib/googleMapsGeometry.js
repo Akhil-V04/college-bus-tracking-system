@@ -140,6 +140,61 @@ async function requestRouteGeometry(stops, options = {}) {
   }
 }
 
+function encodePolyline(points) {
+  let encoded = '';
+  let prevLat = 0;
+  let prevLng = 0;
+  for (const point of points) {
+    const lat = Math.round(point.latitude * 1e5);
+    const lng = Math.round(point.longitude * 1e5);
+    let dLat = lat - prevLat;
+    let dLng = lng - prevLng;
+    prevLat = lat;
+    prevLng = lng;
+    for (let val of [dLat, dLng]) {
+      val = val < 0 ? ~(val << 1) : val << 1;
+      while (val >= 0x20) {
+        encoded += String.fromCharCode((0x20 | (val & 0x1f)) + 63);
+        val >>= 5;
+      }
+      encoded += String.fromCharCode(val + 63);
+    }
+  }
+  return encoded;
+}
+
+function fallbackRouteGeometry(stops, errorCode = null) {
+  const points = normalizeRoutePoints(stops);
+  const polyline = encodePolyline(points);
+  
+  let totalMeters = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const R = 6371e3;
+    const dLat = (p2.latitude - p1.latitude) * Math.PI / 180;
+    const dLng = (p2.longitude - p1.longitude) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(p1.latitude * Math.PI / 180) * Math.cos(p2.latitude * Math.PI / 180) *
+              Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    totalMeters += R * c;
+  }
+
+  const durationSeconds = Math.round(totalMeters / 8.33);
+
+  return {
+    geometryPolyline: polyline,
+    geometryFormat: 'polyline5',
+    geometryDistanceMeters: Math.round(totalMeters),
+    geometryDurationSeconds: durationSeconds,
+    geometryGeneratedAt: new Date(),
+    geometryFingerprint: routeGeometryFingerprint(stops),
+    geometryProvider: 'FALLBACK_INTERPOLATION',
+    geometryErrorCode: errorCode || null,
+  };
+}
+
 module.exports = {
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
@@ -149,4 +204,6 @@ module.exports = {
   requestRouteGeometry,
   routeGeometryFingerprint,
   safeProviderCode,
+  encodePolyline,
+  fallbackRouteGeometry,
 };

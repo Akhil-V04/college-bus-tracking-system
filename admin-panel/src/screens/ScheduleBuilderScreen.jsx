@@ -172,6 +172,32 @@ export default function ScheduleBuilderScreen() {
     });
   }
 
+  // Check if VBIT is already in saved stops or pending stops
+  const hasVBIT = useMemo(() => {
+    const inSaved = (activeSchedule?.stops || []).some(s => (s.stop?.name || '').toUpperCase().includes('VBIT'));
+    const inPending = pendingStops.some(s => (s.name || '').toUpperCase().includes('VBIT'));
+    return inSaved || inPending;
+  }, [activeSchedule, pendingStops]);
+
+  // Quick action to add VBIT College as default ending stop
+  function addVBITDestination() {
+    const vbitStop = allStops.find(s => (s.name || '').toUpperCase().includes('VBIT'));
+    const nextOrder = (activeSchedule?.stops?.length || 0) + pendingStops.length;
+    const lat = vbitStop ? vbitStop.latitude : 17.47062;
+    const lng = vbitStop ? vbitStop.longitude : 78.72558;
+
+    setPendingStops(prev => [...prev, {
+      tempId: Date.now(),
+      latitude: lat,
+      longitude: lng,
+      name: vbitStop ? vbitStop.name : 'VBIT',
+      existingStopId: vbitStop ? vbitStop.id : null,
+      scheduledTime: activeSchedule?.direction === 'EVENING' ? '16:30' : '09:30',
+      sequenceOrder: nextOrder,
+    }]);
+    setMessage({ type: 'success', text: 'Added VBIT College as fixed destination stop.' });
+  }
+
   // Move to the details step
   function proceedToDetails() {
     if (pendingStops.length === 0 && (activeSchedule?.stops?.length || 0) === 0) {
@@ -418,6 +444,38 @@ export default function ScheduleBuilderScreen() {
 
           {/* ─── Right: Sidebar ─── */}
           <div className="panel" style={{ overflow: 'auto', padding: 20 }}>
+
+            {/* VBIT College Destination Banner */}
+            {activeSchedule?.status === 'DRAFT' && (
+              <div style={{
+                background: 'rgba(26, 115, 232, 0.08)',
+                border: '1px solid rgba(26, 115, 232, 0.35)',
+                borderRadius: 8,
+                padding: '12px 14px',
+                marginBottom: 16,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--navy)' }}>
+                      🎓 Fixed Destination: VBIT
+                    </div>
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                      {hasVBIT ? '✓ VBIT campus is included' : 'Default college endpoint for all morning routes'}
+                    </div>
+                  </div>
+                  {!hasVBIT && (
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      style={{ fontSize: 11, padding: '5px 10px', whiteSpace: 'nowrap' }}
+                      onClick={addVBITDestination}
+                    >
+                      + Add VBIT Stop
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Saved stops summary */}
             {(activeSchedule?.stops?.length || 0) > 0 && (

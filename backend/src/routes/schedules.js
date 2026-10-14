@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { scheduleVersionSchema, scheduleStopSchema } = require('../schemas');
 const { validate } = require('../crud');
 const { writeAdminAudit } = require('../lib/adminAudit');
-const { GoogleMapsGeometryError, requestRouteGeometry } = require('../lib/googleMapsGeometry');
+const { GoogleMapsGeometryError, requestRouteGeometry, fallbackRouteGeometry } = require('../lib/googleMapsGeometry');
 
 const router = express.Router();
 
@@ -230,14 +230,8 @@ router.post('/:id/publish', async (req, res) => {
   try {
     geometry = await requestRouteGeometry(schedule.stops);
   } catch (error) {
-    if (error instanceof GoogleMapsGeometryError) {
-      return res.status(error.statusCode).json({
-        error: 'Route geometry could not be generated',
-        code: error.code,
-      });
-    }
-    console.error('[schedules/publish]', error);
-    return res.status(500).json({ error: 'Route geometry could not be generated' });
+    console.warn(`[schedules/publish] Google Maps geometry unavailable (${error.code || error.message}), using fallback interpolation.`);
+    geometry = fallbackRouteGeometry(schedule.stops, error.code || 'GOOGLE_MAPS_UNAVAILABLE');
   }
 
   const published = await prisma.$transaction(async (tx) => {
@@ -278,7 +272,13 @@ router.post('/:id/geometry/regenerate', async (req, res) => {
   }
 
   try {
-    const geometry = await requestRouteGeometry(schedule.stops);
+    let geometry;
+    try {
+      geometry = await requestRouteGeometry(schedule.stops);
+    } catch (error) {
+      console.warn(`[schedules/regenerate] Google Maps geometry unavailable (${error.code || error.message}), using fallback interpolation.`);
+      geometry = fallbackRouteGeometry(schedule.stops, error.code || 'GOOGLE_MAPS_UNAVAILABLE');
+    }
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.scheduleVersion.update({ where: { id }, data: geometry });
       await writeAdminAudit(tx, req, {
