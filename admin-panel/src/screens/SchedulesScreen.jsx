@@ -144,6 +144,30 @@ export default function SchedulesScreen() {
     }
   }
 
+  async function deleteSchedule(target) {
+    const name = target?.name || 'this schedule';
+    const isPublished = target?.status === 'PUBLISHED';
+    const confirmMessage = isPublished
+      ? `Are you sure you want to remove "${name}"? This schedule is currently PUBLISHED. Removing it will archive it from active operations.`
+      : `Are you sure you want to delete "${name}"? This action cannot be undone.`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      const { data } = await api.delete(`/schedules/${target.id}`);
+      setDetail(null);
+      setMessage({
+        type: 'success',
+        text: data?.archived
+          ? `Schedule "${name}" has historical trips and was archived.`
+          : `Schedule "${name}" deleted successfully.`,
+      });
+      await load();
+    } catch (error) {
+      setMessage({ type: 'error', text: errorMessage(error, `Schedule "${name}" could not be deleted.`) });
+    }
+  }
+
   return (
     <>
       <PageHeader eyebrow="Timetable management" title="Schedules"
@@ -173,6 +197,7 @@ export default function SchedulesScreen() {
                       🗺️ Map
                     </Link>
                   )}
+                  <button className="text-button text-button-danger" onClick={() => deleteSchedule(schedule)}>Delete</button>
                 </div>
               </td>
             </tr>)}</tbody>
@@ -210,6 +235,7 @@ export default function SchedulesScreen() {
               <Link to="/schedule-builder" className="button button-secondary">🗺️ Map Builder</Link>
               <button className="button button-secondary" onClick={validateSchedule}>Validate</button>
               {detail.status === 'DRAFT' && <button className="button button-primary" onClick={publishSchedule}>Publish</button>}
+              <button className="button button-danger" onClick={() => deleteSchedule(detail)}>Delete Schedule</button>
             </div>
           </div>
           {detail.stops.length === 0 ? <EmptyState title="No stops in this draft" description="Add the first stop below." /> : <div className="panel table-wrap"><table className="data-table"><thead><tr><th>Order</th><th>Stop</th><th>Time</th><th /></tr></thead><tbody>{detail.stops.map((entry) => <tr key={entry.id}><td>{entry.sequenceOrder}</td><td>{entry.stop.name}</td><td>{entry.scheduledTime}</td><td>{detail.status === 'DRAFT' && <button className="text-button text-button-danger" onClick={() => removeStop(entry)}>Remove</button>}</td></tr>)}</tbody></table></div>}

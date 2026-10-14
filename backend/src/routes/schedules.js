@@ -213,6 +213,63 @@ router.delete('/:id/stops/:stopEntryId', async (req, res) => {
   return res.json({ deleted: true });
 });
 
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid schedule ID' });
+
+  const schedule = await prisma.scheduleVersion.findUnique({
+    where: { id },
+    include: {
+      trips: { select: { id: true }, take: 1 },
+      segmentSamples: { select: { id: true }, take: 1 },
+      segmentAggregates: { select: { id: true }, take: 1 },
+    },
+  });
+  if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
+
+  const hasLinkedHistory = schedule.trips.length > 0 || schedule.segmentSamples.length > 0 || schedule.segmentAggregates.length > 0;
+
+  try {
+    if (hasLinkedHistory) {
+      await prisma.$transaction(async (tx) => {
+        await tx.scheduleVersion.update({
+          where: { id },
+          data: { status: 'ARCHIVED' },
+        });
+        await writeAdminAudit(tx, req, {
+          action: 'SCHEDULE_ARCHIVED',
+          entityType: 'ScheduleVersion',
+          entityId: id,
+          beforeSummary: scheduleAuditSummary(schedule),
+        });
+      });
+      return res.json({ deleted: true, archived: true, message: 'Schedule has historical trip logs and was archived.' });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.scheduleStop.deleteMany({ where: { scheduleVersionId: id } });
+      await tx.scheduleVersion.delete({ where: { id } });
+      await writeAdminAudit(tx, req, {
+        action: 'SCHEDULE_DELETED',
+        entityType: 'ScheduleVersion',
+        entityId: id,
+        beforeSummary: scheduleAuditSummary(schedule),
+      });
+    });
+    return res.json({ deleted: true, archived: false });
+  } catch (error) {
+    if (error.code === 'P2003') {
+      await prisma.scheduleVersion.update({
+        where: { id },
+        data: { status: 'ARCHIVED' },
+      });
+      return res.json({ deleted: true, archived: true, message: 'Schedule was archived to preserve related data.' });
+    }
+    console.error('[schedules/delete]', error);
+    return res.status(500).json({ error: 'Could not delete schedule' });
+  }
+});
+
 router.post('/:id/validate', async (req, res) => {
   const { schedule, errors } = await validateSchedule(Number(req.params.id));
   if (!schedule) return res.status(404).json({ error: 'Schedule not found' });

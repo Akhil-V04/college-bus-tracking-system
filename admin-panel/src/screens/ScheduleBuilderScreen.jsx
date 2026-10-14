@@ -335,6 +335,36 @@ export default function ScheduleBuilderScreen() {
     }
   }
 
+  // Delete Schedule
+  async function deleteSchedule(scheduleToDelete) {
+    const target = scheduleToDelete || activeSchedule;
+    if (!target) return;
+    const name = target.name || 'this schedule';
+    const isPublished = target.status === 'PUBLISHED';
+    const confirmMessage = isPublished
+      ? `Are you sure you want to remove "${name}"? This schedule is currently PUBLISHED. Removing it will archive it from active operations.`
+      : `Are you sure you want to delete "${name}"? This will permanently remove the schedule and its stops.`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    try {
+      const { data } = await api.delete(`/schedules/${target.id}`);
+      setActiveSchedule(null);
+      setActiveScheduleId(null);
+      setPendingStops([]);
+      setStep('place');
+      setMessage({
+        type: 'success',
+        text: data?.archived
+          ? `Schedule "${name}" has historical trips and was archived.`
+          : `Schedule "${name}" deleted successfully.`,
+      });
+      await load();
+    } catch (error) {
+      setMessage({ type: 'error', text: errorMessage(error, `Schedule "${name}" could not be deleted.`) });
+    }
+  }
+
   // All markers (saved + pending)
   const savedPositions = (activeSchedule?.stops || []).map(s => [s.stop.latitude, s.stop.longitude]);
   const pendingPositions = pendingStops.map(s => [s.latitude, s.longitude]);
@@ -378,7 +408,7 @@ export default function ScheduleBuilderScreen() {
         ) : (
           <div className="panel table-wrap">
             <table className="data-table">
-              <thead><tr><th>Route</th><th>Schedule</th><th>Direction</th><th>Version</th><th>Stops</th><th /></tr></thead>
+              <thead><tr><th>Route</th><th>Schedule</th><th>Direction</th><th>Version</th><th>Stops</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
               <tbody>{draftSchedules.map(s => (
                 <tr key={s.id}>
                   <td><div className="cell-title">Route {s.routeService.routeNo}</div><div className="cell-subtitle">{s.routeService.name}</div></td>
@@ -386,7 +416,12 @@ export default function ScheduleBuilderScreen() {
                   <td>{s.direction}</td>
                   <td>v{s.version}</td>
                   <td>{s._count.stops}</td>
-                  <td><button className="button button-primary" onClick={() => loadScheduleDetail(s.id)}>Open Map Builder</button></td>
+                  <td>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center' }}>
+                      <button className="button button-primary" onClick={() => loadScheduleDetail(s.id)}>Open Map Builder</button>
+                      <button className="text-button text-button-danger" onClick={() => deleteSchedule(s)}>Delete</button>
+                    </div>
+                  </td>
                 </tr>
               ))}</tbody>
             </table>
@@ -484,6 +519,7 @@ export default function ScheduleBuilderScreen() {
                 <button className="button button-primary" onClick={publishSchedule}>Publish</button>
               </>
             )}
+            <button className="button button-danger" onClick={() => deleteSchedule(activeSchedule)}>Delete Schedule</button>
           </div>
         }
       />
