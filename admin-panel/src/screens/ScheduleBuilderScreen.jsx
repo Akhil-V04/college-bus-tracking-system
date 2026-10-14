@@ -10,24 +10,52 @@ import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 const DefaultIcon = L.icon({ iconUrl, shadowUrl: iconShadow, iconAnchor: [12, 41], popupAnchor: [1, -34] });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-// Numbered marker icon
-function numberedIcon(n, color = '#1d4ed8') {
+const MAP_LAYERS = {
+  roadmap: {
+    name: 'Google Maps',
+    url: 'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    maxZoom: 20,
+    attribution: '&copy; Google Maps',
+  },
+  satellite: {
+    name: 'Google Satellite',
+    url: 'https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    maxZoom: 20,
+    attribution: '&copy; Google Maps Satellite',
+  },
+  osm: {
+    name: 'OpenStreetMap',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subdomains: ['a', 'b', 'c'],
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors',
+  },
+};
+
+// Google Maps teardrop marker pin with number
+function googleNumberedPin(n, color = '#1a73e8') {
   return L.divIcon({
     className: '',
-    html: `<div style="
-      background:${color};width:32px;height:32px;border-radius:50%;
-      display:flex;align-items:center;justify-content:center;
-      color:#fff;font-weight:800;font-size:14px;
-      border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);
-    ">${n}</div>`,
-    iconSize: [32, 32],
-    iconAnchor: [16, 32],
-    popupAnchor: [0, -34],
+    html: `
+      <div style="position:relative;width:34px;height:46px;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.45));cursor:pointer;">
+        <svg viewBox="0 0 384 512" width="34" height="46" fill="${color}">
+          <path d="M172.268 501.67C26.97 291.031 0 269.413 0 192 0 85.961 85.961 0 192 0s192 85.961 192 192c0 77.413-26.97 99.031-172.268 309.67-9.535 13.774-29.93 13.773-39.464 0z"/>
+        </svg>
+        <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:18px;height:18px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;color:${color};font-weight:800;font-size:11px;box-shadow:inset 0 1px 2px rgba(0,0,0,0.3);">
+          ${n}
+        </div>
+      </div>
+    `,
+    iconSize: [34, 46],
+    iconAnchor: [17, 46],
+    popupAnchor: [0, -46],
   });
 }
 
-// Pending (unsaved) marker icon — orange
-function pendingIcon(n) { return numberedIcon(n, '#ea580c'); }
+function numberedIcon(n, color = '#1a73e8') { return googleNumberedPin(n, color); }
+function pendingIcon(n) { return googleNumberedPin(n, '#ea580c'); }
 
 // Component to auto-fit bounds when markers change
 function FitBounds({ positions }) {
@@ -66,6 +94,7 @@ export default function ScheduleBuilderScreen() {
 
   // Step: 'place' = placing pins on map, 'details' = entering names/times
   const [step, setStep] = useState('place');
+  const [activeLayer, setActiveLayer] = useState('roadmap');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -303,10 +332,37 @@ export default function ScheduleBuilderScreen() {
 
           {/* ─── Left: Map ─── */}
           <div className="panel" style={{ overflow: 'hidden', position: 'relative' }}>
+            {/* Map Layer Switcher Toolbar */}
+            <div style={{
+              position: 'absolute', top: 12, right: 12, zIndex: 1000,
+              display: 'flex', gap: 6, background: 'rgba(15, 23, 42, 0.88)', padding: 4,
+              borderRadius: 8, backdropFilter: 'blur(8px)', border: '1px solid rgba(255, 255, 255, 0.15)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            }}>
+              {Object.entries(MAP_LAYERS).map(([key, item]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setActiveLayer(key)}
+                  style={{
+                    padding: '5px 10px', borderRadius: 6, border: 'none',
+                    fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                    background: activeLayer === key ? '#1a73e8' : 'transparent',
+                    color: '#fff', transition: 'all 0.15s ease',
+                  }}
+                >
+                  {item.name}
+                </button>
+              ))}
+            </div>
+
             <MapContainer center={defaultCenter} zoom={12} style={{ width: '100%', height: '100%', minHeight: 500 }}>
               <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                key={MAP_LAYERS[activeLayer]?.url || MAP_LAYERS.roadmap.url}
+                url={MAP_LAYERS[activeLayer]?.url || MAP_LAYERS.roadmap.url}
+                subdomains={MAP_LAYERS[activeLayer]?.subdomains || MAP_LAYERS.roadmap.subdomains}
+                maxZoom={MAP_LAYERS[activeLayer]?.maxZoom || MAP_LAYERS.roadmap.maxZoom}
+                attribution={MAP_LAYERS[activeLayer]?.attribution || MAP_LAYERS.roadmap.attribution}
               />
               {step === 'place' && activeSchedule?.status === 'DRAFT' && (
                 <MapClickHandler onClick={handleMapClick} />
