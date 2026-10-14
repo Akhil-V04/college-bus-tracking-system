@@ -93,14 +93,17 @@ export default function Layout() {
           {navigation.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end} onClick={() => setMenuOpen(false)}
               className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}>
-              <AdminSidebarIcon iconName={item.iconName} fallback={item.fallback} />{item.label}
+              <AdminSidebarIcon iconName={item.iconName} fallback={item.fallback} />
+              <span className="nav-label">{item.label}</span>
             </NavLink>
           ))}
         </nav>
         <div className="sidebar-footer">
           <span className="admin-label">Signed in as</span>
           <strong>{user?.id || 'Administrator'}</strong>
-          
+          <button type="button" onClick={logout} className="text-button" style={{ color: 'var(--muted)', padding: '2px 0', textAlign: 'left', fontSize: 11 }}>
+            Sign out →
+          </button>
         </div>
       </aside>
 

@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from './api';
+import { EmptyState, LoadingState, Notice, PageHeader, Modal, Field } from './components';
 
 // A generic CRUD screen driven by a config object:
 //   - title: header text
-//   - base: backend path (e.g. "/routes/crud") — list + POST at base,
+//   - base: backend path (e.g. "/drivers") — list + POST at base,
 //     PUT/DELETE at base/:id
 //   - columns: [{ key, label, render? }] for the table
 //   - fields: form field descriptors for the add/edit modal:
 //       { name, label, type, options?, placeholder? }
 //       type: text | number | select | date | time | textarea
-//   - listQuery: extra query params for the list call (unused by default)
 export default function EntityScreen({ config }) {
   const { title, base, columns, fields, emptyLabel } = config;
 
@@ -23,7 +23,7 @@ export default function EntityScreen({ config }) {
   const [form, setForm] = useState({});
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +42,7 @@ export default function EntityScreen({ config }) {
 
   function openAdd() {
     const initial = {};
-    fields.forEach((f) => { initial[f.name] = f.type === 'number' ? '' : ''; });
+    fields.forEach((f) => { initial[f.name] = ''; });
     setForm(initial);
     setEditing(null);
     setFormError('');
@@ -68,7 +68,7 @@ export default function EntityScreen({ config }) {
         if (f.name === 'passwordHash' || f.send === false) return;
         if (f.keepString) { payload[f.name] = form[f.name]; return; }
         let v = form[f.name];
-        if (v === '' || v === null || v === undefined) return; // skip empty on update
+        if (v === '' || v === null || v === undefined) return;
         payload[f.name] = f.type === 'number' ? Number(v) : v;
       });
 
@@ -99,60 +99,53 @@ export default function EntityScreen({ config }) {
   }
 
   return (
-    <div>
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-bold text-slate-800">{title}</h1>
-        <button
-          onClick={openAdd}
-          className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          + Add New
-        </button>
-      </div>
+    <>
+      <PageHeader
+        eyebrow="Administration"
+        title={title}
+        description={`Manage ${title.toLowerCase()} records, credentials and route assignments.`}
+        actions={
+          <button className="button button-primary" onClick={openAdd}>
+            + Add New
+          </button>
+        }
+      />
 
-      {message && (
-        <div
-          className={`mb-4 rounded px-3 py-2 text-sm ${
-            message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
+      <Notice message={message} onDismiss={() => setMessage(null)} />
 
       {loading ? (
-        <div className="py-10 text-center text-slate-500">Loading...</div>
+        <LoadingState label={`Loading ${title.toLowerCase()}…`} />
       ) : rows.length === 0 ? (
-        <div className="rounded bg-white py-10 text-center text-slate-400">
-          {emptyLabel || 'No records yet'}
-        </div>
+        <EmptyState title={emptyLabel || 'No records yet'} description="Click '+ Add New' to create the first record." />
       ) : (
-        <>
-          <div className="overflow-hidden rounded-lg bg-white shadow">
-            <table className="w-full text-sm">
+        <section className="panel">
+          <div className="table-wrap">
+            <table className="data-table">
               <thead>
-                <tr className="border-b bg-slate-50 text-left text-slate-500">
+                <tr>
                   {columns.map((c) => (
-                    <th key={c.key} className="px-4 py-3 font-medium">{c.label}</th>
+                    <th key={c.key}>{c.label}</th>
                   ))}
-                  <th className="px-4 py-3 text-right font-medium">Actions</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id} className="border-b last:border-0 hover:bg-slate-50">
+                  <tr key={row.id}>
                     {columns.map((c) => (
-                      <td key={c.key} className="px-4 py-3">
-                        {c.render ? c.render(row) : row[c.key] ?? '—'}
+                      <td key={c.key}>
+                        {c.render ? c.render(row) : (row[c.key] ?? '—')}
                       </td>
                     ))}
-                    <td className="px-4 py-3 text-right">
-                      <button onClick={() => openEdit(row)} className="mr-2 text-blue-600 hover:underline">
-                        Edit
-                      </button>
-                      <button onClick={() => handleDelete(row)} className="text-red-600 hover:underline">
-                        Delete
-                      </button>
+                    <td>
+                      <div className="row-actions">
+                        <button className="text-button" onClick={() => openEdit(row)}>
+                          Edit
+                        </button>
+                        <button className="text-button text-button-danger" onClick={() => handleDelete(row)}>
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -161,95 +154,92 @@ export default function EntityScreen({ config }) {
           </div>
 
           {pagination && pagination.totalPages > 1 && (
-            <div className="mt-4 flex items-center gap-2 text-sm">
-              <button
-                disabled={page <= 1}
-                onClick={() => setPage(page - 1)}
-                className="rounded border px-3 py-1 disabled:opacity-40"
-              >
-                Prev
-              </button>
-              <span className="text-slate-600">
-                Page {pagination.page} of {pagination.totalPages}
-              </span>
-              <button
-                disabled={page >= pagination.totalPages}
-                onClick={() => setPage(page + 1)}
-                className="rounded border px-3 py-1 disabled:opacity-40"
-              >
-                Next
-              </button>
+            <div className="pagination-bar">
+              <span>Page {pagination.page} of {pagination.totalPages} · {pagination.total} total</span>
+              <div>
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage(page - 1)}
+                  className="button button-secondary"
+                >
+                  Previous
+                </button>
+                <button
+                  disabled={page >= pagination.totalPages}
+                  onClick={() => setPage(page + 1)}
+                  className="button button-secondary"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           )}
-        </>
+        </section>
       )}
 
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-lg bg-white p-6">
-            <h2 className="text-lg font-bold text-slate-800">
-              {editing ? `Edit ${title.slice(0, -1)}` : `Add ${title.slice(0, -1)}`}
-            </h2>
-            {formError && (
-              <div className="mt-3 rounded bg-red-50 px-3 py-2 text-sm text-red-600">{formError}</div>
-            )}
-            <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-              {fields.map((f) => (
-                <div key={f.name}>
-                  <label className="mb-1 block text-sm font-medium text-slate-600">{f.label}</label>
-                  {f.type === 'select' ? (
-                    <select
-                      value={form[f.name] ?? ''}
-                      onChange={(e) =>
-                        setForm((p) => ({ ...p, [f.name]: f.keepString ? e.target.value : Number(e.target.value) }))
-                      }
-                      className="w-full rounded border border-slate-300 px-3 py-2"
-                    >
-                      <option value="">{f.placeholder || 'Select...'}</option>
-                      {f.options.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : f.type === 'textarea' ? (
-                    <textarea
-                      value={form[f.name] ?? ''}
-                      onChange={(e) => setForm((p) => ({ ...p, [f.name]: e.target.value }))}
-                      className="w-full rounded border border-slate-300 px-3 py-2"
-                    />
-                  ) : (
-                    <input
-                      type={f.type === 'number' ? 'number' : f.type || 'text'}
-                      value={form[f.name] ?? ''}
-                      onChange={(e) => setForm((p) => ({ ...p, [f.name]: e.target.value }))}
-                      placeholder={f.placeholder}
-                      className="w-full rounded border border-slate-300 px-3 py-2"
-                      step={f.type === 'number' ? 'any' : undefined}
-                    />
-                  )}
-                </div>
-              ))}
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="rounded border border-slate-300 px-4 py-2 text-sm"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {saving ? 'Saving...' : 'Save'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <Modal
+          title={editing ? `Edit ${title.slice(0, -1)}` : `Add ${title.slice(0, -1)}`}
+          description="Provide details and save changes."
+          onClose={() => setModalOpen(false)}
+        >
+          {formError && (
+            <div style={{ padding: '0 24px', marginTop: 16 }}>
+              <Notice message={{ type: 'error', text: formError }} onDismiss={() => setFormError('')} />
+            </div>
+          )}
+          <form onSubmit={handleSubmit} className="stack-form modal-body">
+            {fields.map((f) => (
+              <Field key={f.name} label={f.label} hint={f.placeholder}>
+                {f.type === 'select' ? (
+                  <select
+                    value={form[f.name] ?? ''}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, [f.name]: f.keepString ? e.target.value : Number(e.target.value) }))
+                    }
+                  >
+                    <option value="">{f.placeholder || 'Select…'}</option>
+                    {f.options?.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : f.type === 'textarea' ? (
+                  <textarea
+                    value={form[f.name] ?? ''}
+                    onChange={(e) => setForm((p) => ({ ...p, [f.name]: e.target.value }))}
+                  />
+                ) : (
+                  <input
+                    type={f.type === 'number' ? 'number' : f.type || 'text'}
+                    value={form[f.name] ?? ''}
+                    onChange={(e) => setForm((p) => ({ ...p, [f.name]: e.target.value }))}
+                    placeholder={f.placeholder}
+                    step={f.type === 'number' ? 'any' : undefined}
+                  />
+                )}
+              </Field>
+            ))}
+            <div className="modal-actions">
+              <button
+                type="button"
+                onClick={() => setModalOpen(false)}
+                className="button button-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="button button-primary"
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
-    </div>
+    </>
   );
 }

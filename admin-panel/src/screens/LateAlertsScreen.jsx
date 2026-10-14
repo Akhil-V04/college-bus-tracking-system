@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
+import { EmptyState, LoadingState, Notice, PageHeader } from '../components';
 
 // "Delayed Buses Today" dashboard. Shows every late alert triggered for
 // running trips, lets the admin re-run the late check, and verifies the
@@ -65,81 +66,78 @@ export default function LateAlertsScreen() {
   };
 
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold text-slate-800">Delayed Buses Today</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={handleCheck}
-            disabled={checking}
-            className="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {checking ? 'Checking...' : 'Re-check late buses'}
-          </button>
-          <button
-            onClick={handleVerify}
-            disabled={verifying}
-            className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            {verifying ? 'Verifying...' : 'Verify hash chain'}
-          </button>
-        </div>
-      </div>
+    <>
+      <PageHeader
+        eyebrow="Trip Monitoring"
+        title="Delayed Buses Today"
+        description="Monitor automated delay detections and verify cryptographic hash chains of trip notifications."
+        actions={
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={handleCheck}
+              disabled={checking}
+              className="button button-primary"
+            >
+              {checking ? 'Checking…' : 'Re-check late buses'}
+            </button>
+            <button
+              onClick={handleVerify}
+              disabled={verifying}
+              className="button button-secondary"
+            >
+              {verifying ? 'Verifying…' : 'Verify hash chain'}
+            </button>
+          </div>
+        }
+      />
 
-      {message && (
-        <div
-          className={`mb-4 rounded px-3 py-2 text-sm ${
-            message.type === 'error' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
+      <Notice message={message} onDismiss={() => setMessage(null)} />
 
       {loading ? (
-        <div className="py-10 text-center text-slate-500">Loading...</div>
+        <LoadingState label="Loading late alerts…" />
       ) : alerts.length === 0 ? (
-        <div className="rounded bg-white py-10 text-center text-slate-400">
-          No late buses today — every running trip is on schedule.
-        </div>
+        <EmptyState
+          title="No late buses today"
+          description="Every running trip is currently operating on schedule."
+        />
       ) : (
-        <div className="space-y-4">
+        <div style={{ display: 'grid', gap: 16 }}>
           {alerts.map((alert) => {
             const trip = alert.trip;
             const bus = trip?.bus;
             const affected = alert.studentsAffected || [];
             const advisors = alert.advisorsNotified || [];
             return (
-              <div key={alert.id} className="rounded-lg bg-white p-5 shadow">
-                <div className="flex flex-wrap items-start justify-between gap-2">
+              <article key={alert.id} className="panel" style={{ padding: 22 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
                   <div>
-                    <p className="text-lg font-semibold text-slate-800">
+                    <p className="cell-title" style={{ fontSize: 16 }}>
                       {bus?.busNo || 'Bus ?'} · Route {bus?.route?.routeNo || '—'}
                     </p>
-                    <p className="text-sm text-slate-500">
+                    <p className="cell-subtitle">
                       {bus?.route?.name || ''} · Driver: {bus?.driver?.name || '—'}
                     </p>
                   </div>
-                  <span className="rounded bg-red-50 px-3 py-1 text-sm font-semibold text-red-600">
+                  <span className="status-badge status-active">
                     Late — predicted arrival {fmtTime(alert.predictedEta)}
                   </span>
                 </div>
 
-                <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <div style={{ marginTop: 16, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
                   <div>
-                    <p className="text-xs font-semibold uppercase text-slate-400">
+                    <p className="stat-label">
                       Affected students ({affected.length})
                     </p>
-                    <p className="mt-1 text-sm text-slate-600">
+                    <p style={{ margin: '4px 0 0', color: 'var(--ink)', fontSize: 13, lineHeight: 1.5 }}>
                       {affected.slice(0, 5).map((s) => s.name).join(', ')}
                       {affected.length > 5 ? ` +${affected.length - 5} more` : ''}
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase text-slate-400">
+                    <p className="stat-label">
                       Advisors notified ({advisors.length})
                     </p>
-                    <p className="mt-1 text-sm text-slate-600">
+                    <p style={{ margin: '4px 0 0', color: 'var(--ink)', fontSize: 13, lineHeight: 1.5 }}>
                       {advisors.length === 0
                         ? 'No matching class advisor on file'
                         : advisors.map((a) => `${a.name} (${a.email})`).join(', ')}
@@ -147,14 +145,14 @@ export default function LateAlertsScreen() {
                   </div>
                 </div>
 
-                <p className="mt-3 text-xs text-slate-400">
+                <p className="cell-subtitle" style={{ marginTop: 14, fontSize: 11 }}>
                   Alerted at {fmtTime(alert.triggeredAt)} · chain #{alert.id}
                 </p>
-              </div>
+              </article>
             );
           })}
         </div>
       )}
-    </div>
+    </>
   );
 }

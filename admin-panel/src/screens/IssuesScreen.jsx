@@ -51,49 +51,51 @@ export default function IssuesScreen() {
       ) : issues.length === 0 ? (
         <EmptyState title="No issues reported" description="Passenger issue reports will appear here once submitted." />
       ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Issue</th>
-                <th>Category</th>
-                <th>Route</th>
-                <th>Reports</th>
-                <th>Status</th>
-                <th>Latest</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {issues.map((issue) => (
-                <tr key={issue.id}>
-                  <td>
-                    <button type="button" className="text-button" onClick={() => openIssue(issue)}>
-                      {issue.title}
-                    </button>
-                  </td>
-                  <td><span className="cell-subtitle">{issue.category.replaceAll('_', ' ')}</span></td>
-                  <td>{issue.routeService?.routeNo || '—'}</td>
-                  <td><strong>{issue.reportCount}</strong></td>
-                  <td><StatusBadge value={issue.status} /></td>
-                  <td><span className="cell-subtitle">{new Date(issue.latestReportAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</span></td>
-                  <td>
-                    <select
-                      value={issue.status}
-                      onChange={(e) => updateStatus(issue.id, e.target.value)}
-                      className="inline-select"
-                    >
-                      <option value="NEW">NEW</option>
-                      <option value="UNDER_REVIEW">UNDER_REVIEW</option>
-                      <option value="RESOLVED">RESOLVED</option>
-                      <option value="DISMISSED">DISMISSED</option>
-                    </select>
-                  </td>
+        <section className="panel">
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Issue</th>
+                  <th>Category</th>
+                  <th>Route</th>
+                  <th>Reports</th>
+                  <th>Status</th>
+                  <th>Latest</th>
+                  <th>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {issues.map((issue) => (
+                  <tr key={issue.id}>
+                    <td>
+                      <button type="button" className="text-button" onClick={() => openIssue(issue)}>
+                        {issue.title}
+                      </button>
+                    </td>
+                    <td><span className="cell-subtitle">{issue.category.replaceAll('_', ' ')}</span></td>
+                    <td>{issue.routeService?.routeNo || '—'}</td>
+                    <td><strong>{issue.reportCount}</strong></td>
+                    <td><StatusBadge value={issue.status} /></td>
+                    <td><span className="cell-subtitle">{new Date(issue.latestReportAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</span></td>
+                    <td>
+                      <select
+                        value={issue.status}
+                        onChange={(e) => updateStatus(issue.id, e.target.value)}
+                        className="inline-select"
+                      >
+                        <option value="NEW">NEW</option>
+                        <option value="UNDER_REVIEW">UNDER_REVIEW</option>
+                        <option value="RESOLVED">RESOLVED</option>
+                        <option value="DISMISSED">DISMISSED</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       {selectedIssue && (
@@ -111,7 +113,7 @@ export default function IssuesScreen() {
             </div>
 
             <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-               <button className="button button-ghost" onClick={async () => {
+               <button className="button button-secondary" onClick={async () => {
                  const targetId = prompt('Enter the ID of the issue you want to merge this into:');
                  if (targetId) {
                    try {

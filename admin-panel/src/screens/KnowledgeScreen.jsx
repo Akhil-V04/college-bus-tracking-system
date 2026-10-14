@@ -74,50 +74,55 @@ export default function KnowledgeScreen() {
       ) : documents.length === 0 ? (
         <EmptyState title="No documents uploaded" description="Upload transport policies, FAQs, and procedures so the assistant can answer passenger questions." />
       ) : (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Document</th>
-                <th>Type</th>
-                <th>Chunks</th>
-                <th>Active</th>
-                <th>Uploaded</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {documents.map((doc) => (
-                <tr key={doc.id}>
-                  <td>
-                    <div className="cell-title">{doc.title}</div>
-                    <div className="cell-subtitle">{(doc.content || '').slice(0, 80)}…</div>
-                  </td>
-                  <td><span className="cell-subtitle">{doc.sourceType}</span></td>
-                  <td>{doc._count?.chunks ?? '—'}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className={`button button-ghost ${doc.active ? '' : 'button-muted'}`}
-                      onClick={() => toggleActive(doc)}
-                    >
-                      {doc.active ? '✓ Active' : '○ Inactive'}
-                    </button>
-                  </td>
-                  <td><span className="cell-subtitle">{new Date(doc.createdAt).toLocaleDateString('en-IN')}</span></td>
-                  <td>
-                    <button type="button" className="button button-ghost" style={{ color: 'var(--danger, #ef4444)' }} onClick={() => deleteDoc(doc)}>Delete</button>
-                  </td>
+        <section className="panel">
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Document</th>
+                  <th>Type</th>
+                  <th>Chunks</th>
+                  <th>Status</th>
+                  <th>Uploaded</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {documents.map((doc) => (
+                  <tr key={doc.id}>
+                    <td>
+                      <div className="cell-title">{doc.title}</div>
+                      <div className="cell-subtitle">{(doc.content || '').slice(0, 80)}…</div>
+                    </td>
+                    <td><span className="cell-subtitle">{doc.sourceType}</span></td>
+                    <td>{doc._count?.chunks ?? '—'}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="button button-ghost"
+                        style={{ padding: '4px 10px', fontSize: 11 }}
+                        onClick={() => toggleActive(doc)}
+                      >
+                        {doc.active ? '✓ Active' : '○ Inactive'}
+                      </button>
+                    </td>
+                    <td><span className="cell-subtitle">{new Date(doc.createdAt).toLocaleDateString('en-IN')}</span></td>
+                    <td>
+                      <div className="row-actions">
+                        <button type="button" className="text-button text-button-danger" onClick={() => deleteDoc(doc)}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       {showAdd && (
         <Modal title="Add Knowledge Document" description="Paste transport policy, FAQ, or procedure text" onClose={() => setShowAdd(false)} wide>
-          <form onSubmit={handleSubmit} style={{ padding: 20, display: 'grid', gap: 16 }}>
+          <form onSubmit={handleSubmit} className="stack-form modal-body">
             <Field label="Document Title">
               <input type="text" value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} placeholder="e.g. Emergency Procedures" />
             </Field>
@@ -132,10 +137,10 @@ export default function KnowledgeScreen() {
               </select>
             </Field>
             <Field label="Document Content" hint="Paste the full text of the document here.">
-              <textarea rows={12} value={form.content} onChange={(e) => setForm((p) => ({ ...p, content: e.target.value }))} placeholder="Paste the full policy text here..." />
+              <textarea rows={10} value={form.content} onChange={(e) => setForm((p) => ({ ...p, content: e.target.value }))} placeholder="Paste the full policy text here..." />
             </Field>
-            <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
-              <button type="button" className="button button-ghost" onClick={() => setShowAdd(false)}>Cancel</button>
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
               <button type="submit" className="button button-primary" disabled={saving}>
                 {saving ? 'Uploading & Indexing…' : 'Upload Document'}
               </button>
