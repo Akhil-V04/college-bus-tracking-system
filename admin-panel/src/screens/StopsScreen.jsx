@@ -20,7 +20,7 @@ const VBIT_ENDPOINT = {
 };
 
 // Google Maps custom pin generator
-function createMapPin(text, color = '#ea580c', isEnd = false) {
+function createMapPin(text, color = '#ea580c', isEnd = false, isConfirmed = false) {
   return L.divIcon({
     className: '',
     html: `
@@ -31,6 +31,10 @@ function createMapPin(text, color = '#ea580c', isEnd = false) {
         <div style="position:absolute;top:9px;left:50%;transform:translateX(-50%);width:18px;height:18px;border-radius:50%;background:#ffffff;display:flex;align-items:center;justify-content:center;color:${color};font-weight:800;font-size:${isEnd ? '11px' : '10px'};box-shadow:inset 0 1px 2px rgba(0,0,0,0.3);">
           ${text}
         </div>
+        ${isConfirmed ? `
+        <div style="position:absolute;bottom:0px;right:-5px;width:17px;height:17px;border-radius:50%;background:#16A34A;border:2px solid #ffffff;display:flex;align-items:center;justify-content:center;color:#ffffff;font-size:10px;font-weight:900;box-shadow:0 2px 4px rgba(0,0,0,0.5);" title="Position confirmed & locked">
+          ✓
+        </div>` : ''}
       </div>
     `,
     iconSize: [34, 46],
@@ -107,17 +111,29 @@ function MapClickHandler({ onClick, enabled }) {
   return null;
 }
 
-function FitBounds({ positions }) {
+// Controller that keeps user's current zoom when moving/adding pins, only fitting bounds when switching routes
+function MapController({ routeId, positions, onMapReady }) {
   const map = useMap();
+  const fittedRouteIdRef = useRef(null);
+
   useEffect(() => {
+    if (onMapReady) onMapReady(map);
+  }, [map, onMapReady]);
+
+  // Only auto-fit bounds ONCE when a new route is selected or initially loaded!
+  useEffect(() => {
+    if (!routeId || fittedRouteIdRef.current === String(routeId)) return;
     if (positions && positions.length > 1) {
       const bounds = L.latLngBounds(positions);
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+      fittedRouteIdRef.current = String(routeId);
     } else if (positions && positions.length === 1) {
-      // When only VBIT is present, zoom out to show full Hyderabad city so admin can click starting stop anywhere
+      // When only VBIT is present, zoom out to show full Hyderabad city
       map.setView([17.43, 78.55], 11);
+      fittedRouteIdRef.current = String(routeId);
     }
-  }, [positions, map]);
+  }, [routeId, positions, map]);
+
   return null;
 }
 
@@ -135,6 +151,7 @@ export default function StopsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [masterStops, setMasterStops] = useState([]);
   const [viewMode, setViewMode] = useState('route'); // 'route' | 'master'
+  const [mapInstance, setMapInstance] = useState(null);
 
   // Master stop creation form
   const [newMasterName, setNewMasterName] = useState('');
@@ -191,6 +208,7 @@ export default function StopsScreen() {
           longitude: Number(s.stop.longitude),
           scheduledTime: s.scheduledTime,
           isEndpoint: (s.stop.name || '').toUpperCase().includes('VBIT') || idx === schedule.stops.length - 1,
+          confirmed: true, // Existing saved stops start as confirmed/locked
         }));
 
         // Ensure VBIT is present as the ending stop
@@ -420,6 +438,25 @@ export default function StopsScreen() {
     });
   }
 
+  // 6b. Toggle confirm / lock for a specific stop
+  function toggleConfirmStop(index) {
+    setRouteStops((prev) => {
+      const copy = [...prev];
+      const current = copy[index];
+      if (!current) return prev;
+      const willConfirm = !current.confirmed;
+      copy[index] = { ...current, confirmed: willConfirm };
+      return copy;
+    });
+  }
+
+  // 6c. Lock or unlock all placed stops at once
+  function toggleLockAllStops(lockState) {
+    setRouteStops((prev) =>
+      prev.map((s) => (s.isEndpoint ? s : { ...s, confirmed: lockState }))
+    );
+  }
+
   // 7. Add an existing master stop into the route sequence
   function addExistingMasterStop(masterStop) {
     if (!selectedRouteId) return;
@@ -504,6 +541,17 @@ export default function StopsScreen() {
   const stopCoordinates = useMemo(() => {
     return routeStops.map((s) => [s.latitude, s.longitude]);
   }, [routeStops]);
+
+  // Manually recenter and fit full route on demand
+  const recenterMap = useCallback(() => {
+    if (!mapInstance) return;
+    if (stopCoordinates.length > 1) {
+      const bounds = L.latLngBounds(stopCoordinates);
+      mapInstance.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    } else if (stopCoordinates.length === 1) {
+      mapInstance.setView([17.43, 78.55], 11);
+    }
+  }, [mapInstance, stopCoordinates]);
 
   // Decode published road polyline if available
   const publishedPolyline = useMemo(() => {
@@ -785,9 +833,25 @@ export default function StopsScreen() {
                 <h3 style={{ margin: 0, fontSize: 16 }}>
                   {selectedRoute ? `Route ${selectedRoute.routeNo} Stops` : 'Route Stops'}
                 </h3>
-                <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 650 }}>
-                  {routeStops.length} Stop{routeStops.length === 1 ? '' : 's'}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {routeStops.length > 1 && (
+                    <button
+                      type="button"
+                      className="button button-ghost"
+                      onClick={() => {
+                        const allLocked = routeStops.every((s) => s.isEndpoint || s.confirmed);
+                        toggleLockAllStops(!allLocked);
+                      }}
+                      style={{ padding: '3px 8px', fontSize: 11 }}
+                      title="Lock or unlock all placed pins on the map"
+                    >
+                      {routeStops.every((s) => s.isEndpoint || s.confirmed) ? '🔓 Unlock All Pins' : '✓ Lock All Pins'}
+                    </button>
+                  )}
+                  <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 650 }}>
+                    {routeStops.length} Stop{routeStops.length === 1 ? '' : 's'}
+                  </span>
+                </div>
               </div>
               <p style={{ margin: '6px 0 0', color: 'var(--muted)', fontSize: 12, lineHeight: 1.5 }}>
                 Click on the map to add pickup stops in sequence. The first stop is where the bus begins; <strong>VBIT College</strong> is automatically the final destination.
@@ -883,9 +947,30 @@ export default function StopsScreen() {
                           </strong>
                         </div>
 
-                        {/* Reorder & Delete Actions */}
+                        {/* Lock / Confirm Toggle & Reorder / Delete Actions */}
                         {!isEnd && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <button
+                              type="button"
+                              onClick={() => toggleConfirmStop(idx)}
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: 6,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                border: stop.confirmed ? '1.5px solid #16A34A' : '1px solid var(--line)',
+                                background: stop.confirmed ? 'rgba(22, 163, 74, 0.15)' : 'var(--surface)',
+                                color: stop.confirmed ? '#16A34A' : 'var(--muted)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                                transition: 'all 0.15s ease',
+                              }}
+                              title={stop.confirmed ? 'Position confirmed at this mark (locked) - click to unlock' : 'Click to confirm stop position and lock pin'}
+                            >
+                              <span>{stop.confirmed ? '✓ Confirmed (Locked)' : '○ Confirm Pin'}</span>
+                            </button>
                             <button
                               type="button"
                               className="button button-ghost"
@@ -1138,7 +1223,7 @@ export default function StopsScreen() {
                   position: 'absolute',
                   top: 14,
                   left: 60,
-                  maxWidth: 'calc(100% - 80px)',
+                  maxWidth: 'calc(100% - 240px)',
                   zIndex: 1000,
                   background: 'rgba(15, 23, 42, 0.92)',
                   color: '#ffffff',
@@ -1167,6 +1252,35 @@ export default function StopsScreen() {
               </div>
             )}
 
+            {/* Recenter / Fit Full Route Button on Map Top Right */}
+            <button
+              type="button"
+              onClick={recenterMap}
+              style={{
+                position: 'absolute',
+                top: 14,
+                right: 14,
+                zIndex: 1000,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: 'rgba(15, 23, 42, 0.92)',
+                color: '#ffffff',
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                backdropFilter: 'blur(8px)',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                transition: 'all 0.15s ease',
+              }}
+              title="Zoom out and fit full route to college on screen"
+            >
+              <span>🎯 Recenter Full Route</span>
+            </button>
+
             {/* Helpful Map Floating Hint */}
             <div
               style={{
@@ -1185,7 +1299,7 @@ export default function StopsScreen() {
                 pointerEvents: 'none',
               }}
             >
-              📍 Click map to add stops &bull; Drag numbered pins to move &bull; Final stop: VBIT
+              📍 Click map to add stops &bull; Drag pins to move &bull; Click ✓ to lock pin
             </div>
 
             {/* Map Layer Switcher Toolbar positioned at BOTTOM RIGHT to prevent any overlap */}
@@ -1243,8 +1357,8 @@ export default function StopsScreen() {
               {/* Click to add new stops */}
               <MapClickHandler onClick={handleMapClick} enabled={Boolean(selectedRouteId)} />
 
-              {/* Auto-fit map to show all stops */}
-              {stopCoordinates.length > 0 && <FitBounds positions={stopCoordinates} />}
+              {/* Map controller: fits bounds only once on route change, keeps zoom level when adding/dragging pins */}
+              <MapController routeId={selectedRouteId} positions={stopCoordinates} onMapReady={setMapInstance} />
 
               {/* ─── COLORED ROUTE PATH FROM START TO END (interactive={false} to ensure click-through) ─── */}
               {publishedPolyline && publishedPolyline.length > 1 ? (
@@ -1295,8 +1409,8 @@ export default function StopsScreen() {
                   <Marker
                     key={stop.tempId || stop.id || `marker-${idx}`}
                     position={[stop.latitude, stop.longitude]}
-                    icon={createMapPin(pinText, pinColor, isEnd)}
-                    draggable={!isEnd}
+                    icon={createMapPin(pinText, pinColor, isEnd, Boolean(stop.confirmed))}
+                    draggable={!isEnd && !stop.confirmed}
                     eventHandlers={{
                       dragend: (e) => {
                         const latlng = e.target.getLatLng();
@@ -1307,7 +1421,7 @@ export default function StopsScreen() {
                   >
                     <Popup autoPan={false}>
                       <div
-                        style={{ minWidth: 160, padding: 4 }}
+                        style={{ minWidth: 170, padding: 4 }}
                         onClick={(e) => {
                           e.stopPropagation();
                           if (e.nativeEvent) e.nativeEvent.stopPropagation();
@@ -1326,7 +1440,34 @@ export default function StopsScreen() {
                             {isEnd ? '🎓 Final Destination' : isFirst ? '🏁 Starting Stop' : `Stop ${idx + 1}`}
                           </span>
                         </div>
-                        <strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>{stop.name}</strong>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 4 }}>
+                          <strong style={{ fontSize: 13 }}>{stop.name}</strong>
+                          {!isEnd && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleConfirmStop(idx);
+                              }}
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: 6,
+                                fontSize: 10.5,
+                                fontWeight: 800,
+                                cursor: 'pointer',
+                                border: stop.confirmed ? '1.5px solid #16A34A' : '1.5px solid #EA580C',
+                                background: stop.confirmed ? '#16A34A' : 'transparent',
+                                color: stop.confirmed ? '#ffffff' : '#EA580C',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 3,
+                              }}
+                              title={stop.confirmed ? 'Position confirmed at this mark (locked) - click to unlock' : 'Click to confirm stop at this mark and lock pin'}
+                            >
+                              <span>{stop.confirmed ? '✓ Confirmed' : '✓ Confirm at mark'}</span>
+                            </button>
+                          )}
+                        </div>
                         <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
                           Scheduled: <strong>{stop.scheduledTime}</strong>
                         </div>
