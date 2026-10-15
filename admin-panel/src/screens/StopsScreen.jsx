@@ -90,7 +90,18 @@ function decodePolyline(str, precision = 5) {
 function MapClickHandler({ onClick, enabled }) {
   useMapEvents({
     click(e) {
-      if (enabled) onClick(e.latlng);
+      if (!enabled) return;
+      const target = e.originalEvent?.target;
+      // Never trigger map click if the user clicked on a popup, button, control, or marker
+      if (
+        target &&
+        target.closest(
+          '.leaflet-popup, .leaflet-popup-content, .leaflet-popup-content-wrapper, .leaflet-control, .leaflet-marker-icon, button, select, input, a'
+        )
+      ) {
+        return;
+      }
+      onClick(e.latlng);
     },
   });
   return null;
@@ -127,6 +138,9 @@ export default function StopsScreen() {
 
   // Master stop creation form
   const [newMasterName, setNewMasterName] = useState('');
+
+  // Guard to prevent map clicks from re-adding a stop immediately after clicking "Remove Stop"
+  const ignoreMapClickUntilRef = useRef(0);
 
   // 1. Initial load: all routes and master stops
   const loadInitial = useCallback(async () => {
@@ -237,6 +251,10 @@ export default function StopsScreen() {
 
   // 3. Click map to add stops in order (before VBIT College)
   function handleMapClick(latlng) {
+    if (Date.now() < ignoreMapClickUntilRef.current) {
+      return;
+    }
+
     if (!selectedRouteId) {
       setMessage({ type: 'warning', text: 'Please select a route from the dropdown first before adding stops.' });
       return;
@@ -393,7 +411,13 @@ export default function StopsScreen() {
       setMessage({ type: 'warning', text: 'VBIT College is the fixed destination endpoint and cannot be removed.' });
       return;
     }
+    ignoreMapClickUntilRef.current = Date.now() + 600;
+    const removedName = routeStops[index]?.name || `Stop ${index + 1}`;
     setRouteStops((prev) => prev.filter((_, i) => i !== index));
+    setMessage({
+      type: 'info',
+      text: `Removed "${removedName}" from the route.`,
+    });
   }
 
   // 7. Add an existing master stop into the route sequence
@@ -1281,8 +1305,22 @@ export default function StopsScreen() {
                       },
                     }}
                   >
-                    <Popup>
-                      <div style={{ minWidth: 160, padding: 4 }}>
+                    <Popup autoPan={false}>
+                      <div
+                        style={{ minWidth: 160, padding: 4 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (e.nativeEvent) e.nativeEvent.stopPropagation();
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          if (e.nativeEvent) e.nativeEvent.stopPropagation();
+                        }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          if (e.nativeEvent) e.nativeEvent.stopPropagation();
+                        }}
+                      >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                           <span style={{ fontSize: 13, fontWeight: 800, color: pinColor }}>
                             {isEnd ? '🎓 Final Destination' : isFirst ? '🏁 Starting Stop' : `Stop ${idx + 1}`}
@@ -1297,7 +1335,9 @@ export default function StopsScreen() {
                           <div style={{ marginBottom: 8 }}>
                             <select
                               value=""
+                              onClick={(e) => e.stopPropagation()}
                               onChange={(e) => {
+                                e.stopPropagation();
                                 const chosenName = e.target.value;
                                 if (!chosenName) return;
                                 const chosen = routePresetStops.find((p) => p.name === chosenName);
@@ -1331,7 +1371,23 @@ export default function StopsScreen() {
                         {!isEnd && (
                           <button
                             type="button"
-                            onClick={() => removeStop(idx)}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (e.nativeEvent) {
+                                e.nativeEvent.stopPropagation();
+                                e.nativeEvent.stopImmediatePropagation();
+                              }
+                              removeStop(idx);
+                            }}
+                            onMouseDown={(e) => {
+                              e.stopPropagation();
+                              if (e.nativeEvent) e.nativeEvent.stopPropagation();
+                            }}
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              if (e.nativeEvent) e.nativeEvent.stopPropagation();
+                            }}
                             style={{
                               border: 'none',
                               background: 'none',
@@ -1339,7 +1395,10 @@ export default function StopsScreen() {
                               fontSize: 11,
                               fontWeight: 700,
                               cursor: 'pointer',
-                              padding: 0,
+                              padding: '4px 0',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 4,
                             }}
                           >
                             ✕ Remove stop from route
