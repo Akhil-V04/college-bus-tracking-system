@@ -141,6 +141,12 @@ export default function StopsScreen() {
   // Master stop creation form
   const [newMasterName, setNewMasterName] = useState('');
 
+  // Real turn-by-turn road route polyline and distance/duration
+  const [roadPolyline, setRoadPolyline] = useState([]);
+  const [roadDistanceMeters, setRoadDistanceMeters] = useState(null);
+  const [roadDurationSeconds, setRoadDurationSeconds] = useState(null);
+  const [isRoutingLoading, setIsRoutingLoading] = useState(false);
+
   // Guard to prevent map clicks from re-adding a stop immediately after clicking "Remove Stop"
   const ignoreMapClickUntilRef = useRef(0);
 
@@ -591,13 +597,67 @@ export default function StopsScreen() {
     }
   }, [mapInstance, stopCoordinates]);
 
-  // Decode published road polyline if available
-  const publishedPolyline = useMemo(() => {
+  // Decode saved route geometry if available from backend schedule
+  useEffect(() => {
     if (scheduleInfo?.geometryPolyline) {
-      return decodePolyline(scheduleInfo.geometryPolyline);
+      const decoded = decodePolyline(scheduleInfo.geometryPolyline);
+      setRoadPolyline(decoded);
+      setRoadDistanceMeters(scheduleInfo.geometryDistanceMeters || null);
+      setRoadDurationSeconds(scheduleInfo.geometryDurationSeconds || null);
     }
-    return null;
   }, [scheduleInfo]);
+
+  // Live road routing: compute turn-by-turn road path whenever stops are added, moved, or deleted
+  useEffect(() => {
+    if (stopCoordinates.length < 2) {
+      setRoadPolyline([]);
+      setRoadDistanceMeters(null);
+      setRoadDurationSeconds(null);
+      return;
+    }
+
+    let isCancelled = false;
+    const timer = setTimeout(async () => {
+      setIsRoutingLoading(true);
+      try {
+        // 1. Fetch from backend road router endpoint
+        const { data } = await api.post('/schedules/preview-geometry', {
+          stops: routeStops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
+        });
+
+        if (!isCancelled && data?.geometryPolyline) {
+          const decoded = decodePolyline(data.geometryPolyline);
+          setRoadPolyline(decoded);
+          setRoadDistanceMeters(data.geometryDistanceMeters || null);
+          setRoadDurationSeconds(data.geometryDurationSeconds || null);
+          return;
+        }
+      } catch (_backendErr) {
+        // 2. Direct browser OSRM fallback if backend or network has any delay
+        try {
+          const coords = stopCoordinates.map(([lat, lng]) => `${lng.toFixed(5)},${lat.toFixed(5)}`).join(';');
+          const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=polyline`);
+          const osrmData = await osrmRes.json();
+          if (!isCancelled && osrmData.routes?.[0]?.geometry) {
+            const decoded = decodePolyline(osrmData.routes[0].geometry);
+            setRoadPolyline(decoded);
+            setRoadDistanceMeters(osrmData.routes[0].distance || null);
+            setRoadDurationSeconds(osrmData.routes[0].duration || null);
+            return;
+          }
+        } catch (_osrmErr) {
+          // If completely offline, straight lines will be displayed as fallback
+        }
+      } finally {
+        if (!isCancelled) setIsRoutingLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [stopCoordinates, routeStops]);
 
   const mapCenter = useMemo(() => {
     if (stopCoordinates.length > 0) return stopCoordinates[0];
@@ -1290,6 +1350,19 @@ export default function StopsScreen() {
                 <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: 500, flexShrink: 0 }}>
                   ({routeStops.length} stops ending at VBIT)
                 </span>
+                {roadDistanceMeters && (
+                  <span style={{ color: '#FDBA74', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <span>🛣️ {(roadDistanceMeters / 1000).toFixed(1)} km</span>
+                    {roadDurationSeconds && (
+                      <span style={{ opacity: 0.85 }}>({Math.round(roadDurationSeconds / 60)} mins driving)</span>
+                    )}
+                  </span>
+                )}
+                {isRoutingLoading && (
+                  <span style={{ color: '#FDBA74', fontSize: 11, fontStyle: 'italic', display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    <span>• Calculating road route…</span>
+                  </span>
+                )}
               </div>
             )}
 
@@ -1406,42 +1479,46 @@ export default function StopsScreen() {
               {/* Map controller: binds map instance without any automatic zoom-out */}
               <MapController onMapReady={setMapInstance} />
 
-              {/* ─── COLORED ROUTE PATH FROM START TO END (interactive={false} to ensure click-through) ─── */}
-              {publishedPolyline && publishedPolyline.length > 1 ? (
-                // High-resolution Google turn-by-turn road polyline
-                <Polyline
-                  positions={publishedPolyline}
-                  interactive={false}
-                  pathOptions={{
-                    color: '#EA580C',
-                    weight: 6,
-                    opacity: 0.95,
-                    lineJoin: 'round',
-                  }}
-                />
-              ) : stopCoordinates.length >= 2 ? (
-                // Direct route segment polyline connecting stops
+              {/* ─── ACTUAL TURN-BY-TURN ROAD ROUTE (interactive={false} to ensure click-through) ─── */}
+              {roadPolyline && roadPolyline.length > 1 ? (
                 <>
+                  {/* High-resolution road route following actual streets and highways */}
                   <Polyline
-                    positions={stopCoordinates}
+                    positions={roadPolyline}
                     interactive={false}
                     pathOptions={{
                       color: '#EA580C',
-                      weight: 5,
-                      opacity: 0.9,
-                      dashArray: '8, 8',
+                      weight: 6,
+                      opacity: 0.95,
+                      lineJoin: 'round',
+                      lineCap: 'round',
                     }}
                   />
+                  {/* Subtle road route glow for high visibility */}
                   <Polyline
-                    positions={stopCoordinates}
+                    positions={roadPolyline}
                     interactive={false}
                     pathOptions={{
                       color: 'rgba(234, 88, 12, 0.25)',
                       weight: 12,
                       opacity: 0.5,
+                      lineJoin: 'round',
+                      lineCap: 'round',
                     }}
                   />
                 </>
+              ) : stopCoordinates.length >= 2 ? (
+                // Temporary dashed line while real road route is calculating
+                <Polyline
+                  positions={stopCoordinates}
+                  interactive={false}
+                  pathOptions={{
+                    color: '#EA580C',
+                    weight: 3,
+                    opacity: 0.45,
+                    dashArray: '6, 6',
+                  }}
+                />
               ) : null}
 
               {/* ─── PINS FOR EACH STOP IN SEQUENCE ─── */}

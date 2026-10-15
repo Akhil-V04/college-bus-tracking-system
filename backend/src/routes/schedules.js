@@ -4,7 +4,7 @@ const { requireAuth } = require('../middleware/auth');
 const { scheduleVersionSchema, scheduleStopSchema } = require('../schemas');
 const { validate } = require('../crud');
 const { writeAdminAudit } = require('../lib/adminAudit');
-const { GoogleMapsGeometryError, requestRouteGeometry, fallbackRouteGeometry } = require('../lib/googleMapsGeometry');
+const { GoogleMapsGeometryError, requestRouteGeometry, fallbackRouteGeometry, computeRealRoadGeometry } = require('../lib/googleMapsGeometry');
 
 const router = express.Router();
 
@@ -80,6 +80,20 @@ router.get('/route/:routeServiceId', async (req, res) => {
   });
   if (!schedule) return res.status(404).json({ error: 'No published schedule for this route' });
   return res.json(schedule);
+});
+
+router.post('/preview-geometry', async (req, res) => {
+  const { stops = [] } = req.body;
+  if (!Array.isArray(stops) || stops.length < 2) {
+    return res.status(400).json({ error: 'At least two stops are required for road routing' });
+  }
+  try {
+    const geometry = await computeRealRoadGeometry(stops);
+    return res.json(geometry);
+  } catch (error) {
+    console.error('[preview-geometry]', error);
+    return res.status(500).json({ error: 'Could not compute road geometry' });
+  }
 });
 
 router.use(requireAuth(['admin']));
@@ -271,20 +285,22 @@ router.post('/route/:routeServiceId/save-stops', async (req, res) => {
         });
       }
 
-      if (publish) {
-        const stopsWithCoords = await tx.scheduleStop.findMany({
-          where: { scheduleVersionId: schedule.id },
-          orderBy: { sequenceOrder: 'asc' },
-          include: { stop: true },
-        });
+      const stopsWithCoords = await tx.scheduleStop.findMany({
+        where: { scheduleVersionId: schedule.id },
+        orderBy: { sequenceOrder: 'asc' },
+        include: { stop: true },
+      });
 
-        let geometry;
+      let geometry = null;
+      if (stopsWithCoords.length >= 2) {
         try {
-          geometry = await requestRouteGeometry(stopsWithCoords);
-        } catch {
-          geometry = fallbackRouteGeometry(stopsWithCoords, 'GOOGLE_MAPS_UNAVAILABLE');
+          geometry = await computeRealRoadGeometry(stopsWithCoords);
+        } catch (geomErr) {
+          console.warn('[save-stops] geometry generation error:', geomErr);
         }
+      }
 
+      if (publish) {
         await tx.scheduleVersion.updateMany({
           where: { routeServiceId, direction, status: 'PUBLISHED' },
           data: { status: 'ARCHIVED' },
@@ -295,7 +311,14 @@ router.post('/route/:routeServiceId/save-stops', async (req, res) => {
           data: {
             status: 'PUBLISHED',
             publishedAt: new Date(),
-            ...geometry,
+            ...(geometry || {}),
+          },
+        });
+      } else if (geometry) {
+        schedule = await tx.scheduleVersion.update({
+          where: { id: schedule.id },
+          data: {
+            ...(geometry || {}),
           },
         });
       }

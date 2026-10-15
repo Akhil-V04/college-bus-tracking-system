@@ -195,6 +195,55 @@ function fallbackRouteGeometry(stops, errorCode = null) {
   };
 }
 
+async function requestOsrmRoadGeometry(stops, timeoutMs = 8000) {
+  const points = normalizeRoutePoints(stops);
+  const coords = points.map((p) => `${p.longitude.toFixed(5)},${p.latitude.toFixed(5)}`).join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=polyline`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`OSRM HTTP ${res.status}`);
+    const data = await res.json();
+    const route = data.routes?.[0];
+    if (!route || !route.geometry) throw new Error('No route geometry returned by OSRM');
+
+    return {
+      geometryPolyline: route.geometry,
+      geometryFormat: 'polyline5',
+      geometryDistanceMeters: Math.round(route.distance || 0),
+      geometryDurationSeconds: Math.round(route.duration || 0),
+      geometryGeneratedAt: new Date(),
+      geometryFingerprint: routeGeometryFingerprint(stops),
+      geometryProvider: 'OSRM_ROAD_ROUTER',
+      geometryErrorCode: null,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function computeRealRoadGeometry(stops) {
+  const apiKey = process.env.BACKEND_GOOGLE_MAPS_API_KEY;
+  if (apiKey && String(apiKey).trim().startsWith('AIzaSy')) {
+    try {
+      return await requestRouteGeometry(stops);
+    } catch (err) {
+      console.warn('[geometry] Google Maps failed, falling back to OSRM:', err.message);
+    }
+  }
+
+  try {
+    return await requestOsrmRoadGeometry(stops);
+  } catch (osrmErr) {
+    console.warn('[geometry] OSRM router failed, falling back to straight-line interpolation:', osrmErr.message);
+  }
+
+  return fallbackRouteGeometry(stops, 'ALL_ROUTERS_UNAVAILABLE');
+}
+
 module.exports = {
   DEFAULT_BASE_URL,
   DEFAULT_TIMEOUT_MS,
@@ -202,6 +251,8 @@ module.exports = {
   GoogleMapsGeometryError,
   normalizeRoutePoints,
   requestRouteGeometry,
+  requestOsrmRoadGeometry,
+  computeRealRoadGeometry,
   routeGeometryFingerprint,
   safeProviderCode,
   encodePolyline,
