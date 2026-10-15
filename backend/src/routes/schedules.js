@@ -155,37 +155,80 @@ router.post('/route/:routeServiceId/save-stops', async (req, res) => {
   try {
     const result = await prisma.$transaction(async (tx) => {
       const resolvedStops = [];
+      const usedStopIds = new Set();
+
       for (let i = 0; i < rawStops.length; i++) {
         const item = rawStops[i];
-        let stopId = item.stopId;
+        let stopId = item.stopId ? Number(item.stopId) : null;
+        const stopName = (item.name || `Stop ${i + 1}`).trim();
+        const latitude = Number(Number(item.latitude || 17.44).toFixed(5));
+        const longitude = Number(Number(item.longitude || 78.53).toFixed(5));
+
+        let scheduledTime = '08:30';
+        if (item.scheduledTime && typeof item.scheduledTime === 'string') {
+          const match = item.scheduledTime.trim().match(/(\d{1,2}):(\d{2})/);
+          if (match) {
+            const h = Math.min(23, Math.max(0, parseInt(match[1], 10)));
+            const m = Math.min(59, Math.max(0, parseInt(match[2], 10)));
+            scheduledTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+          }
+        } else if (i === rawStops.length - 1) {
+          scheduledTime = '09:25';
+        }
+
+        // 1. If stopId was passed from frontend, verify it exists and is not already used in this schedule
+        if (stopId && !Number.isNaN(stopId)) {
+          if (usedStopIds.has(stopId)) {
+            // Already claimed by an earlier stop in this schedule -> cannot reuse due to @@unique constraint!
+            stopId = null;
+          } else {
+            const existingById = await tx.stop.findUnique({ where: { id: stopId } });
+            if (existingById) {
+              await tx.stop.update({
+                where: { id: stopId },
+                data: {
+                  name: stopName,
+                  latitude,
+                  longitude,
+                },
+              });
+            } else {
+              stopId = null;
+            }
+          }
+        }
+
+        // 2. If no valid unique stopId, check if an existing stop matches BOTH name and exact location
+        // AND is not already claimed in this schedule
         if (!stopId) {
           const existing = await tx.stop.findFirst({
             where: {
-              OR: [
-                { name: item.name.trim() },
-                {
-                  latitude: { gte: item.latitude - 0.0001, lte: item.latitude + 0.0001 },
-                  longitude: { gte: item.longitude - 0.0001, lte: item.longitude + 0.0001 },
-                },
-              ],
+              name: stopName,
+              latitude: { gte: latitude - 0.0002, lte: latitude + 0.0002 },
+              longitude: { gte: longitude - 0.0002, lte: longitude + 0.0002 },
             },
           });
-          if (existing) {
+
+          if (existing && !usedStopIds.has(existing.id)) {
             stopId = existing.id;
           } else {
+            // Create a brand new distinct stop entry
             const createdStop = await tx.stop.create({
               data: {
-                name: item.name.trim() || `Stop ${i + 1}`,
-                latitude: Number(Number(item.latitude).toFixed(5)),
-                longitude: Number(Number(item.longitude).toFixed(5)),
+                name: stopName,
+                latitude,
+                longitude,
               },
             });
             stopId = createdStop.id;
           }
         }
+
+        usedStopIds.add(stopId);
+
         resolvedStops.push({
           stopId,
-          scheduledTime: item.scheduledTime || (i === rawStops.length - 1 ? '09:30' : `07:${String(30 + i * 15).padStart(2, '0')}`),
+          scheduledTime,
           sequenceOrder: i + 1,
         });
       }

@@ -489,17 +489,30 @@ export default function StopsScreen() {
     setMessage(null);
 
     try {
-      const payload = {
-        name: `${selectedRoute?.routeNo || 'Route'} Timetable`,
-        direction,
-        stops: routeStops.map((s, idx) => ({
-          stopId: s.stopId || undefined,
-          name: s.name.trim() || `Stop ${idx + 1}`,
+      const seenStopIds = new Set();
+      const sanitizedStops = routeStops.map((s, idx) => {
+        let validStopId = s.stopId ? Number(s.stopId) : undefined;
+        if (validStopId) {
+          if (seenStopIds.has(validStopId)) {
+            validStopId = undefined;
+          } else {
+            seenStopIds.add(validStopId);
+          }
+        }
+        return {
+          stopId: validStopId,
+          name: (s.name || `Stop ${idx + 1}`).trim(),
           latitude: s.latitude,
           longitude: s.longitude,
           scheduledTime: s.scheduledTime,
           sequenceOrder: idx + 1,
-        })),
+        };
+      });
+
+      const payload = {
+        name: `${selectedRoute?.routeNo || 'Route'} Timetable`,
+        direction,
+        stops: sanitizedStops,
         publish,
       };
 
