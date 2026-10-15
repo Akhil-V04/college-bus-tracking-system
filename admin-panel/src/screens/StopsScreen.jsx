@@ -111,28 +111,13 @@ function MapClickHandler({ onClick, enabled }) {
   return null;
 }
 
-// Controller that keeps user's current zoom when moving/adding pins, only fitting bounds when switching routes
-function MapController({ routeId, positions, onMapReady }) {
+// Controller that binds the Leaflet map instance without any automatic zoom-out
+function MapController({ onMapReady }) {
   const map = useMap();
-  const fittedRouteIdRef = useRef(null);
 
   useEffect(() => {
     if (onMapReady) onMapReady(map);
   }, [map, onMapReady]);
-
-  // Only auto-fit bounds ONCE when a new route is selected or initially loaded!
-  useEffect(() => {
-    if (!routeId || fittedRouteIdRef.current === String(routeId)) return;
-    if (positions && positions.length > 1) {
-      const bounds = L.latLngBounds(positions);
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
-      fittedRouteIdRef.current = String(routeId);
-    } else if (positions && positions.length === 1) {
-      // When only VBIT is present, zoom out to show full Hyderabad city
-      map.setView([17.43, 78.55], 11);
-      fittedRouteIdRef.current = String(routeId);
-    }
-  }, [routeId, positions, map]);
 
   return null;
 }
@@ -1223,7 +1208,7 @@ export default function StopsScreen() {
                   position: 'absolute',
                   top: 14,
                   left: 60,
-                  maxWidth: 'calc(100% - 240px)',
+                  maxWidth: 'calc(100% - 80px)',
                   zIndex: 1000,
                   background: 'rgba(15, 23, 42, 0.92)',
                   color: '#ffffff',
@@ -1252,35 +1237,6 @@ export default function StopsScreen() {
               </div>
             )}
 
-            {/* Recenter / Fit Full Route Button on Map Top Right */}
-            <button
-              type="button"
-              onClick={recenterMap}
-              style={{
-                position: 'absolute',
-                top: 14,
-                right: 14,
-                zIndex: 1000,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                background: 'rgba(15, 23, 42, 0.92)',
-                color: '#ffffff',
-                padding: '7px 14px',
-                borderRadius: 8,
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                backdropFilter: 'blur(8px)',
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: 'pointer',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                transition: 'all 0.15s ease',
-              }}
-              title="Zoom out and fit full route to college on screen"
-            >
-              <span>🎯 Recenter Full Route</span>
-            </button>
-
             {/* Helpful Map Floating Hint */}
             <div
               style={{
@@ -1302,7 +1258,7 @@ export default function StopsScreen() {
               📍 Click map to add stops &bull; Drag pins to move &bull; Click ✓ to lock pin
             </div>
 
-            {/* Map Layer Switcher Toolbar positioned at BOTTOM RIGHT to prevent any overlap */}
+            {/* Map Toolbar with Recenter Button and Map Layer Switcher positioned at BOTTOM RIGHT */}
             <div
               style={{
                 position: 'absolute',
@@ -1310,15 +1266,49 @@ export default function StopsScreen() {
                 right: 14,
                 zIndex: 1000,
                 display: 'flex',
+                alignItems: 'center',
                 gap: 6,
                 background: 'rgba(15, 23, 42, 0.92)',
-                padding: 4,
+                padding: '4px 6px',
                 borderRadius: 8,
                 backdropFilter: 'blur(8px)',
                 border: '1px solid rgba(255, 255, 255, 0.15)',
                 boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
               }}
             >
+              {/* Recenter full route button placed right near google maps, google satellite, openstreetmap */}
+              <button
+                type="button"
+                onClick={recenterMap}
+                style={{
+                  padding: '5px 10px',
+                  borderRadius: 6,
+                  border: '1px solid rgba(234, 88, 12, 0.6)',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  background: 'rgba(234, 88, 12, 0.22)',
+                  color: '#FF8A4C',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#EA580C';
+                  e.currentTarget.style.color = '#ffffff';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(234, 88, 12, 0.22)';
+                  e.currentTarget.style.color = '#FF8A4C';
+                }}
+                title="Recenter and fit full route to college on screen"
+              >
+                <span>🎯 Recenter</span>
+              </button>
+
+              <div style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.2)', margin: '0 2px' }} />
+
               {Object.entries(MAP_LAYERS).map(([key, item]) => (
                 <button
                   key={key}
@@ -1357,8 +1347,8 @@ export default function StopsScreen() {
               {/* Click to add new stops */}
               <MapClickHandler onClick={handleMapClick} enabled={Boolean(selectedRouteId)} />
 
-              {/* Map controller: fits bounds only once on route change, keeps zoom level when adding/dragging pins */}
-              <MapController routeId={selectedRouteId} positions={stopCoordinates} onMapReady={setMapInstance} />
+              {/* Map controller: binds map instance without any automatic zoom-out */}
+              <MapController onMapReady={setMapInstance} />
 
               {/* ─── COLORED ROUTE PATH FROM START TO END (interactive={false} to ensure click-through) ─── */}
               {publishedPolyline && publishedPolyline.length > 1 ? (
