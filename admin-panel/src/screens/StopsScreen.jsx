@@ -252,6 +252,35 @@ export default function StopsScreen() {
     return presets;
   }, [selectedRoute]);
 
+  // Helper to find the next unused preset stop from the route document in sequence
+  function getNextUnusedPreset(currentStops, presetList) {
+    if (!presetList || presetList.length === 0) return null;
+
+    // Clean a stop name by stripping numeric/punctuation suffixes e.g. "Shanthinagar 2" -> "shanthinagar"
+    const getBaseName = (str) =>
+      (str || '')
+        .toLowerCase()
+        .replace(/\s*[\(\[-]?\s*\d+\s*[\)\]]?\s*$/, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    // Clean names of currently placed intermediate stops (ignoring VBIT destination)
+    const placedBaseNames = (currentStops || [])
+      .filter((s) => !s.isEndpoint && !(s.name || '').toUpperCase().includes('VBIT'))
+      .map((s) => getBaseName(s.name));
+
+    // Find the first preset in the document sequence whose base name does not match any placed stop
+    for (const preset of presetList) {
+      const pBase = getBaseName(preset.name);
+      const isUsed = placedBaseNames.some((bName) => bName === pBase);
+      if (!isUsed) {
+        return preset;
+      }
+    }
+
+    return null;
+  }
+
   // 3. Click map to add stops in order (before VBIT College)
   function handleMapClick(latlng) {
     if (Date.now() < ignoreMapClickUntilRef.current) {
@@ -272,8 +301,8 @@ export default function StopsScreen() {
       const intermediateCount = vbitIndex >= 0 ? vbitIndex : prev.length;
       const nextOrder = intermediateCount + 1;
 
-      // Suggest the next stop from routePresetStops if available
-      const suggestedPreset = routePresetStops[intermediateCount] || null;
+      // Suggest the first unused preset from the route document sequence
+      const suggestedPreset = getNextUnusedPreset(prev, routePresetStops);
 
       let defaultName = `Stop ${nextOrder}`;
       let defaultTime = '08:30';
@@ -282,11 +311,21 @@ export default function StopsScreen() {
         defaultName = suggestedPreset.name;
         defaultTime = suggestedPreset.scheduledTime;
       } else {
-        const startMinutes = 7 * 60 + 30;
-        const totalMinutes = startMinutes + (nextOrder - 1) * 15;
-        const hours = Math.floor(totalMinutes / 60);
-        const mins = totalMinutes % 60;
-        defaultTime = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+        // Fallback when all document presets are already placed: calculate 10 mins after previous stop
+        const lastIntermediate = prev.filter((s) => !s.isEndpoint && !(s.name || '').toUpperCase().includes('VBIT')).at(-1);
+        if (lastIntermediate?.scheduledTime) {
+          const match = lastIntermediate.scheduledTime.match(/(\d{1,2}):(\d{2})/);
+          if (match) {
+            const totalM = parseInt(match[1], 10) * 60 + parseInt(match[2], 10) + 10;
+            defaultTime = `${String(Math.floor(totalM / 60)).padStart(2, '0')}:${String(totalM % 60).padStart(2, '0')}`;
+          }
+        } else {
+          const startMinutes = 7 * 60 + 30;
+          const totalMinutes = startMinutes + (nextOrder - 1) * 15;
+          const hours = Math.floor(totalMinutes / 60);
+          const mins = totalMinutes % 60;
+          defaultTime = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+        }
       }
 
       const newStop = {
@@ -323,7 +362,8 @@ export default function StopsScreen() {
       baseLng = Number((lastStop.longitude + 0.012).toFixed(5));
     }
 
-    const defaultPreset = preset || routePresetStops[nextIdx] || null;
+    const nextUnused = getNextUnusedPreset(routeStops, routePresetStops);
+    const defaultPreset = preset || nextUnused || null;
     const name = defaultPreset?.name || (preset?.name ? preset.name : `Stop ${nextIdx + 1}`);
     const scheduledTime = defaultPreset?.scheduledTime || '08:30';
 
@@ -693,9 +733,12 @@ export default function StopsScreen() {
                 {/* Clickable stop chips */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {routePresetStops.map((preset, pIdx) => {
-                    const alreadyAdded = routeStops.some(
-                      (s) => !s.isEndpoint && s.name.trim().toLowerCase() === preset.name.trim().toLowerCase()
-                    );
+                    const pBase = (preset.name || '').toLowerCase().replace(/\s*[\(\[-]?\s*\d+\s*[\)\]]?\s*$/, '').trim();
+                    const alreadyAdded = routeStops.some((s) => {
+                      if (s.isEndpoint || (s.name || '').toUpperCase().includes('VBIT')) return false;
+                      const sBase = (s.name || '').toLowerCase().replace(/\s*[\(\[-]?\s*\d+\s*[\)\]]?\s*$/, '').trim();
+                      return sBase === pBase;
+                    });
                     return (
                       <button
                         key={preset.name + pIdx}
