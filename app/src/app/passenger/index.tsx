@@ -65,6 +65,12 @@ function RouteCard({ route }: { route: RouteSummary }) {
         </Pill>
       </View>
 
+      {route.isEventOverride && (
+        <View style={styles.eventOverrideCardBadge}>
+          <Text style={styles.eventOverrideCardBadgeText}>⚡ Special Event Timetable Active</Text>
+        </View>
+      )}
+
       <View style={styles.routeMeta}>
         <View style={styles.metaItem}>
           <Text style={styles.metaLabel}>DRIVER</Text>
@@ -74,9 +80,11 @@ function RouteCard({ route }: { route: RouteSummary }) {
       </View>
 
       {route.hasActiveTrip && (
-        <View style={styles.liveBanner}>
-          <View style={styles.liveDot} />
-          <Text style={styles.liveText}>Trip is live</Text>
+        <View style={[styles.liveBanner, route.tripDirection === 'FROM_COLLEGE' && styles.liveBannerReturn]}>
+          <View style={[styles.liveDot, route.tripDirection === 'FROM_COLLEGE' && styles.liveDotReturn]} />
+          <Text style={[styles.liveText, route.tripDirection === 'FROM_COLLEGE' && styles.liveTextReturn]}>
+            {route.tripDirection === 'FROM_COLLEGE' ? '🏠 Return Trip Live (College ➔ Home)' : '🎓 Inbound Live (To College)'}
+          </Text>
         </View>
       )}
     </Pressable>
@@ -548,6 +556,32 @@ const useStyles = () => {
   },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success },
   liveText: { color: colors.success, fontSize: 12, fontWeight: fontWeight.bold },
+  liveBannerReturn: {
+    backgroundColor: 'rgba(168, 85, 247, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.3)',
+  },
+  liveDotReturn: {
+    backgroundColor: '#A855F7',
+  },
+  liveTextReturn: {
+    color: '#C084FC',
+  },
+  eventOverrideCardBadge: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+  eventOverrideCardBadgeText: {
+    color: '#F59E0B',
+    fontSize: 11,
+    fontWeight: fontWeight.bold,
+  },
   privacyBox: {
     backgroundColor: colors.surfaceElevated,
     borderRadius: radius.md,

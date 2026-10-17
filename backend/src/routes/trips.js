@@ -6,6 +6,7 @@ const { clearTripObservation, deadlineForToday } = require('../lib/lateAlert');
 const { writeAdminAudit } = require('../lib/adminAudit');
 const { locationFreshness } = require('../lib/liveTracking');
 const { aggregateTripSegments } = require('../lib/segmentStatistics');
+const { decodePolyline, encodePolyline } = require('../lib/googleMapsGeometry');
 
 const router = express.Router();
 
@@ -29,24 +30,66 @@ function buildRouteSnapshot(route) {
   };
 }
 
-function buildScheduleSnapshot(schedule) {
+function formatTimeFromDate(d) {
+  const hours = String(d.getHours()).padStart(2, '0');
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${hours}:${mins}`;
+}
+
+function buildScheduleSnapshot(schedule, tripDirection = 'TO_COLLEGE', startTime = new Date()) {
+  let stops = schedule.stops.map((entry) => ({
+    scheduleStopId: entry.id,
+    stopId: entry.stopId,
+    sequenceOrder: entry.sequenceOrder,
+    scheduledTime: entry.scheduledTime,
+    name: entry.stop.name,
+    latitude: entry.stop.latitude,
+    longitude: entry.stop.longitude,
+  }));
+
+  let polyline = schedule.geometryPolyline;
+
+  if (tripDirection === 'FROM_COLLEGE') {
+    // Reverse the stops order: VBIT College becomes Stop #1 (Departure), intermediate pickup stops become drop stops
+    const reversed = [...stops].reverse();
+    const totalDurationSeconds = schedule.geometryDurationSeconds || 3600;
+    const count = Math.max(reversed.length - 1, 1);
+    const avgSegmentSeconds = totalDurationSeconds / count;
+
+    stops = reversed.map((entry, idx) => {
+      const etaDate = new Date(startTime.getTime() + idx * avgSegmentSeconds * 1000);
+      return {
+        ...entry,
+        sequenceOrder: idx + 1,
+        scheduledTime: formatTimeFromDate(etaDate),
+        isReturnDrop: idx > 0,
+        isDepartureEndpoint: idx === 0,
+      };
+    });
+
+    // Invert the polyline route geometry so navigation flows from VBIT back to the city
+    if (polyline) {
+      try {
+        const decoded = decodePolyline(polyline);
+        if (Array.isArray(decoded) && decoded.length > 1) {
+          polyline = encodePolyline(decoded.slice().reverse());
+        }
+      } catch (_e) {
+        // Fall back to original polyline if decoding is unsupported
+      }
+    }
+  }
+
   return {
     id: schedule.id,
-    name: schedule.name,
-    direction: schedule.direction,
+    name: tripDirection === 'FROM_COLLEGE' ? `${schedule.name} (Return Trip)` : schedule.name,
+    direction: tripDirection === 'FROM_COLLEGE' ? 'FROM_COLLEGE' : schedule.direction,
+    tripDirection,
     version: schedule.version,
-    geometryPolyline: schedule.geometryPolyline,
+    geometryPolyline: polyline,
     geometryFormat: schedule.geometryFormat,
     geometryFingerprint: schedule.geometryFingerprint,
-    stops: schedule.stops.map((entry) => ({
-      scheduleStopId: entry.id,
-      stopId: entry.stopId,
-      sequenceOrder: entry.sequenceOrder,
-      scheduledTime: entry.scheduledTime,
-      name: entry.stop.name,
-      latitude: entry.stop.latitude,
-      longitude: entry.stop.longitude,
-    })),
+    stops,
   };
 }
 
@@ -167,20 +210,48 @@ router.post('/start', requireAuth(['driver', 'admin']), async (req, res) => {
       return res.status(409).json({ error: 'The route or driver already has another running trip' });
     }
 
-    const [roster, schedule] = await Promise.all([
+    const tripDirection = String(req.body?.tripDirection || 'TO_COLLEGE').toUpperCase() === 'FROM_COLLEGE'
+      ? 'FROM_COLLEGE'
+      : 'TO_COLLEGE';
+
+    const now = new Date();
+
+    const [roster, activeOverride] = await Promise.all([
       prisma.transportRoster.findFirst({
         where: { status: 'PUBLISHED' },
         orderBy: { publishedAt: 'desc' },
         select: { id: true, academicYear: true },
       }),
       prisma.scheduleVersion.findFirst({
-        where: { routeServiceId: route.id, status: 'PUBLISHED' },
+        where: {
+          routeServiceId: route.id,
+          status: 'PUBLISHED',
+          direction: 'EVENT_OVERRIDE',
+          effectiveFrom: { lte: now },
+          effectiveTo: { gte: now },
+        },
         orderBy: { publishedAt: 'desc' },
         include: {
           stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
         },
       }),
     ]);
+
+    let schedule = activeOverride;
+    if (!schedule) {
+      schedule = await prisma.scheduleVersion.findFirst({
+        where: {
+          routeServiceId: route.id,
+          status: 'PUBLISHED',
+          direction: { not: 'EVENT_OVERRIDE' },
+        },
+        orderBy: { publishedAt: 'desc' },
+        include: {
+          stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+        },
+      });
+    }
+
     if (!roster) return res.status(409).json({ error: 'A passenger roster must be published before starting trips' });
     if (!schedule) return res.status(409).json({ error: 'A route schedule must be published before starting this trip' });
     if (!schedule.geometryPolyline) {
@@ -201,9 +272,8 @@ router.post('/start', requireAuth(['driver', 'admin']), async (req, res) => {
       orderBy: [{ passengerType: 'asc' }, { name: 'asc' }],
     });
 
-    const now = new Date();
     const routeSnapshot = buildRouteSnapshot(route);
-    const scheduleSnapshot = buildScheduleSnapshot(schedule);
+    const scheduleSnapshot = buildScheduleSnapshot(schedule, tripDirection, now);
     const rosterSnapshot = buildOperationalRosterSnapshot(roster, passengers);
     const trip = await prisma.$transaction(async (tx) => {
       const created = await tx.trip.create({
@@ -212,9 +282,10 @@ router.post('/start', requireAuth(['driver', 'admin']), async (req, res) => {
           driverId,
           rosterId: roster.id,
           scheduleVersionId: schedule.id,
+          tripDirection,
           date: now,
           startTime: now,
-          collegeDeadlineAt: deadlineForToday(now),
+          collegeDeadlineAt: tripDirection === 'FROM_COLLEGE' ? null : deadlineForToday(now),
           routeSnapshot,
           scheduleSnapshot,
           rosterSnapshot,

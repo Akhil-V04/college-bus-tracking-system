@@ -83,19 +83,33 @@ router.get('/routes', async (req, res) => {
         })
       : [];
     const countByRoute = new Map(counts.map((item) => [item.routeServiceId, item._count._all]));
+    const now = new Date();
     return res.json(
-      routes.map((route) => ({
-        id: route.id,
-        routeNo: route.routeNo,
-        name: route.name,
-        areaCovered: route.areaCovered,
-        capacity: route.capacity,
-        driver: route.driver?.status === 'ACTIVE' ? { name: route.driver.name } : null,
-        active: route.trips.length > 0,
-        majorStops: (route.schedules[0]?.stops || []).map((entry) => entry.stop),
-        assignedPassengerCount: countByRoute.get(route.id) || 0,
-        roster: roster ? { name: roster.name, academicYear: roster.academicYear } : null,
-      }))
+      routes.map((route) => {
+        const activeOverride = route.schedules.find(
+          (s) => s.direction === 'EVENT_OVERRIDE' && s.effectiveFrom <= now && s.effectiveTo >= now
+        );
+        const baseSchedule = route.schedules.find((s) => s.direction !== 'EVENT_OVERRIDE');
+        const selectedSchedule = activeOverride || baseSchedule;
+        const activeTrip = route.trips[0] || null;
+
+        return {
+          id: route.id,
+          routeNo: route.routeNo,
+          name: route.name,
+          areaCovered: route.areaCovered,
+          capacity: route.capacity,
+          driver: route.driver?.status === 'ACTIVE' ? { name: route.driver.name } : null,
+          active: Boolean(activeTrip),
+          hasActiveTrip: Boolean(activeTrip),
+          tripDirection: activeTrip?.tripDirection || 'TO_COLLEGE',
+          isEventOverride: Boolean(activeOverride),
+          eventTitle: activeOverride?.name || null,
+          majorStops: (selectedSchedule?.stops || []).map((entry) => entry.stop),
+          assignedPassengerCount: countByRoute.get(route.id) || 0,
+          roster: roster ? { name: roster.name, academicYear: roster.academicYear } : null,
+        };
+      })
     );
   } catch (error) {
     console.error('[passenger/routes]', error);
@@ -169,44 +183,101 @@ router.get('/routes/:routeNo', async (req, res) => {
         areaCovered: true,
         capacity: true,
         driver: { select: { name: true } },
-        schedules: {
-          where: { status: 'PUBLISHED' },
-          orderBy: { publishedAt: 'desc' },
-          take: 1,
+      },
+    });
+    if (!route) return res.status(404).json({ error: 'Route not found' });
+
+    const now = new Date();
+
+    // 1. Check for active event override schedule
+    const activeOverride = await prisma.scheduleVersion.findFirst({
+      where: {
+        routeServiceId: route.id,
+        status: 'PUBLISHED',
+        direction: 'EVENT_OVERRIDE',
+        effectiveFrom: { lte: now },
+        effectiveTo: { gte: now },
+      },
+      orderBy: { publishedAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        direction: true,
+        version: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+        geometryPolyline: true,
+        geometryFormat: true,
+        geometryDistanceMeters: true,
+        geometryDurationSeconds: true,
+        geometryGeneratedAt: true,
+        geometryProvider: true,
+        stops: {
+          orderBy: { sequenceOrder: 'asc' },
           select: {
             id: true,
-            name: true,
-            direction: true,
-            geometryPolyline: true,
-            geometryFormat: true,
-            geometryDistanceMeters: true,
-            geometryDurationSeconds: true,
-            geometryGeneratedAt: true,
-            geometryProvider: true,
-            stops: {
-              orderBy: { sequenceOrder: 'asc' },
-              select: {
-                id: true,
-                sequenceOrder: true,
-                scheduledTime: true,
-                stop: { select: { id: true, name: true, latitude: true, longitude: true } },
-              },
-            },
+            sequenceOrder: true,
+            scheduledTime: true,
+            stop: { select: { id: true, name: true, latitude: true, longitude: true } },
           },
         },
       },
     });
-    if (!route) return res.status(404).json({ error: 'Route not found' });
+
+    // 2. Fetch baseline published schedule
+    const baseSchedule = await prisma.scheduleVersion.findFirst({
+      where: {
+        routeServiceId: route.id,
+        status: 'PUBLISHED',
+        direction: { not: 'EVENT_OVERRIDE' },
+      },
+      orderBy: { publishedAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        direction: true,
+        version: true,
+        geometryPolyline: true,
+        geometryFormat: true,
+        geometryDistanceMeters: true,
+        geometryDurationSeconds: true,
+        geometryGeneratedAt: true,
+        geometryProvider: true,
+        stops: {
+          orderBy: { sequenceOrder: 'asc' },
+          select: {
+            id: true,
+            sequenceOrder: true,
+            scheduledTime: true,
+            stop: { select: { id: true, name: true, latitude: true, longitude: true } },
+          },
+        },
+      },
+    });
+
+    let effectiveSchedule = activeOverride || baseSchedule || null;
+    const isEventOverride = Boolean(activeOverride);
+    const remainingMinutes = activeOverride
+      ? Math.max(0, Math.round((new Date(activeOverride.effectiveTo) - now) / 60000))
+      : null;
 
     const roster = await getPublishedRoster();
     const assignedPassengerCount = roster
       ? await prisma.rosterPassenger.count({ where: { rosterId: roster.id, routeServiceId: route.id } })
       : 0;
+
     const runningTrip = await prisma.trip.findFirst({
       where: { routeServiceId: route.id, status: 'RUNNING' },
       orderBy: { startTime: 'desc' },
-      select: { id: true, startTime: true, currentStopIndex: true },
+      select: {
+        id: true,
+        startTime: true,
+        currentStopIndex: true,
+        tripDirection: true,
+        scheduleSnapshot: true,
+      },
     });
+
     let activeTrip = null;
     if (runningTrip) {
       const latestLocation = await prisma.liveLocation.findFirst({
@@ -215,15 +286,50 @@ router.get('/routes/:routeNo', async (req, res) => {
         select: { receivedAt: true },
       });
       activeTrip = {
-        ...runningTrip,
+        id: runningTrip.id,
+        startTime: runningTrip.startTime,
+        currentStopIndex: runningTrip.currentStopIndex,
+        tripDirection: runningTrip.tripDirection || 'TO_COLLEGE',
         trackingState: locationFreshness(latestLocation?.receivedAt),
         lastLocationAt: latestLocation?.receivedAt || null,
       };
+
+      // If running trip has snapshot stops, show live snapshot stops for current journey (e.g. reverse return trip)
+      if (
+        runningTrip.scheduleSnapshot &&
+        Array.isArray(runningTrip.scheduleSnapshot.stops) &&
+        runningTrip.scheduleSnapshot.stops.length
+      ) {
+        effectiveSchedule = {
+          ...(effectiveSchedule || {}),
+          id: effectiveSchedule?.id || 0,
+          name: runningTrip.scheduleSnapshot.name || effectiveSchedule?.name || route.name,
+          direction: runningTrip.tripDirection || effectiveSchedule?.direction || 'TO_COLLEGE',
+          geometryPolyline: runningTrip.scheduleSnapshot.geometryPolyline || effectiveSchedule?.geometryPolyline,
+          stops: runningTrip.scheduleSnapshot.stops.map((entry) => ({
+            id: entry.scheduleStopId,
+            sequenceOrder: entry.sequenceOrder,
+            scheduledTime: entry.scheduledTime,
+            stop: {
+              id: entry.stopId,
+              name: entry.name,
+              latitude: entry.latitude,
+              longitude: entry.longitude,
+            },
+          })),
+        };
+      }
     }
+
     return res.json({
       ...route,
-      schedule: route.schedules[0] || null,
-      schedules: undefined,
+      schedule: effectiveSchedule
+        ? {
+            ...effectiveSchedule,
+            isEventOverride,
+            remainingMinutes,
+          }
+        : null,
       assignedPassengerCount,
       activeTrip,
       roster: roster ? { name: roster.name, academicYear: roster.academicYear } : null,

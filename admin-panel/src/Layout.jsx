@@ -8,7 +8,7 @@ const navigation = [
   { to: '/routes', label: 'Routes & capacity', iconName: 'routes', fallback: '↝' },
   { to: '/stops', label: 'Stops & Map', iconName: 'stops', fallback: '📍' },
   { to: '/schedules', label: 'Schedules', iconName: 'schedules', fallback: '◷' },
-  { to: '/schedule-builder', label: 'Map Builder', iconName: 'schedule-builder', fallback: '🗺️' },
+  { to: '/schedule-builder', label: 'Event Overrides', iconName: 'schedule-builder', fallback: '⚡' },
   { to: '/rosters', label: 'Annual rosters', iconName: 'rosters', fallback: '▤' },
   { to: '/drivers', label: 'Drivers', iconName: 'drivers', fallback: '◉' },
   { to: '/class-advisors', label: 'Class advisors', iconName: 'class-advisors', fallback: '◎' },

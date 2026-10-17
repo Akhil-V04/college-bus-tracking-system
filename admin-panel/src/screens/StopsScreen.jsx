@@ -398,37 +398,6 @@ export default function StopsScreen() {
     });
   }
 
-  // 3c. Populate all preset stops from the transport document at once
-  function populateAllPresetStops() {
-    if (!routePresetStops || routePresetStops.length === 0) return;
-    const total = routePresetStops.length;
-
-    // Corridor from Hyderabad (Secunderabad / Uppal) towards Ghatkesar / VBIT
-    const startLat = 17.4200;
-    const startLng = 78.5200;
-    const endLat = 17.4650;
-    const endLng = 78.7050;
-
-    const newStops = routePresetStops.map((preset, idx) => {
-      const fraction = idx / Math.max(total, 1);
-      const lat = Number((startLat + fraction * (endLat - startLat)).toFixed(5));
-      const lng = Number((startLng + fraction * (endLng - startLng)).toFixed(5));
-      return {
-        tempId: 'preset-' + Date.now() + '-' + idx,
-        name: preset.name,
-        latitude: lat,
-        longitude: lng,
-        scheduledTime: preset.scheduledTime || '08:00',
-        isEndpoint: false,
-      };
-    });
-
-    setRouteStops([...newStops, { ...VBIT_ENDPOINT }]);
-    setMessage({
-      type: 'info',
-      text: `Loaded all ${total} stops for Route ${selectedRoute.routeNo}! You can drag markers on the map to fine-tune exact locations, edit names, or click Save/Publish.`,
-    });
-  }
 
   // 4. Update stop name or arrival time
   function updateStop(index, field, value) {
@@ -599,11 +568,15 @@ export default function StopsScreen() {
 
   // Decode saved route geometry if available from backend schedule
   useEffect(() => {
-    if (scheduleInfo?.geometryPolyline) {
+    if (scheduleInfo?.geometryPolyline && scheduleInfo.geometryProvider !== 'FALLBACK_INTERPOLATION') {
       const decoded = decodePolyline(scheduleInfo.geometryPolyline);
-      setRoadPolyline(decoded);
-      setRoadDistanceMeters(scheduleInfo.geometryDistanceMeters || null);
-      setRoadDurationSeconds(scheduleInfo.geometryDurationSeconds || null);
+      // Real road paths across stops have dozens/hundreds of coordinate points; straight lines only match stop count
+      if (decoded.length > (scheduleInfo.stops?.length || 2) + 2) {
+        setRoadPolyline(decoded);
+        setRoadDistanceMeters(scheduleInfo.geometryDistanceMeters || null);
+        setRoadDurationSeconds(scheduleInfo.geometryDurationSeconds || null);
+        return;
+      }
     }
   }, [scheduleInfo]);
 
@@ -625,33 +598,37 @@ export default function StopsScreen() {
           stops: routeStops.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
         });
 
-        if (!isCancelled && data?.geometryPolyline) {
+        if (!isCancelled && data?.geometryPolyline && data.geometryProvider !== 'FALLBACK_INTERPOLATION') {
           const decoded = decodePolyline(data.geometryPolyline);
-          setRoadPolyline(decoded);
-          setRoadDistanceMeters(data.geometryDistanceMeters || null);
-          setRoadDurationSeconds(data.geometryDurationSeconds || null);
-          return;
-        }
-      } catch (_backendErr) {
-        // 2. Direct browser OSRM fallback if backend or network has any delay
-        try {
-          const coords = stopCoordinates.map(([lat, lng]) => `${lng.toFixed(5)},${lat.toFixed(5)}`).join(';');
-          const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=polyline`);
-          const osrmData = await osrmRes.json();
-          if (!isCancelled && osrmData.routes?.[0]?.geometry) {
-            const decoded = decodePolyline(osrmData.routes[0].geometry);
+          if (decoded.length > stopCoordinates.length + 2) {
             setRoadPolyline(decoded);
-            setRoadDistanceMeters(osrmData.routes[0].distance || null);
-            setRoadDurationSeconds(osrmData.routes[0].duration || null);
+            setRoadDistanceMeters(data.geometryDistanceMeters || null);
+            setRoadDurationSeconds(data.geometryDurationSeconds || null);
             return;
           }
-        } catch (_osrmErr) {
-          // If completely offline, straight lines will be displayed as fallback
         }
+      } catch (_backendErr) {
+        // Continue to direct browser OSRM fallback below
+      }
+
+      // 2. Direct browser OSRM fallback if backend is slow, unavailable, or returned straight lines
+      try {
+        const coords = stopCoordinates.map(([lat, lng]) => `${lng.toFixed(5)},${lat.toFixed(5)}`).join(';');
+        const osrmRes = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=polyline`);
+        const osrmData = await osrmRes.json();
+        if (!isCancelled && osrmData.routes?.[0]?.geometry) {
+          const decoded = decodePolyline(osrmData.routes[0].geometry);
+          setRoadPolyline(decoded);
+          setRoadDistanceMeters(osrmData.routes[0].distance || null);
+          setRoadDurationSeconds(osrmData.routes[0].duration || null);
+          return;
+        }
+      } catch (_osrmErr) {
+        // In extreme network loss, only the stops themselves are rendered
       } finally {
         if (!isCancelled) setIsRoutingLoading(false);
       }
-    }, 300);
+    }, 250);
 
     return () => {
       isCancelled = true;
@@ -758,7 +735,7 @@ export default function StopsScreen() {
               </button>
             </div>
 
-            {/* Route Stops Reference Banner with Clickable Chips & Auto-Populate */}
+            {/* Route Stops Reference Banner with Clickable Chips */}
             {selectedRoute.areaCovered && (
               <div
                 style={{
@@ -777,17 +754,6 @@ export default function StopsScreen() {
                   <div style={{ fontWeight: 750, color: '#EA580C', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span>📋 Route {selectedRoute.routeNo} Scheduled Stops from Document ({routePresetStops.length} stops):</span>
                   </div>
-                  {routePresetStops.length > 0 && (
-                    <button
-                      type="button"
-                      className="button button-primary"
-                      onClick={populateAllPresetStops}
-                      style={{ padding: '5px 12px', fontSize: 11.5, fontWeight: 700 }}
-                      title="Load all stops from the document into the route at once"
-                    >
-                      ⚡ Auto-Populate All {routePresetStops.length} Stops
-                    </button>
-                  )}
                 </div>
 
                 {/* Clickable stop chips */}
@@ -984,21 +950,11 @@ export default function StopsScreen() {
                       Select stops from the dropdown below, click the chips above, or click on the map to place pins.
                     </p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {routePresetStops.length > 0 && (
-                        <button
-                          type="button"
-                          className="button button-primary"
-                          onClick={populateAllPresetStops}
-                          style={{ justifyContent: 'center', padding: '9px 14px', fontSize: 12, fontWeight: 700 }}
-                        >
-                          ⚡ Auto-Populate All {routePresetStops.length} Stops from Document
-                        </button>
-                      )}
                       <button
                         type="button"
-                        className="button button-secondary"
+                        className="button button-primary"
                         onClick={() => addPresetStop(routePresetStops[0])}
-                        style={{ justifyContent: 'center', padding: '8px 12px', fontSize: 11.5 }}
+                        style={{ justifyContent: 'center', padding: '9px 14px', fontSize: 12, fontWeight: 700 }}
                       >
                         ➕ Add First Stop ({routePresetStops[0]?.name || 'Stop 1'})
                       </button>

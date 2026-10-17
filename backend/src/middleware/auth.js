@@ -62,6 +62,17 @@ function requireAuth(allowedRoles) {
         if (!session) return res.status(401).json({ error: 'Administrator session is invalid, expired, or revoked' });
         req.adminSession = session;
       } catch (error) {
+        if (error.code === 'P1001' || error.message?.includes("Can't reach database server")) {
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const retrySession = await findActiveAdminSession(prisma, req.user);
+            if (!retrySession) return res.status(401).json({ error: 'Administrator session is invalid, expired, or revoked' });
+            req.adminSession = retrySession;
+            return next();
+          } catch (retryError) {
+            console.error('[auth/session-check-retry]', retryError);
+          }
+        }
         console.error('[auth/session-check]', error);
         return res.status(503).json({ error: 'Authentication service is temporarily unavailable' });
       }

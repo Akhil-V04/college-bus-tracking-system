@@ -10,6 +10,9 @@ export type RouteSummary = {
   driver: { name: string } | null;
   roster: { name: string; academicYear: string } | null;
   hasActiveTrip?: boolean;
+  tripDirection?: 'TO_COLLEGE' | 'FROM_COLLEGE';
+  isEventOverride?: boolean;
+  eventTitle?: string | null;
   previewStops?: string[];
 };
 
@@ -25,9 +28,17 @@ export type RouteDetail = Omit<RouteSummary, 'roster'> & {
     id: number;
     name: string;
     direction: string;
+    isEventOverride?: boolean;
+    remainingMinutes?: number | null;
     stops: ScheduleStop[];
   } | null;
-  activeTrip: { id: number; startTime: string; currentStopIndex: number } | null;
+  activeTrip: {
+    id: number;
+    startTime: string;
+    currentStopIndex: number;
+    tripDirection?: 'TO_COLLEGE' | 'FROM_COLLEGE';
+    trackingState?: string;
+  } | null;
   roster: { name: string; academicYear: string } | null;
 };
 
@@ -79,6 +90,8 @@ export type DriverTrip = {
     areaCovered: string;
     capacity: number;
   };
+  tripDirection?: string;
+  scheduleSnapshot?: any;
   scheduleVersion: { stops: ScheduleStop[] };
 };
 

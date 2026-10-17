@@ -94,6 +94,7 @@ export default function RouteDetailsScreen() {
 
   const stops = route.data?.schedule?.stops || [];
   const currentStopIndex = busUpdate?.currentStopIndex ?? route.data?.activeTrip?.currentStopIndex ?? 0;
+  const isReturnTrip = route.data?.activeTrip?.tripDirection === 'FROM_COLLEGE';
 
   if (route.isPending) return <SafeAreaView style={styles.container}><LoadingState label="Loading route..." /></SafeAreaView>;
   if (route.isError) return <SafeAreaView style={styles.container}><ErrorState message={route.error.message} retry={() => route.refetch()} /></SafeAreaView>;
@@ -138,6 +139,54 @@ export default function RouteDetailsScreen() {
 
       {/* Content */}
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {/* Special Event Override Notice Banner */}
+        {detail.schedule?.isEventOverride && (
+          <View style={styles.eventOverrideBanner}>
+            <View style={styles.eventOverrideHeader}>
+              <Text style={styles.eventOverrideIcon}>⚡</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.eventOverrideTitle}>Special College Event Schedule</Text>
+                <Text style={styles.eventOverrideSub}>
+                  {detail.schedule.name || 'Event Timetable'}
+                  {detail.schedule.remainingMinutes != null
+                    ? ` • ~${Math.ceil(detail.schedule.remainingMinutes / 60)} hrs remaining`
+                    : ''}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.eventOverrideNote}>
+              Departure and stop timings have been adjusted for today's special college session.
+            </Text>
+          </View>
+        )}
+
+        {/* Direction Indicator Banner (When Trip is Active) */}
+        {detail.activeTrip && (
+          <View
+            style={[
+              styles.directionBanner,
+              detail.activeTrip.tripDirection === 'FROM_COLLEGE'
+                ? styles.directionBannerReturn
+                : styles.directionBannerInbound,
+            ]}
+          >
+            <Text style={styles.directionIcon}>
+              {detail.activeTrip.tripDirection === 'FROM_COLLEGE' ? '🏠' : '🎓'}
+            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.directionTitle}>
+                {detail.activeTrip.tripDirection === 'FROM_COLLEGE'
+                  ? 'Return Trip: College ➔ Home Drops'
+                  : 'Inbound Trip: Towards VBIT College'}
+              </Text>
+              <Text style={styles.directionSub}>
+                {detail.activeTrip.tripDirection === 'FROM_COLLEGE'
+                  ? 'Bus departs from VBIT Campus and drops passengers along the reverse route.'
+                  : 'Bus picks up passengers along the route towards VBIT Campus.'}
+              </Text>
+            </View>
+          </View>
+        )}
         {/* Trip Status Banner */}
         {!detail.activeTrip ? (
           <Notice
@@ -164,9 +213,9 @@ export default function RouteDetailsScreen() {
           <>
             {/* ETA Section */}
             <Card>
-              <SectionTitle>Ask estimated time</SectionTitle>
+              <SectionTitle>{isReturnTrip ? 'Ask Drop-off Arrival ETA' : 'Ask estimated time'}</SectionTitle>
               <Text style={styles.helpText}>
-                Select your boarding stop below. ETA is calculated from live GPS data.
+                {isReturnTrip ? 'Select your destination stop below for arrival drop ETA.' : 'Select your boarding stop below. ETA is calculated from live GPS data.'}
               </Text>
               <View style={styles.stopChoices}>
                 {stops.map((entry) => {
@@ -208,7 +257,7 @@ export default function RouteDetailsScreen() {
         {activeTab === 'FULL ROUTE' && (
           <Card>
             <View style={styles.sectionHeader}>
-              <SectionTitle>Stop Timeline</SectionTitle>
+              <SectionTitle>{isReturnTrip ? 'Outbound Drops Timeline' : 'Stop Timeline'}</SectionTitle>
               <Pill tone="info">{stops.length} stops</Pill>
             </View>
             {stops.length === 0 ? (
@@ -495,5 +544,66 @@ const useStyles = () => {
   footerLiveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent },
   footerBusLabel: { color: colors.textPrimary, fontWeight: fontWeight.bold, fontSize: 14 },
   footerEta: { color: colors.textSecondary, fontSize: 12, fontWeight: fontWeight.medium },
+  eventOverrideBanner: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: 6,
+  },
+  eventOverrideHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  eventOverrideIcon: {
+    fontSize: 22,
+  },
+  eventOverrideTitle: {
+    color: '#F59E0B',
+    fontSize: 15,
+    fontWeight: fontWeight.extrabold,
+  },
+  eventOverrideSub: {
+    color: 'rgba(245, 158, 11, 0.85)',
+    fontSize: 12,
+    fontWeight: fontWeight.medium,
+  },
+  eventOverrideNote: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  directionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+  },
+  directionBannerInbound: {
+    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+    borderColor: 'rgba(59, 130, 246, 0.3)',
+  },
+  directionBannerReturn: {
+    backgroundColor: 'rgba(168, 85, 247, 0.12)',
+    borderColor: 'rgba(168, 85, 247, 0.35)',
+  },
+  directionIcon: {
+    fontSize: 24,
+  },
+  directionTitle: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: fontWeight.extrabold,
+  },
+  directionSub: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
+  },
 }), [colors]);
 };

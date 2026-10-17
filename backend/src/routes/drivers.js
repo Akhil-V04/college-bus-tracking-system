@@ -182,9 +182,11 @@ router.post('/import/confirm', driverImportLimiter, receiveDriverFile, async (re
 
 router.get('/', async (req, res) => {
   const { page, limit, skip, take } = parsePagination(req.query);
+  const includeInactive = req.query.includeInactive === 'true';
+  const where = includeInactive ? {} : { status: 'ACTIVE' };
   const [items, total] = await Promise.all([
-    prisma.driver.findMany({ skip, take, select: adminSelect, orderBy: { driverCode: 'asc' } }),
-    prisma.driver.count(),
+    prisma.driver.findMany({ where, skip, take, select: adminSelect, orderBy: { driverCode: 'asc' } }),
+    prisma.driver.count({ where }),
   ]);
   return res.json({ items, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
 });
@@ -280,16 +282,34 @@ router.delete('/:id', async (req, res) => {
     const id = Number(req.params.id);
     const reason = String(req.body?.reason || 'REMOVED_BY_ADMIN').trim().slice(0, 500);
     const result = await prisma.$transaction(async (tx) => {
-      const before = await tx.driver.findUnique({ where: { id }, include: { assignedRoute: true } });
+      const before = await tx.driver.findUnique({
+        where: { id },
+        include: { assignedRoute: true, trips: { select: { id: true }, take: 1 } },
+      });
       if (!before) return { statusCode: 404 };
       const running = await tx.trip.findFirst({
         where: { driverId: id, status: 'RUNNING' },
         select: { id: true },
       });
       if (running) return { statusCode: 409, tripId: running.id };
+
       if (before.assignedRoute) {
         await tx.routeService.update({ where: { id: before.assignedRoute.id }, data: { driverId: null } });
       }
+
+      // If driver has no trips, permanently delete them cleanly
+      if (!before.trips || before.trips.length === 0) {
+        await tx.driver.delete({ where: { id } });
+        await writeAdminAudit(tx, req, {
+          action: 'DRIVER_DELETED',
+          entityType: 'Driver',
+          entityId: id,
+          beforeSummary: driverAuditSummary(before),
+        });
+        return { statusCode: 200, deleted: true };
+      }
+
+      // If driver has historical trips on record, soft-deactivate to protect foreign keys and compliance audits
       const updated = await tx.driver.update({
         where: { id },
         data: {
@@ -307,7 +327,7 @@ router.delete('/:id', async (req, res) => {
         beforeSummary: driverAuditSummary(before),
         afterSummary: driverAuditSummary(updated),
       });
-      return { statusCode: 200, updated };
+      return { statusCode: 200, updated, deactivated: true };
     });
     if (result.statusCode === 404) return res.status(404).json({ error: 'Driver not found' });
     if (result.statusCode === 409) {
@@ -316,7 +336,7 @@ router.delete('/:id', async (req, res) => {
         tripId: result.tripId,
       });
     }
-    return res.json({ deactivated: true, driver: result.updated });
+    return res.json({ deleted: true, deactivated: result.deactivated || false });
   } catch (error) {
     if (error.code === 'P2025') return res.status(404).json({ error: 'Driver not found' });
     return res.status(500).json({ error: 'Internal server error' });

@@ -25,9 +25,10 @@ type StartResponse = { tripId: number; resumed: boolean; routeNo: string };
 type LocationAck = { ok: boolean; stored?: boolean; error?: string; timestamp?: string };
 
 export default function DriverConsoleScreen() {
-    const styles = useStyles();
+  const styles = useStyles();
   const queryClient = useQueryClient();
   const [token, setToken] = useState<string | null | undefined>(undefined);
+  const [selectedDirection, setSelectedDirection] = useState<'TO_COLLEGE' | 'FROM_COLLEGE'>('TO_COLLEGE');
   const [sharing, setSharing] = useState(false);
   const [trackingMode, setTrackingMode] = useState<'background' | 'foreground' | null>(null);
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
@@ -91,7 +92,12 @@ export default function DriverConsoleScreen() {
   }, [profile.error]);
 
   const startTrip = useMutation({
-    mutationFn: () => apiRequest<StartResponse>('/trips/start', { method: 'POST', token, body: JSON.stringify({}) }),
+    mutationFn: (direction?: 'TO_COLLEGE' | 'FROM_COLLEGE') =>
+      apiRequest<StartResponse>('/trips/start', {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ tripDirection: direction || selectedDirection }),
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] }),
   });
 
@@ -205,6 +211,7 @@ export default function DriverConsoleScreen() {
 
   const driver = profile.data;
   const trip = activeTrip.data?.trip || null;
+  const isReturnTrip = trip?.tripDirection === 'FROM_COLLEGE' || trip?.scheduleSnapshot?.tripDirection === 'FROM_COLLEGE';
 
   return (
     <Screen>
@@ -215,7 +222,7 @@ export default function DriverConsoleScreen() {
         action={
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
             <Pill tone={trip ? 'success' : 'neutral'}>{trip ? 'Trip running' : 'Off trip'}</Pill>
-                      </View>
+          </View>
         }
       />
 
@@ -236,22 +243,85 @@ export default function DriverConsoleScreen() {
 
       {!trip ? (
         <Card>
-          <SectionTitle>Start morning trip</SectionTitle>
-          <Text style={styles.help}>Starting creates the official trip record. GPS starts only after you approve location sharing.</Text>
+          <SectionTitle>Start Trip</SectionTitle>
+          <Text style={styles.help}>
+            Select your trip direction. Forward trips pick up students towards VBIT College. Return trips depart from VBIT and drop off students in reverse sequence with dynamic live ETAs.
+          </Text>
+
+          {/* Direction Selector */}
+          <View style={{ flexDirection: 'row', gap: 10, marginVertical: 12 }}>
+            <Pressable
+              onPress={() => setSelectedDirection('TO_COLLEGE')}
+              style={{
+                flex: 1,
+                padding: 12,
+                borderRadius: 8,
+                borderWidth: 2,
+                borderColor: selectedDirection === 'TO_COLLEGE' ? '#EA580C' : '#334155',
+                backgroundColor: selectedDirection === 'TO_COLLEGE' ? 'rgba(234, 88, 12, 0.15)' : 'transparent',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 22 }}>🎓</Text>
+              <Text style={{ fontWeight: '700', color: selectedDirection === 'TO_COLLEGE' ? '#EA580C' : '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                To College
+              </Text>
+              <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'center', marginTop: 2 }}>
+                City Stops &rarr; VBIT
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setSelectedDirection('FROM_COLLEGE')}
+              style={{
+                flex: 1,
+                padding: 12,
+                borderRadius: 8,
+                borderWidth: 2,
+                borderColor: selectedDirection === 'FROM_COLLEGE' ? '#EA580C' : '#334155',
+                backgroundColor: selectedDirection === 'FROM_COLLEGE' ? 'rgba(234, 88, 12, 0.15)' : 'transparent',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 22 }}>🏠</Text>
+              <Text style={{ fontWeight: '700', color: selectedDirection === 'FROM_COLLEGE' ? '#EA580C' : '#94a3b8', fontSize: 13, marginTop: 4 }}>
+                Return from College
+              </Text>
+              <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'center', marginTop: 2 }}>
+                VBIT &rarr; Reverse Drops
+              </Text>
+            </Pressable>
+          </View>
+
           {startTrip.isError && <Notice tone="danger" title="Could not start trip" message={startTrip.error.message} />}
-          <Button label="Start trip" onPress={() => startTrip.mutate()} loading={startTrip.isPending} disabled={!driver.assignedRoute} size="lg" />
+          <Button
+            label={selectedDirection === 'FROM_COLLEGE' ? 'Start Return Trip from VBIT' : 'Start Trip to College'}
+            onPress={() => startTrip.mutate(selectedDirection)}
+            loading={startTrip.isPending}
+            disabled={!driver.assignedRoute}
+            size="lg"
+          />
         </Card>
       ) : (
         <Card>
           <View style={styles.row}>
-            <SectionTitle>Live trip</SectionTitle>
+            <SectionTitle>
+              {isReturnTrip ? 'Live Return Trip 🏠' : 'Live Trip to College 🎓'}
+            </SectionTitle>
             <Pill tone={sharing ? 'success' : 'warning'}>
               {sharing ? (trackingMode === 'background' ? 'Background GPS' : 'Foreground GPS') : 'GPS paused'}
             </Pill>
           </View>
           <LabelValue label="Route" value={trip.routeService.routeNo + ' – ' + trip.routeService.name} />
           <LabelValue label="Started" value={new Date(trip.startTime).toLocaleTimeString()} />
-          <LabelValue label="Progress" value={trip.currentStopIndex + ' of ' + trip.scheduleVersion.stops.length + ' stops reached'} />
+          <LabelValue
+            label="Direction"
+            value={isReturnTrip ? 'Return from VBIT (Reverse Drops with Dynamic ETAs)' : 'Inbound to VBIT Campus'}
+          />
+          <LabelValue
+            label="Progress"
+            value={trip.currentStopIndex + ' of ' + (trip.scheduleSnapshot?.stops?.length || trip.scheduleVersion.stops.length) + ' stops reached'}
+          />
 
           {locationMessage && (
             <Notice
@@ -286,7 +356,7 @@ export default function DriverConsoleScreen() {
 const useStyles = () => {
   const { colors } = useTheme();
   return useMemo(() => StyleSheet.create({
-  help: { color: colors.textSecondary, lineHeight: 21 },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-}), [colors]);
+    help: { color: colors.textSecondary, lineHeight: 21 },
+    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+  }), [colors]);
 };

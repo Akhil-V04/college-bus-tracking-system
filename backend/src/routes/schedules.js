@@ -52,8 +52,18 @@ async function validateSchedule(scheduleId) {
 }
 
 router.get('/route/:routeServiceId', async (req, res) => {
-  const schedule = await prisma.scheduleVersion.findFirst({
-    where: { routeServiceId: Number(req.params.routeServiceId), status: 'PUBLISHED' },
+  const routeServiceId = Number(req.params.routeServiceId);
+  const now = new Date();
+
+  // 1. Check if there is an active event/custom override schedule whose date range covers NOW
+  const activeOverride = await prisma.scheduleVersion.findFirst({
+    where: {
+      routeServiceId,
+      status: 'PUBLISHED',
+      direction: 'EVENT_OVERRIDE',
+      effectiveFrom: { lte: now },
+      effectiveTo: { gte: now },
+    },
     orderBy: { publishedAt: 'desc' },
     select: {
       id: true,
@@ -61,6 +71,48 @@ router.get('/route/:routeServiceId', async (req, res) => {
       direction: true,
       version: true,
       effectiveFrom: true,
+      effectiveTo: true,
+      geometryPolyline: true,
+      geometryFormat: true,
+      geometryDistanceMeters: true,
+      geometryDurationSeconds: true,
+      geometryGeneratedAt: true,
+      geometryProvider: true,
+      stops: {
+        orderBy: { sequenceOrder: 'asc' },
+        select: {
+          id: true,
+          sequenceOrder: true,
+          scheduledTime: true,
+          stop: { select: { id: true, name: true, latitude: true, longitude: true } },
+        },
+      },
+    },
+  });
+
+  if (activeOverride) {
+    return res.json({
+      ...activeOverride,
+      isEventOverride: true,
+      remainingMinutes: Math.max(0, Math.round((new Date(activeOverride.effectiveTo) - now) / 60000)),
+    });
+  }
+
+  // 2. Otherwise return standard published regular schedule
+  const schedule = await prisma.scheduleVersion.findFirst({
+    where: {
+      routeServiceId,
+      status: 'PUBLISHED',
+      direction: { not: 'EVENT_OVERRIDE' },
+    },
+    orderBy: { publishedAt: 'desc' },
+    select: {
+      id: true,
+      name: true,
+      direction: true,
+      version: true,
+      effectiveFrom: true,
+      effectiveTo: true,
       geometryPolyline: true,
       geometryFormat: true,
       geometryDistanceMeters: true,
@@ -97,6 +149,208 @@ router.post('/preview-geometry', async (req, res) => {
 });
 
 router.use(requireAuth(['admin']));
+
+// List all custom event schedule overrides across routes
+router.get('/overrides', async (req, res) => {
+  const now = new Date();
+  const overrides = await prisma.scheduleVersion.findMany({
+    where: {
+      direction: 'EVENT_OVERRIDE',
+    },
+    orderBy: { effectiveFrom: 'desc' },
+    include: {
+      routeService: { select: { id: true, routeNo: true, name: true } },
+      stops: {
+        orderBy: { sequenceOrder: 'asc' },
+        include: { stop: true },
+      },
+    },
+  });
+
+  const formatted = overrides.map((ov) => {
+    const isActive = ov.status === 'PUBLISHED' && ov.effectiveFrom && ov.effectiveTo &&
+      new Date(ov.effectiveFrom) <= now && new Date(ov.effectiveTo) >= now;
+    const isExpired = ov.effectiveTo && new Date(ov.effectiveTo) < now;
+    return {
+      id: ov.id,
+      name: ov.name,
+      routeServiceId: ov.routeServiceId,
+      routeNo: ov.routeService?.routeNo || '??',
+      routeName: ov.routeService?.name || 'Route',
+      direction: ov.direction,
+      status: ov.status,
+      effectiveFrom: ov.effectiveFrom,
+      effectiveTo: ov.effectiveTo,
+      isActive,
+      isExpired,
+      stopsCount: ov.stops.length,
+      firstStopTime: ov.stops[0]?.scheduledTime || '--:--',
+      firstStopName: ov.stops[0]?.stop?.name || 'Start',
+      lastStopTime: ov.stops[ov.stops.length - 1]?.scheduledTime || '--:--',
+      lastStopName: ov.stops[ov.stops.length - 1]?.stop?.name || 'VBIT',
+      geometryDistanceMeters: ov.geometryDistanceMeters,
+      geometryDurationSeconds: ov.geometryDurationSeconds,
+      stops: ov.stops.map((s) => ({
+        id: s.id,
+        sequenceOrder: s.sequenceOrder,
+        scheduledTime: s.scheduledTime,
+        stopId: s.stop.id,
+        name: s.stop.name,
+        latitude: s.stop.latitude,
+        longitude: s.stop.longitude,
+      })),
+    };
+  });
+
+  return res.json(formatted);
+});
+
+// Create & publish a new event schedule override for a route
+router.post('/route/:routeServiceId/create-override', async (req, res) => {
+  const routeServiceId = Number(req.params.routeServiceId);
+  const {
+    name = 'Event Schedule Override',
+    durationDays = 1,
+    effectiveFrom,
+    effectiveTo,
+    stops = [],
+  } = req.body;
+
+  const route = await prisma.routeService.findUnique({ where: { id: routeServiceId } });
+  if (!route) return res.status(404).json({ error: 'Route not found' });
+  if (!Array.isArray(stops) || stops.length < 2) {
+    return res.status(400).json({ error: 'At least two stops are required for an event schedule' });
+  }
+
+  // Calculate start & end date window
+  const fromDate = effectiveFrom ? new Date(effectiveFrom) : new Date();
+  let toDate = effectiveTo ? new Date(effectiveTo) : null;
+  if (!toDate) {
+    toDate = new Date(fromDate);
+    toDate.setDate(toDate.getDate() + Number(durationDays || 1));
+    toDate.setHours(23, 59, 59, 999);
+  }
+
+  // Generate turn-by-turn road geometry for the event schedule
+  let geometry = null;
+  try {
+    geometry = await computeRealRoadGeometry(stops);
+  } catch (geomErr) {
+    console.warn('[create-override] geometry error:', geomErr);
+  }
+
+  // Find next version number for EVENT_OVERRIDE direction
+  const maxVersion = await prisma.scheduleVersion.aggregate({
+    where: { routeServiceId, direction: 'EVENT_OVERRIDE' },
+    _max: { version: true },
+  });
+  const nextVersion = (maxVersion._max.version || 0) + 1;
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. Resolve stopIds ensuring unique stops
+    const usedStopIds = new Set();
+    const resolvedStops = [];
+
+    for (let i = 0; i < stops.length; i++) {
+      const item = stops[i];
+      let stop = null;
+
+      if (item.stopId && !usedStopIds.has(Number(item.stopId))) {
+        stop = await tx.stop.findUnique({ where: { id: Number(item.stopId) } });
+      }
+
+      if (!stop) {
+        stop = await tx.stop.create({
+          data: {
+            name: String(item.name || `Stop ${i + 1}`).trim(),
+            latitude: Number(item.latitude),
+            longitude: Number(item.longitude),
+          },
+        });
+      }
+
+      usedStopIds.add(stop.id);
+      resolvedStops.push({
+        stopId: stop.id,
+        sequenceOrder: i + 1,
+        scheduledTime: String(item.scheduledTime || '08:00').trim(),
+      });
+    }
+
+    // 2. Create the EVENT_OVERRIDE ScheduleVersion
+    const overrideSchedule = await tx.scheduleVersion.create({
+      data: {
+        routeServiceId,
+        name: String(name).trim() || `Route ${route.routeNo} Event Schedule`,
+        direction: 'EVENT_OVERRIDE',
+        status: 'PUBLISHED',
+        version: nextVersion,
+        effectiveFrom: fromDate,
+        effectiveTo: toDate,
+        publishedAt: new Date(),
+        ...(geometry || {}),
+      },
+    });
+
+    // 3. Create ScheduleStops
+    for (const item of resolvedStops) {
+      await tx.scheduleStop.create({
+        data: {
+          scheduleVersionId: overrideSchedule.id,
+          stopId: item.stopId,
+          sequenceOrder: item.sequenceOrder,
+          scheduledTime: item.scheduledTime,
+        },
+      });
+    }
+
+    await writeAdminAudit(tx, req, {
+      action: 'SCHEDULE_EVENT_OVERRIDE_CREATED',
+      entityType: 'ScheduleVersion',
+      entityId: overrideSchedule.id,
+      afterSummary: {
+        routeNo: route.routeNo,
+        durationDays,
+        effectiveFrom: fromDate,
+        effectiveTo: toDate,
+        stopsCount: resolvedStops.length,
+      },
+    });
+
+    return overrideSchedule;
+  });
+
+  return res.status(201).json(result);
+});
+
+// Deactivate/cancel an event schedule override
+router.post('/override/:id/deactivate', async (req, res) => {
+  const id = Number(req.params.id);
+  const schedule = await prisma.scheduleVersion.findUnique({ where: { id } });
+  if (!schedule) return res.status(404).json({ error: 'Schedule override not found' });
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const res = await tx.scheduleVersion.update({
+      where: { id },
+      data: {
+        status: 'ARCHIVED',
+        effectiveTo: new Date(),
+      },
+    });
+    await writeAdminAudit(tx, req, {
+      action: 'SCHEDULE_EVENT_OVERRIDE_DEACTIVATED',
+      entityType: 'ScheduleVersion',
+      entityId: id,
+      afterSummary: {
+        deactivatedAt: new Date(),
+        originalEffectiveTo: schedule.effectiveTo,
+      },
+    });
+    return res;
+  });
+
+  return res.json({ deactivated: true, schedule: updated });
+});
 
 router.get('/route/:routeServiceId/detail', async (req, res) => {
   const routeServiceId = Number(req.params.routeServiceId);
