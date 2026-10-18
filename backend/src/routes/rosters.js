@@ -237,17 +237,34 @@ router.get('/:id/export', async (req, res) => {
   }
 });
 
+router.get('/template', async (req, res) => {
+  const format = String(req.query.format || 'xlsx').toLowerCase();
+  if (!['csv', 'xlsx'].includes(format)) {
+    return res.status(400).json({ error: 'format must be csv or xlsx' });
+  }
+  try {
+    if (format === 'csv') {
+      return sendDownload(res, buildTemplateCsv(), 'annual-roster-import-template.csv', 'text/csv; charset=utf-8');
+    }
+    const references = await loadRouteReferences(prisma);
+    const buffer = await buildTemplateXlsx(references);
+    return sendDownload(
+      res,
+      buffer,
+      'annual-roster-import-template.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+  } catch (error) {
+    console.error('[rosters/template]', error);
+    return res.status(500).json({ error: 'Roster template could not be generated' });
+  }
+});
+
 router.post('/:id/import/preview', rosterImportRateLimiter, receiveRosterFile, async (req, res) => {
   const rosterId = Number(req.params.id);
   if (!Number.isInteger(rosterId) || rosterId <= 0) return res.status(400).json({ error: 'Invalid roster ID' });
   if (!req.file) return res.status(400).json({ error: 'Upload one file using the multipart field named file' });
 
-  const previewDigest = String(req.get('x-preview-digest') || '');
-  const rosterVersion = Number(req.get('x-roster-version'));
-  const actualDigest = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-  if (!/^[a-f0-9]{64}$/.test(previewDigest) || previewDigest !== actualDigest || req.body?.confirmed !== 'true') {
-    return res.status(409).json({ error: 'Preview this exact file and explicitly confirm it before import' });
-  }
   try {
     const preview = await previewRosterImport(prisma, rosterId, req.file.buffer, req.file.originalname);
     const { normalizedRows: _internalRows, ...clientPreview } = preview;
@@ -262,12 +279,19 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
   if (!Number.isInteger(rosterId) || rosterId <= 0) return res.status(400).json({ error: 'Invalid roster ID' });
   if (!req.file) return res.status(400).json({ error: 'Upload one file using the multipart field named file' });
 
+  const previewDigest = String(req.get('x-preview-digest') || '');
+  const rosterVersion = Number(req.get('x-roster-version'));
+  const actualDigest = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+  if (!/^[a-f0-9]{64}$/.test(previewDigest) || previewDigest !== actualDigest || req.body?.confirmed !== 'true') {
+    return res.status(409).json({ error: 'Preview this exact file and explicitly confirm it before import' });
+  }
+
   try {
     const parsed = await parseRosterFile(req.file.buffer, req.file.originalname);
     const imported = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "TransportRoster" WHERE "id" = ${rosterId} FOR UPDATE`;
       const { roster, context } = await loadValidationContext(tx, rosterId);
-      if (roster.version !== rosterVersion) {
+      if (Number.isInteger(rosterVersion) && roster.version !== rosterVersion) {
         throw new RosterExchangeError('Roster version changed; preview the file again', 409);
       }
       const results = validateRosterRows(parsed.rows, context);

@@ -42,8 +42,19 @@ export type RouteDetail = Omit<RouteSummary, 'roster'> & {
   roster: { name: string; academicYear: string } | null;
 };
 
+export type RouteRosterPassenger = {
+  name: string;
+  passengerType: PassengerType;
+  rollNo?: string | null;
+  department?: string | null;
+  year?: number | null;
+  section?: string | null;
+};
+
 export type RouteRoster = {
   routeNo: string;
+  routeName?: string;
+  driver?: { name: string; driverCode: string } | null;
   roster: { id: number; name: string; academicYear: string; version: number };
   total: number;
   stops: Array<{
@@ -51,7 +62,7 @@ export type RouteRoster = {
     stopName: string;
     sequenceOrder: number;
     scheduledTime: string;
-    passengers: Array<{ name: string; passengerType: PassengerType }>;
+    passengers: RouteRosterPassenger[];
   }>;
 };
 

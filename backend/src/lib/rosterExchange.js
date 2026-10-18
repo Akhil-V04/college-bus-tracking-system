@@ -20,15 +20,16 @@ const ROSTER_COLUMNS = [
 ];
 
 const HEADER_ALIASES = new Map([
-  ['passengertype', 'passengerType'], ['type', 'passengerType'],
-  ['name', 'name'], ['passengername', 'name'],
-  ['buspassid', 'busPassId'], ['buspassnumber', 'busPassId'],
-  ['studentrollnumber', 'rollNo'], ['studentrollno', 'rollNo'], ['rollnumber', 'rollNo'], ['rollno', 'rollNo'],
-  ['facultyid', 'facultyId'], ['facultyidentifier', 'facultyId'],
-  ['department', 'department'], ['dept', 'department'],
-  ['year', 'year'], ['academicyearnumber', 'year'], ['section', 'section'],
-  ['routenumber', 'routeNo'], ['routeno', 'routeNo'], ['busnumber', 'routeNo'],
-  ['boardingstop', 'boardingStop'], ['stop', 'boardingStop'], ['stopname', 'boardingStop'],
+  ['passengertype', 'passengerType'], ['type', 'passengerType'], ['category', 'passengerType'], ['role', 'passengerType'],
+  ['name', 'name'], ['passengername', 'name'], ['studentname', 'name'], ['facultyname', 'name'], ['fullname', 'name'],
+  ['buspassid', 'busPassId'], ['buspassnumber', 'busPassId'], ['passid', 'busPassId'], ['passnumber', 'busPassId'], ['passno', 'busPassId'],
+  ['studentrollnumber', 'rollNo'], ['studentrollno', 'rollNo'], ['rollnumber', 'rollNo'], ['rollno', 'rollNo'], ['roll', 'rollNo'], ['htno', 'rollNo'], ['hallticketno', 'rollNo'], ['hallticketnumber', 'rollNo'], ['regno', 'rollNo'], ['registrationno', 'rollNo'], ['pin', 'rollNo'], ['pinno', 'rollNo'],
+  ['facultyid', 'facultyId'], ['facultyidentifier', 'facultyId'], ['staffid', 'facultyId'], ['empid', 'facultyId'], ['employeeid', 'facultyId'],
+  ['department', 'department'], ['dept', 'department'], ['branch', 'department'], ['course', 'department'],
+  ['year', 'year'], ['academicyearnumber', 'year'], ['yr', 'year'], ['classyear', 'year'],
+  ['section', 'section'], ['sec', 'section'],
+  ['routenumber', 'routeNo'], ['routeno', 'routeNo'], ['busnumber', 'routeNo'], ['busno', 'routeNo'], ['route', 'routeNo'],
+  ['boardingstop', 'boardingStop'], ['stop', 'boardingStop'], ['stopname', 'boardingStop'], ['boardingpoint', 'boardingStop'], ['pickuppoint', 'boardingStop'], ['pickupstop', 'boardingStop'], ['pickup', 'boardingStop'], ['stoplocation', 'boardingStop'],
 ]);
 
 class RosterExchangeError extends Error {
@@ -242,6 +243,17 @@ function validateRosterRows(rawRows, context) {
     const result = { rowNumber: rawRow.rowNumber, valid: false, errors: [], warnings: [], normalized: null };
 
     for (const column of rawRow.formulaColumns) addIssue(result, 'errors', 'FORMULA_NOT_ALLOWED', `${column} must contain a value, not a formula`, column);
+
+    if (!values.passengerType) {
+      if (values.rollNo) values.passengerType = 'STUDENT';
+      else if (values.facultyId) values.passengerType = 'FACULTY';
+    }
+
+    if (!values.busPassId) {
+      if (values.rollNo) values.busPassId = `PASS-${values.rollNo}`;
+      else if (values.facultyId) values.busPassId = `PASS-${values.facultyId}`;
+    }
+
     requireValue(result, values, 'passengerType', 'Passenger Type');
     requireValue(result, values, 'name', 'Name');
     requireValue(result, values, 'busPassId', 'Bus Pass ID');

@@ -111,12 +111,22 @@ function MapClickHandler({ onClick, enabled }) {
   return null;
 }
 
-// Controller that binds the Leaflet map instance without any automatic zoom-out
+// Controller that binds the Leaflet map instance without any automatic zoom-out, and auto-invalidates on dimension changes
 function MapController({ onMapReady }) {
   const map = useMap();
 
   useEffect(() => {
     if (onMapReady) onMapReady(map);
+    map.invalidateSize();
+    const handleResize = () => map.invalidateSize();
+    window.addEventListener('resize', handleResize);
+    const t1 = setTimeout(() => map.invalidateSize(), 150);
+    const t2 = setTimeout(() => map.invalidateSize(), 450);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [map, onMapReady]);
 
   return null;
@@ -716,7 +726,7 @@ export default function StopsScreen() {
               </div>
             </div>
 
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="button button-secondary"
@@ -805,8 +815,8 @@ export default function StopsScreen() {
         <LoadingState label="Loading transport routes and stops…" />
       ) : viewMode === 'master' ? (
         /* ─── Master Stop Catalog Mode ─── */
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 400px) 1fr', gap: 20 }}>
-          <div className="panel" style={{ padding: 20 }}>
+        <div className="map-split-container-reversed">
+          <div className="panel map-controls-panel" style={{ padding: 20 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 16 }}>Add Master Stop</h3>
             <p style={{ color: 'var(--muted)', fontSize: 12, margin: '0 0 16px' }}>
               Add a standalone landmark stop by clicking anywhere on the map.
@@ -860,8 +870,9 @@ export default function StopsScreen() {
             </div>
           </div>
 
-          <div className="panel" style={{ position: 'relative', overflow: 'hidden', minHeight: 600 }}>
-            <MapContainer center={mapCenter} zoom={12} style={{ width: '100%', height: '100%', minHeight: 600 }}>
+          <div className="panel map-viewport-panel">
+            <MapContainer center={mapCenter} zoom={12} style={{ width: '100%', height: '100%' }}>
+              <MapController />
               <TileLayer
                 url={MAP_LAYERS[activeLayer].url}
                 subdomains={MAP_LAYERS[activeLayer].subdomains}
@@ -891,10 +902,10 @@ export default function StopsScreen() {
         </div>
       ) : (
         /* ─── Route Path Builder Mode ─── */
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(360px, 440px) 1fr', gap: 20, alignItems: 'start' }}>
+        <div className="map-split-container-reversed">
           
           {/* ─── Left Panel: Organized Stops List ─── */}
-          <div className="panel" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className="panel map-controls-panel" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0, fontSize: 16 }}>
@@ -1272,7 +1283,7 @@ export default function StopsScreen() {
           </div>
 
           {/* ─── Right Panel: Interactive Route Map with Colored Path ─── */}
-          <div className="panel" style={{ position: 'relative', overflow: 'hidden', height: 'calc(100vh - 240px)', minHeight: 520 }}>
+          <div className="panel map-viewport-panel">
             {/* Route Summary Pill on Map Top Left */}
             {selectedRoute && (
               <div

@@ -105,9 +105,12 @@ export default function EntityScreen({ config }) {
         title={title}
         description={`Manage ${title.toLowerCase()} records, credentials and route assignments.`}
         actions={
-          <button className="button button-primary" onClick={openAdd}>
-            + Add New
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {typeof config.headerActions === 'function' ? config.headerActions({ load, setMessage }) : config.headerActions}
+            <button className="button button-primary" onClick={openAdd}>
+              + Add New
+            </button>
+          </div>
         }
       />
 
@@ -240,6 +243,7 @@ export default function EntityScreen({ config }) {
           </form>
         </Modal>
       )}
+      {config.renderExtra?.({ load, setMessage })}
     </>
   );
 }

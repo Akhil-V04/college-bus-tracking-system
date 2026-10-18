@@ -28,6 +28,16 @@ export default function RostersScreen() {
   const [saving, setSaving] = useState(false);
   const [exportingId, setExportingId] = useState(null);
 
+  // Excel / CSV Import states
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importTargetRoster, setImportTargetRoster] = useState(null);
+  const [importFile, setImportFile] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [showErrorsOnly, setShowErrorsOnly] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -179,47 +189,646 @@ export default function RostersScreen() {
     }
   }
 
+  async function downloadTemplate(format = 'xlsx') {
+    try {
+      const response = await api.get(`/rosters/template?format=${format}`, { responseType: 'blob' });
+      const blob = new Blob([response.data], {
+        type: format === 'xlsx'
+          ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          : 'text/csv;charset=utf-8',
+      });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `annual-roster-import-template.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+      setMessage({ type: 'success', text: `Downloaded annual roster template (.${format}). Fill student & faculty details and upload.` });
+    } catch (error) {
+      setMessage({ type: 'error', text: errorMessage(error, 'Roster template could not be downloaded.') });
+    }
+  }
+
+  async function downloadDriverTemplate() {
+    try {
+      const response = await api.get('/drivers/import/template', { responseType: 'blob' });
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'driver-import-template.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+      setMessage({ type: 'success', text: 'Downloaded driver master template (.xlsx).' });
+    } catch (error) {
+      setMessage({ type: 'error', text: errorMessage(error, 'Driver template could not be downloaded.') });
+    }
+  }
+
+  async function downloadXlsx(roster) {
+    setExportingId(roster.id);
+    try {
+      const response = await api.get(`/rosters/${roster.id}/export?format=xlsx`, { responseType: 'blob' });
+      const blob = new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `transport-roster-${roster.academicYear}-v${roster.version}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+      setMessage({ type: 'success', text: 'Downloaded roster workbook (.xlsx).' });
+    } catch (error) {
+      setMessage({ type: 'error', text: errorMessage(error, 'Roster workbook could not be downloaded.') });
+    } finally {
+      setExportingId(null);
+    }
+  }
+
+  function openImportModal(roster) {
+    setImportTargetRoster(roster);
+    setImportFile(null);
+    setImportPreview(null);
+    setPreviewLoading(false);
+    setPreviewError('');
+    setShowErrorsOnly(false);
+    setImportModalOpen(true);
+  }
+
+  async function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFile(file);
+    setPreviewLoading(true);
+    setPreviewError('');
+    setImportPreview(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const { data } = await api.post(`/rosters/${importTargetRoster.id}/import/preview`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      setImportPreview(data);
+    } catch (error) {
+      setPreviewError(errorMessage(error, 'Failed to inspect Excel file. Please ensure sheets and columns match the template.'));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function confirmImport() {
+    if (!importTargetRoster || !importFile || !importPreview) return;
+    setImporting(true);
+    setPreviewError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', importFile);
+      formData.append('confirmed', 'true');
+      const { data } = await api.post(`/rosters/${importTargetRoster.id}/import`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'x-preview-digest': importPreview.previewDigest,
+          'x-roster-version': String(importTargetRoster.version),
+        },
+      });
+      setImportModalOpen(false);
+      setMessage({
+        type: 'success',
+        text: `Successfully imported ${data.importedCount || importPreview.summary.validRows} passengers into draft roster (${importTargetRoster.name}).`,
+      });
+      if (detail && detail.roster.id === importTargetRoster.id) {
+        await openDetail(importTargetRoster.id);
+      }
+      await load();
+    } catch (error) {
+      setPreviewError(errorMessage(error, 'Import failed. The draft roster or master data may have changed.'));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <>
-      <PageHeader eyebrow="Academic-year data" title="Annual rosters"
-        description="Prepare next year's list in a draft. Publishing atomically archives the current list and updates passenger views."
-        actions={<button className="button button-primary" onClick={() => setCreating(true)}>+ Create next-year draft</button>} />
+      <PageHeader
+        eyebrow="Academic-year data"
+        title="Annual rosters"
+        description="Prepare next year's student & faculty passenger list in a draft. Upload Excel (.xlsx) files to bulk-assign routes, check capacities, and eliminate duplicates."
+        actions={
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button className="button button-secondary" onClick={() => downloadTemplate('xlsx')} title="Download pre-formatted Excel template with instructions and reference sheets">
+              📥 Roster Template (.xlsx)
+            </button>
+            <button className="button button-secondary" onClick={downloadDriverTemplate} title="Download driver master import template">
+              📥 Driver Template (.xlsx)
+            </button>
+            <button className="button button-primary" onClick={() => setCreating(true)}>
+              + Create next-year draft
+            </button>
+          </div>
+        }
+      />
+
       <Notice message={message} onDismiss={() => setMessage(null)} />
-      {loading ? <LoadingState label="Loading annual rosters…" /> : rosters.length === 0 ? (
+
+      {loading ? (
+        <LoadingState label="Loading annual rosters…" />
+      ) : rosters.length === 0 ? (
         <EmptyState title="No rosters yet" description="Create a draft for the current academic year." />
       ) : (
-        <div className="panel table-wrap"><table className="data-table">
-          <thead><tr><th>Roster</th><th>Academic year</th><th>Version</th><th>Passengers</th><th>Status</th><th /></tr></thead>
-          <tbody>{rosters.map((roster) => <tr key={roster.id}>
-            <td><div className="cell-title">{roster.name}</div><div className="cell-subtitle">Created {new Date(roster.createdAt).toLocaleDateString('en-IN')}</div></td>
-            <td>{roster.academicYear}</td><td>v{roster.version}</td><td>{roster._count.passengers}</td><td><StatusBadge value={roster.status} /></td>
-            <td><div className="row-actions"><button className="text-button" onClick={() => downloadCsv(roster)} disabled={exportingId === roster.id}>{exportingId === roster.id ? 'Exporting…' : 'Download CSV'}</button><button className="text-button" onClick={() => openDetail(roster.id)}>Manage</button></div></td>
-          </tr>)}</tbody>
-        </table></div>
+        <div className="panel table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Roster</th>
+                <th>Academic year</th>
+                <th>Version</th>
+                <th>Passengers</th>
+                <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rosters.map((roster) => (
+                <tr key={roster.id}>
+                  <td>
+                    <div className="cell-title">{roster.name}</div>
+                    <div className="cell-subtitle">Created {new Date(roster.createdAt).toLocaleDateString('en-IN')}</div>
+                  </td>
+                  <td>{roster.academicYear}</td>
+                  <td>v{roster.version}</td>
+                  <td>{roster._count.passengers}</td>
+                  <td><StatusBadge value={roster.status} /></td>
+                  <td>
+                    <div className="row-actions">
+                      {roster.status === 'DRAFT' && (
+                        <button
+                          className="text-button"
+                          style={{ color: 'var(--teal)', fontWeight: 700 }}
+                          onClick={() => openImportModal(roster)}
+                        >
+                          📤 Upload Excel
+                        </button>
+                      )}
+                      <button className="text-button" onClick={() => downloadXlsx(roster)} disabled={exportingId === roster.id}>
+                        {exportingId === roster.id ? 'Exporting…' : 'Export Excel'}
+                      </button>
+                      <button className="text-button" onClick={() => downloadCsv(roster)} disabled={exportingId === roster.id}>
+                        CSV
+                      </button>
+                      <button className="text-button" onClick={() => openDetail(roster.id)}>
+                        Manage
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
-      {creating && <Modal title="Create annual roster draft" description="You may start empty or copy a previous year, then review before publishing." onClose={() => setCreating(false)}>
-        <form className="modal-body" onSubmit={createRoster}><div className="form-grid">
-          <div className="form-span"><Field label="Draft name"><input value={form.name} maxLength={150} placeholder="2027–28 verified transport list" onChange={(event) => setForm({ ...form, name: event.target.value })} required /></Field></div>
-          <div className="form-span"><Field label="Academic year" hint="Use a format such as 2027-28."><input value={form.academicYear} pattern="\d{4}-\d{2,4}" placeholder="2027-28" onChange={(event) => setForm({ ...form, academicYear: event.target.value })} required /></Field></div>
-          <div className="form-span"><Field label="Copy passengers from" hint="Optional: useful when many assignments stay the same."><select value={form.copyFromRosterId} onChange={(event) => setForm({ ...form, copyFromRosterId: event.target.value })}><option value="">Start with an empty draft</option>{rosters.map((roster) => <option key={roster.id} value={roster.id}>{roster.academicYear} · {roster.name} · v{roster.version}</option>)}</select></Field></div>
-        </div><div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setCreating(false)}>Cancel</button><button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Creating…' : 'Create draft'}</button></div></form>
-      </Modal>}
+      {/* Create draft modal */}
+      {creating && (
+        <Modal title="Create annual roster draft" description="You may start empty or copy a previous year, then review before publishing." onClose={() => setCreating(false)}>
+          <form className="modal-body" onSubmit={createRoster}>
+            <div className="form-grid">
+              <div className="form-span">
+                <Field label="Draft name">
+                  <input value={form.name} maxLength={150} placeholder="2027–28 verified transport list" onChange={(event) => setForm({ ...form, name: event.target.value })} required />
+                </Field>
+              </div>
+              <div className="form-span">
+                <Field label="Academic year" hint="Use a format such as 2027-28.">
+                  <input value={form.academicYear} pattern="\d{4}-\d{2,4}" placeholder="2027-28" onChange={(event) => setForm({ ...form, academicYear: event.target.value })} required />
+                </Field>
+              </div>
+              <div className="form-span">
+                <Field label="Copy passengers from" hint="Optional: useful when many assignments stay the same.">
+                  <select value={form.copyFromRosterId} onChange={(event) => setForm({ ...form, copyFromRosterId: event.target.value })}>
+                    <option value="">Start with an empty draft</option>
+                    {rosters.map((roster) => (
+                      <option key={roster.id} value={roster.id}>
+                        {roster.academicYear} · {roster.name} · v{roster.version}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setCreating(false)}>Cancel</button>
+              <button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Creating…' : 'Create draft'}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
-      {(detail || detailLoading) && <Modal wide title={detail ? detail.roster.name : 'Loading roster'} description={detail ? `${detail.roster.academicYear} · Version ${detail.roster.version} · ${detail.pagination.total} passengers` : undefined} onClose={() => setDetail(null)}>
-        {detailLoading && !detail ? <LoadingState label="Loading roster passengers…" /> : detail && <div className="modal-body">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18 }}><StatusBadge value={detail.roster.status} /><div className="row-actions"><button className="button button-secondary" onClick={() => downloadCsv({ ...detail.roster, _count: { passengers: detail.pagination.total } })}>Download CSV</button><button className="button button-secondary" onClick={validateRoster}>Validate</button>{detail.roster.status === 'DRAFT' && <button className="button button-primary" onClick={publishRoster}>Publish</button>}</div></div>
-          {detail.passengers.length === 0 ? <EmptyState title="No passengers in this draft" description="Add a student or faculty member below." /> : <div className="panel table-wrap"><table className="data-table"><thead><tr><th>Passenger</th><th>Type</th><th>Identifier</th><th>Route / stop</th><th /></tr></thead><tbody>{detail.passengers.map((passenger) => <tr key={passenger.id}><td><div className="cell-title">{passenger.name}</div><div className="cell-subtitle">Pass {passenger.busPassId}</div></td><td><StatusBadge value={passenger.passengerType} /></td><td>{passenger.rollNo || passenger.facultyId}</td><td><div className="cell-title">Route {passenger.routeService.routeNo}</div><div className="cell-subtitle">{passenger.boardingStop.name}</div></td><td>{detail.roster.status === 'DRAFT' && <button className="text-button text-button-danger" onClick={() => removePassenger(passenger)}>Remove</button>}</td></tr>)}</tbody></table>{detail.pagination.totalPages > 1 && <p className="cell-subtitle" style={{ padding: 12 }}>Showing the first 200 passengers here. The CSV export includes all {detail.pagination.total} rows.</p>}</div>}
-          {detail.roster.status === 'DRAFT' && <form onSubmit={addPassenger} style={{ marginTop: 20 }}><h3 style={{ color: 'var(--navy)', fontSize: 15 }}>Add passenger</h3><div className="form-grid">
-            <Field label="Passenger type"><select value={passengerForm.passengerType} onChange={(event) => setPassengerForm({ ...emptyPassenger, passengerType: event.target.value })}><option value="STUDENT">Student</option><option value="FACULTY">Faculty</option></select></Field>
-            <Field label="Bus pass ID"><input value={passengerForm.busPassId} onChange={(event) => setPassengerForm({ ...passengerForm, busPassId: event.target.value })} required /></Field>
-            <div className="form-span"><Field label="Full name"><input value={passengerForm.name} onChange={(event) => setPassengerForm({ ...passengerForm, name: event.target.value })} required /></Field></div>
-            <Field label="Route"><select value={passengerForm.routeServiceId} onChange={(event) => setPassengerForm({ ...passengerForm, routeServiceId: event.target.value })} required><option value="">Select route</option>{routes.map((route) => <option key={route.id} value={route.id}>Route {route.routeNo} — {route.name}</option>)}</select></Field>
-            <Field label="Boarding stop"><select value={passengerForm.boardingStopId} onChange={(event) => setPassengerForm({ ...passengerForm, boardingStopId: event.target.value })} required><option value="">Select stop</option>{stops.map((stop) => <option key={stop.id} value={stop.id}>{stop.name}</option>)}</select></Field>
-            {passengerForm.passengerType === 'STUDENT' ? <><Field label="Student roll number"><input value={passengerForm.rollNo} onChange={(event) => setPassengerForm({ ...passengerForm, rollNo: event.target.value })} required /></Field><Field label="Department"><input value={passengerForm.department} onChange={(event) => setPassengerForm({ ...passengerForm, department: event.target.value })} required /></Field><Field label="Year"><input type="number" min="1" max="10" value={passengerForm.year} onChange={(event) => setPassengerForm({ ...passengerForm, year: event.target.value })} required /></Field><Field label="Section"><input value={passengerForm.section} onChange={(event) => setPassengerForm({ ...passengerForm, section: event.target.value })} required /></Field></> : <><Field label="Faculty ID"><input value={passengerForm.facultyId} onChange={(event) => setPassengerForm({ ...passengerForm, facultyId: event.target.value })} required /></Field><Field label="Department (optional)"><input value={passengerForm.department} onChange={(event) => setPassengerForm({ ...passengerForm, department: event.target.value })} /></Field></>}
-          </div><div className="modal-actions"><button type="submit" className="button button-primary" disabled={saving}>{saving ? 'Adding…' : 'Add passenger'}</button></div></form>}
-        </div>}
-      </Modal>}
+      {/* Roster detail modal */}
+      {(detail || detailLoading) && (
+        <Modal wide title={detail ? detail.roster.name : 'Loading roster'} description={detail ? `${detail.roster.academicYear} · Version ${detail.roster.version} · ${detail.pagination.total} passengers` : undefined} onClose={() => setDetail(null)}>
+          {detailLoading && !detail ? (
+            <LoadingState label="Loading roster passengers…" />
+          ) : detail && (
+            <div className="modal-body">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
+                <StatusBadge value={detail.roster.status} />
+                <div className="row-actions" style={{ flexWrap: 'wrap', gap: 8 }}>
+                  {detail.roster.status === 'DRAFT' && (
+                    <button className="button button-primary" onClick={() => openImportModal(detail.roster)}>
+                      📤 Upload Excel Sheet
+                    </button>
+                  )}
+                  <button className="button button-secondary" onClick={() => downloadXlsx(detail.roster)}>
+                    Download Excel (.xlsx)
+                  </button>
+                  <button className="button button-secondary" onClick={() => downloadCsv({ ...detail.roster, _count: { passengers: detail.pagination.total } })}>
+                    CSV
+                  </button>
+                  <button className="button button-secondary" onClick={validateRoster}>
+                    Validate
+                  </button>
+                  {detail.roster.status === 'DRAFT' && (
+                    <button className="button button-primary" onClick={publishRoster}>
+                      Publish
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {detail.passengers.length === 0 ? (
+                <EmptyState title="No passengers in this draft" description="Upload an Excel sheet or add a student or faculty member below." />
+              ) : (
+                <div className="panel table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Passenger</th>
+                        <th>Type</th>
+                        <th>Identifier / Roll No</th>
+                        <th>Class / Dept</th>
+                        <th>Route / stop</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.passengers.map((passenger) => (
+                        <tr key={passenger.id}>
+                          <td>
+                            <div className="cell-title">{passenger.name}</div>
+                            <div className="cell-subtitle">Pass {passenger.busPassId}</div>
+                          </td>
+                          <td><StatusBadge value={passenger.passengerType} /></td>
+                          <td>
+                            {passenger.passengerType === 'STUDENT' ? (
+                              <span style={{ fontWeight: 700, fontFamily: 'monospace' }}>{passenger.rollNo}</span>
+                            ) : (
+                              <span style={{ color: 'var(--muted)' }}>{passenger.facultyId || 'Faculty'}</span>
+                            )}
+                          </td>
+                          <td>
+                            {passenger.department ? (
+                              <div>
+                                {passenger.department}
+                                {passenger.year ? ` · Year ${passenger.year}` : ''}
+                                {passenger.section ? `-${passenger.section}` : ''}
+                              </div>
+                            ) : '—'}
+                          </td>
+                          <td>
+                            <div className="cell-title">Route {passenger.routeService.routeNo}</div>
+                            <div className="cell-subtitle">{passenger.boardingStop.name}</div>
+                          </td>
+                          <td>
+                            {detail.roster.status === 'DRAFT' && (
+                              <button className="text-button text-button-danger" onClick={() => removePassenger(passenger)}>
+                                Remove
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {detail.pagination.totalPages > 1 && (
+                    <p className="cell-subtitle" style={{ padding: 12 }}>
+                      Showing the first 200 passengers here. The Excel export includes all {detail.pagination.total} rows.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Add Single Passenger Form */}
+              {detail.roster.status === 'DRAFT' && (
+                <form onSubmit={addPassenger} style={{ marginTop: 24, paddingTop: 18, borderTop: '1px solid var(--line)' }}>
+                  <h3 style={{ color: 'var(--navy)', fontSize: 15, margin: '0 0 14px' }}>Add passenger manually</h3>
+                  <div className="form-grid">
+                    <Field label="Passenger type">
+                      <select value={passengerForm.passengerType} onChange={(event) => setPassengerForm({ ...emptyPassenger, passengerType: event.target.value })}>
+                        <option value="STUDENT">Student</option>
+                        <option value="FACULTY">Faculty</option>
+                      </select>
+                    </Field>
+                    <Field label="Bus pass ID">
+                      <input value={passengerForm.busPassId} placeholder="e.g. PASS-24B01A0501" onChange={(event) => setPassengerForm({ ...passengerForm, busPassId: event.target.value })} required />
+                    </Field>
+                    <div className="form-span">
+                      <Field label="Full name">
+                        <input value={passengerForm.name} placeholder="e.g. Rahul Sharma" onChange={(event) => setPassengerForm({ ...passengerForm, name: event.target.value })} required />
+                      </Field>
+                    </div>
+                    <Field label="Route">
+                      <select value={passengerForm.routeServiceId} onChange={(event) => setPassengerForm({ ...passengerForm, routeServiceId: event.target.value })} required>
+                        <option value="">Select route</option>
+                        {routes.map((route) => (
+                          <option key={route.id} value={route.id}>
+                            Route {route.routeNo} — {route.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Boarding stop">
+                      <select value={passengerForm.boardingStopId} onChange={(event) => setPassengerForm({ ...passengerForm, boardingStopId: event.target.value })} required>
+                        <option value="">Select stop</option>
+                        {stops.map((stop) => (
+                          <option key={stop.id} value={stop.id}>{stop.name}</option>
+                        ))}
+                      </select>
+                    </Field>
+                    {passengerForm.passengerType === 'STUDENT' ? (
+                      <>
+                        <Field label="Student roll number">
+                          <input value={passengerForm.rollNo} placeholder="e.g. 24B01A0501" onChange={(event) => setPassengerForm({ ...passengerForm, rollNo: event.target.value })} required />
+                        </Field>
+                        <Field label="Department">
+                          <input value={passengerForm.department} placeholder="e.g. CSE" onChange={(event) => setPassengerForm({ ...passengerForm, department: event.target.value })} required />
+                        </Field>
+                        <Field label="Year">
+                          <input type="number" min="1" max="10" placeholder="1-4" value={passengerForm.year} onChange={(event) => setPassengerForm({ ...passengerForm, year: event.target.value })} required />
+                        </Field>
+                        <Field label="Section">
+                          <input value={passengerForm.section} placeholder="e.g. A" onChange={(event) => setPassengerForm({ ...passengerForm, section: event.target.value })} required />
+                        </Field>
+                      </>
+                    ) : (
+                      <>
+                        <Field label="Faculty ID">
+                          <input value={passengerForm.facultyId} placeholder="e.g. FAC-CSE-012" onChange={(event) => setPassengerForm({ ...passengerForm, facultyId: event.target.value })} required />
+                        </Field>
+                        <Field label="Department (optional)">
+                          <input value={passengerForm.department} placeholder="e.g. ECE" onChange={(event) => setPassengerForm({ ...passengerForm, department: event.target.value })} />
+                        </Field>
+                      </>
+                    )}
+                  </div>
+                  <div className="modal-actions">
+                    <button type="submit" className="button button-primary" disabled={saving}>
+                      {saving ? 'Adding…' : 'Add passenger'}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* Excel / CSV Import Modal */}
+      {importModalOpen && importTargetRoster && (
+        <Modal
+          wide
+          title={`Upload Excel Sheet — ${importTargetRoster.name}`}
+          description={`Academic Year ${importTargetRoster.academicYear} · Draft v${importTargetRoster.version}`}
+          onClose={() => setImportModalOpen(false)}
+        >
+          <div className="modal-body">
+            {/* Guidance banner */}
+            <div style={{ background: 'var(--canvas)', border: '1px solid var(--line)', borderRadius: 12, padding: 16, marginBottom: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+                <div>
+                  <strong style={{ display: 'block', color: 'var(--navy)', fontSize: 14 }}>
+                    Automated Excel Ingestion & Verification
+                  </strong>
+                  <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: 12, lineHeight: 1.5 }}>
+                    Upload your annual student & faculty spreadsheet. The system verifies every row against published stops and bus capacities, flags duplicates, and ensures student roll numbers are valid.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="button button-secondary"
+                  onClick={() => downloadTemplate('xlsx')}
+                  style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                >
+                  📥 Download Pre-Filled Template (.xlsx)
+                </button>
+              </div>
+
+              <div style={{ marginTop: 12, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11, color: 'var(--muted)' }}>
+                <span>• <strong>Students:</strong> Type=STUDENT, Roll Number, Name, Dept, Year, Sec, Route Number, Boarding Stop</span>
+                <span>• <strong>Faculty:</strong> Type=FACULTY, Faculty ID, Name, Dept, Route Number, Boarding Stop</span>
+                <span>• <strong>No Data Leaks:</strong> Phone numbers and private emails are excluded from passenger visibility</span>
+              </div>
+            </div>
+
+            {/* File dropzone / selector */}
+            <div style={{
+              border: '2px dashed var(--line)',
+              borderRadius: 14,
+              padding: 24,
+              textAlign: 'center',
+              background: 'var(--surface)',
+              marginBottom: 18,
+            }}>
+              <input
+                id="roster-file-input"
+                type="file"
+                accept=".xlsx,.csv"
+                style={{ display: 'none' }}
+                onChange={handleFileSelect}
+              />
+              <label
+                htmlFor="roster-file-input"
+                style={{ cursor: 'pointer', display: 'inline-block' }}
+              >
+                <div style={{ fontSize: 32, marginBottom: 8 }}>📊</div>
+                <strong style={{ display: 'block', color: 'var(--teal)', fontSize: 14, textDecoration: 'underline' }}>
+                  {importFile ? importFile.name : 'Click to select Excel (.xlsx) or CSV file'}
+                </strong>
+                <span style={{ display: 'block', color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>
+                  {importFile ? `${(importFile.size / 1024).toFixed(1)} KB — Click to change file` : 'Supports standard college transport sheets (up to 10,000 rows)'}
+                </span>
+              </label>
+            </div>
+
+            {/* Error notice if preview failed */}
+            {previewError && (
+              <div className="notice notice-error">
+                <span>{previewError}</span>
+              </div>
+            )}
+
+            {/* Loading preview state */}
+            {previewLoading && (
+              <LoadingState label="Inspecting Excel rows, verifying boarding stops, and checking bus capacities…" />
+            )}
+
+            {/* Preview Results */}
+            {importPreview && !previewLoading && (
+              <div>
+                {/* Stats 4-grid */}
+                <div className="stats-grid" style={{ marginBottom: 16 }}>
+                  <div className="panel stat-card">
+                    <p className="stat-label">Total Rows</p>
+                    <p className="stat-value">{importPreview.summary.totalRows}</p>
+                    <p className="stat-note">in spreadsheet</p>
+                  </div>
+                  <div className="panel stat-card" style={{ borderLeft: '3px solid var(--green)' }}>
+                    <p className="stat-label">Valid Rows</p>
+                    <p className="stat-value" style={{ color: 'var(--green)' }}>{importPreview.summary.validRows}</p>
+                    <p className="stat-note">ready to import</p>
+                  </div>
+                  <div className="panel stat-card" style={{ borderLeft: importPreview.summary.invalidRows > 0 ? '3px solid var(--red)' : '3px solid var(--green)' }}>
+                    <p className="stat-label">Invalid Rows</p>
+                    <p className="stat-value" style={{ color: importPreview.summary.invalidRows > 0 ? 'var(--red)' : 'var(--green)' }}>
+                      {importPreview.summary.invalidRows}
+                    </p>
+                    <p className="stat-note">{importPreview.summary.invalidRows > 0 ? 'require correction' : 'clean'}</p>
+                  </div>
+                  <div className="panel stat-card" style={{ borderLeft: importPreview.summary.warnings > 0 ? '3px solid var(--warning)' : '3px solid var(--line)' }}>
+                    <p className="stat-label">Warnings</p>
+                    <p className="stat-value" style={{ color: importPreview.summary.warnings > 0 ? 'var(--warning)' : 'var(--muted)' }}>
+                      {importPreview.summary.warnings}
+                    </p>
+                    <p className="stat-note">non-blocking notices</p>
+                  </div>
+                </div>
+
+                {/* Extra columns notice */}
+                {importPreview.unknownHeaders?.length > 0 && (
+                  <div className="notice notice-info" style={{ marginBottom: 14 }}>
+                    <span>
+                      ℹ️ <strong>Extra columns detected:</strong> {importPreview.unknownHeaders.join(', ')}. These columns will be safely ignored without disrupting passenger ingestion.
+                    </span>
+                  </div>
+                )}
+
+                {/* Status banner */}
+                {importPreview.summary.invalidRows > 0 ? (
+                  <div className="notice notice-error" style={{ marginBottom: 14 }}>
+                    <span>
+                      ⚠️ <strong>Validation blocked:</strong> {importPreview.summary.invalidRows} row(s) contain errors (e.g. stop not on route, duplicate roll numbers, or over-capacity). Review the issues below and correct your Excel sheet.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="notice notice-success" style={{ marginBottom: 14 }}>
+                    <span>
+                      ✓ <strong>Validation passed!</strong> All {importPreview.summary.validRows} rows are verified and ready to be imported into this draft roster.
+                    </span>
+                  </div>
+                )}
+
+                {/* Issues / Rows Table */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <strong style={{ fontSize: 13, color: 'var(--navy)' }}>Spreadsheet Row Review</strong>
+                  <label style={{ fontSize: 12, color: 'var(--muted)', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={showErrorsOnly}
+                      onChange={(e) => setShowErrorsOnly(e.target.checked)}
+                    />
+                    Show rows with issues only ({importPreview.rows.filter((r) => !r.valid || r.warnings.length > 0).length})
+                  </label>
+                </div>
+
+                <div className="panel table-wrap" style={{ maxHeight: 280, overflowY: 'auto' }}>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 60 }}>Row</th>
+                        <th>Status</th>
+                        <th>Passenger</th>
+                        <th>Route / Stop</th>
+                        <th>Validation Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importPreview.rows
+                        .filter((r) => (!showErrorsOnly || !r.valid || r.warnings.length > 0))
+                        .slice(0, 100)
+                        .map((row) => (
+                          <tr key={row.rowNumber} style={{ background: !row.valid ? 'var(--danger-bg)' : undefined }}>
+                            <td style={{ fontWeight: 700, fontFamily: 'monospace' }}>#{row.rowNumber}</td>
+                            <td>
+                              {row.valid ? (
+                                <span style={{ color: 'var(--green)', fontWeight: 700, fontSize: 11 }}>✓ OK</span>
+                              ) : (
+                                <span style={{ color: 'var(--red)', fontWeight: 700, fontSize: 11 }}>✕ ERROR</span>
+                              )}
+                            </td>
+                            <td>
+                              <div className="cell-title">{row.normalized?.name || row.values?.name || '—'}</div>
+                              <div className="cell-subtitle">
+                                {row.normalized?.passengerType || row.values?.passengerType || '—'}
+                                {row.normalized?.rollNo ? ` · Roll: ${row.normalized.rollNo}` : ''}
+                                {row.normalized?.facultyId ? ` · ID: ${row.normalized.facultyId}` : ''}
+                              </div>
+                            </td>
+                            <td>
+                              <div className="cell-title">Route {row.normalized?.routeNo || row.values?.routeNo || '—'}</div>
+                              <div className="cell-subtitle">{row.normalized?.boardingStop || row.values?.boardingStop || '—'}</div>
+                            </td>
+                            <td>
+                              {row.errors.map((err, i) => (
+                                <div key={i} style={{ color: 'var(--red)', fontSize: 11, fontWeight: 600 }}>
+                                  • {err.message}
+                                </div>
+                              ))}
+                              {row.warnings.map((warn, i) => (
+                                <div key={i} style={{ color: 'var(--warning)', fontSize: 11 }}>
+                                  • {warn.message}
+                                </div>
+                              ))}
+                              {row.valid && row.warnings.length === 0 && (
+                                <span style={{ color: 'var(--muted)', fontSize: 11 }}>Verified against route schedule</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="modal-actions" style={{ marginTop: 20 }}>
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => setImportModalOpen(false)}
+                disabled={importing}
+              >
+                Close
+              </button>
+              {importPreview && (
+                <button
+                  type="button"
+                  className="button button-primary"
+                  onClick={confirmImport}
+                  disabled={importPreview.summary.invalidRows > 0 || importing}
+                  title={importPreview.summary.invalidRows > 0 ? 'Resolve all errors before importing' : 'Confirm and add passengers to draft'}
+                >
+                  {importing ? 'Importing Passengers…' : `Confirm & Import ${importPreview.summary.validRows} Passengers`}
+                </button>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

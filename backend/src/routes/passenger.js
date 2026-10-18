@@ -343,7 +343,15 @@ router.get('/routes/:routeNo', async (req, res) => {
 router.get('/routes/:routeNo/roster', async (req, res) => {
   try {
     const [route, roster] = await Promise.all([
-      prisma.routeService.findUnique({ where: { routeNo: req.params.routeNo }, select: { id: true, routeNo: true } }),
+      prisma.routeService.findUnique({
+        where: { routeNo: req.params.routeNo },
+        select: {
+          id: true,
+          routeNo: true,
+          name: true,
+          driver: { select: { name: true, driverCode: true, status: true } },
+        },
+      }),
       getPublishedRoster(),
     ]);
     if (!route) return res.status(404).json({ error: 'Route not found' });
@@ -355,6 +363,10 @@ router.get('/routes/:routeNo/roster', async (req, res) => {
         name: true,
         passengerType: true,
         boardingStopId: true,
+        rollNo: true,
+        department: true,
+        year: true,
+        section: true,
         boardingStop: { select: { id: true, name: true } },
       },
       orderBy: [{ boardingStopId: 'asc' }, { name: 'asc' }],
@@ -376,6 +388,10 @@ router.get('/routes/:routeNo/roster', async (req, res) => {
       passengersByStop.get(passenger.boardingStopId).push({
         name: passenger.name,
         passengerType: passenger.passengerType,
+        rollNo: passenger.passengerType === 'STUDENT' ? passenger.rollNo : null,
+        department: passenger.department || null,
+        year: passenger.passengerType === 'STUDENT' ? passenger.year : null,
+        section: passenger.passengerType === 'STUDENT' ? passenger.section : null,
       });
     }
     const stops = (schedule?.stops || []).map((entry) => ({
@@ -385,7 +401,14 @@ router.get('/routes/:routeNo/roster', async (req, res) => {
       scheduledTime: entry.scheduledTime,
       passengers: passengersByStop.get(entry.stopId) || [],
     }));
-    return res.json({ routeNo: route.routeNo, roster, total: passengers.length, stops });
+    return res.json({
+      routeNo: route.routeNo,
+      routeName: route.name,
+      driver: route.driver?.status === 'ACTIVE' ? { name: route.driver.name, driverCode: route.driver.driverCode } : null,
+      roster,
+      total: passengers.length,
+      stops,
+    });
   } catch (error) {
     console.error('[passenger/roster]', error);
     return res.status(500).json({ error: 'Internal server error' });

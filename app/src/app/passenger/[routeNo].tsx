@@ -359,6 +359,16 @@ export default function RouteDetailsScreen() {
                   <SectionTitle>Assigned Passengers</SectionTitle>
                   <Pill>{String(roster.data.total)}</Pill>
                 </View>
+                {roster.data.driver && (
+                  <View style={styles.rosterDriverBanner}>
+                    <Text style={styles.rosterDriverIcon}>👤</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.rosterDriverLabel}>Assigned Driver</Text>
+                      <Text style={styles.rosterDriverName}>{roster.data.driver.name}</Text>
+                    </View>
+                    <Pill tone="info">{roster.data.driver.driverCode}</Pill>
+                  </View>
+                )}
                 {roster.data.stops.map((stop) => (
                   <View key={stop.stopId} style={styles.rosterStop}>
                     <View style={styles.rosterStopHeader}>
@@ -370,7 +380,29 @@ export default function RouteDetailsScreen() {
                     ) : (
                       stop.passengers.map((p, idx) => (
                         <View key={p.name + idx} style={styles.passengerRow}>
-                          <Text style={styles.passengerName}>{p.name}</Text>
+                          <View style={styles.passengerInfoCol}>
+                            <Text style={styles.passengerName}>{p.name}</Text>
+                            {p.passengerType === 'STUDENT' ? (
+                              <View style={styles.passengerMetaRow}>
+                                {p.rollNo ? (
+                                  <Text style={styles.passengerRollNo}>Roll: {p.rollNo}</Text>
+                                ) : null}
+                                {p.department ? (
+                                  <Text style={styles.passengerClass}>
+                                    {p.department}
+                                    {p.year ? ` · Y${p.year}` : ''}
+                                    {p.section ? `-${p.section}` : ''}
+                                  </Text>
+                                ) : null}
+                              </View>
+                            ) : (
+                              <View style={styles.passengerMetaRow}>
+                                <Text style={styles.facultyMetaText}>
+                                  {p.department ? `${p.department} Dept` : 'College Staff'}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
                           <Pill tone={p.passengerType === 'STUDENT' ? 'info' : 'success'}>
                             {p.passengerType === 'STUDENT' ? 'Student' : 'Faculty'}
                           </Pill>
@@ -527,7 +559,27 @@ const useStyles = () => {
   rosterStopName: { color: colors.textPrimary, fontWeight: fontWeight.extrabold, fontSize: 14 },
   rosterStopTime: { color: colors.textMuted, fontWeight: fontWeight.bold, fontSize: 13 },
   passengerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-  passengerName: { flex: 1, color: colors.textPrimary, fontSize: 14 },
+  passengerName: { color: colors.textPrimary, fontSize: 14, fontWeight: fontWeight.bold },
+  passengerInfoCol: { flex: 1, gap: 2 },
+  passengerMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  passengerRollNo: { color: colors.accent, fontSize: 12, fontWeight: fontWeight.bold, fontFamily: 'monospace' },
+  passengerClass: { color: colors.textSecondary, fontSize: 11, fontWeight: fontWeight.medium },
+  facultyMetaText: { color: colors.textSecondary, fontSize: 11, fontWeight: fontWeight.medium, fontStyle: 'italic' },
+  rosterDriverBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.25)',
+    borderRadius: radius.sm,
+    padding: spacing.sm,
+    marginTop: 6,
+    marginBottom: spacing.xs,
+  },
+  rosterDriverIcon: { fontSize: 20 },
+  rosterDriverLabel: { color: colors.textMuted, fontSize: 10, fontWeight: fontWeight.bold, letterSpacing: 0.5 },
+  rosterDriverName: { color: colors.textPrimary, fontSize: 13, fontWeight: fontWeight.bold },
   footerDock: {
     backgroundColor: colors.surfaceElevated,
     borderRadius: radius.md,
