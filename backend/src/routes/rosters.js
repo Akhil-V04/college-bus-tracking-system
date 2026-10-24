@@ -323,28 +323,46 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
         });
       }
 
+      const neededStopNames = new Set();
+      for (const result of results) {
+        if (!result.normalized) continue;
+        if (result.normalized.isNewStop || result.normalized.boardingStopId < 0) {
+          const rawName = (result.normalized.boardingStopName || result.normalized.boardingStop || '').trim();
+          if (rawName) neededStopNames.add(rawName);
+        }
+      }
+
       const stopNameToId = new Map();
+      if (neededStopNames.size > 0) {
+        const existingStops = await tx.stop.findMany({
+          where: { name: { in: [...neededStopNames], mode: 'insensitive' } },
+        });
+        for (const stop of existingStops) {
+          stopNameToId.set(normalizeLookup(stop.name), stop.id);
+        }
+        for (const name of neededStopNames) {
+          const normKey = normalizeLookup(name);
+          if (!stopNameToId.has(normKey)) {
+            const stop = await tx.stop.create({
+              data: {
+                name,
+                latitude: 17.3551,
+                longitude: 78.5833,
+              },
+            });
+            stopNameToId.set(normKey, stop.id);
+          }
+        }
+      }
+
       for (const result of results) {
         if (!result.normalized) continue;
         if (result.normalized.isNewStop || result.normalized.boardingStopId < 0) {
           const rawName = (result.normalized.boardingStopName || result.normalized.boardingStop || '').trim();
           const normKey = normalizeLookup(rawName);
-          if (!stopNameToId.has(normKey)) {
-            let stop = await tx.stop.findFirst({
-              where: { name: { equals: rawName, mode: 'insensitive' } },
-            });
-            if (!stop) {
-              stop = await tx.stop.create({
-                data: {
-                  name: rawName,
-                  latitude: 17.3551,
-                  longitude: 78.5833,
-                },
-              });
-            }
-            stopNameToId.set(normKey, stop.id);
+          if (stopNameToId.has(normKey)) {
+            result.normalized.boardingStopId = stopNameToId.get(normKey);
           }
-          result.normalized.boardingStopId = stopNameToId.get(normKey);
         }
       }
 
@@ -429,7 +447,7 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
         unknownHeaders: parsed.unknownHeaders,
         warnings: results.filter((row) => row.warnings.length).map((row) => ({ rowNumber: row.rowNumber, warnings: row.warnings })),
       };
-    }, { maxWait: 5_000, timeout: 30_000 });
+    }, { maxWait: 30_000, timeout: 90_000 });
     return res.status(201).json(imported);
   } catch (error) {
     if (error.code === 'P2002') {

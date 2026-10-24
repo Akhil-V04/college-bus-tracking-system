@@ -4,7 +4,7 @@ const developmentApiUrl = `${window.location.protocol}//${window.location.hostna
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || developmentApiUrl,
-  timeout: 15000,
+  timeout: 60000,
   withCredentials: true,
   headers: { 'X-Requested-With': 'college-bus-admin' },
 });
