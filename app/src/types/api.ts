@@ -46,6 +46,7 @@ export type RouteRosterPassenger = {
   name: string;
   passengerType: PassengerType;
   rollNo?: string | null;
+  facultyId?: string | null;
   department?: string | null;
   year?: number | null;
   section?: string | null;

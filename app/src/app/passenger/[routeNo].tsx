@@ -124,7 +124,7 @@ export default function RouteDetailsScreen() {
     <SafeAreaView style={styles.container} edges={['top']}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => { if (router.canGoBack()) if (router.canGoBack()) router.back(); else router.replace('/'); else router.replace('/'); }} style={styles.backBtn}>
+        <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/passenger'); }} style={styles.backBtn}>
           <Text style={styles.backIcon}>←</Text>
         </Pressable>
         <View style={styles.headerCenter}>
@@ -454,6 +454,9 @@ export default function RouteDetailsScreen() {
                               </View>
                             ) : (
                               <View style={styles.passengerMetaRow}>
+                                {p.facultyId ? (
+                                  <Text style={styles.passengerRollNo}>ID: {p.facultyId}</Text>
+                                ) : null}
                                 <Text style={styles.facultyMetaText}>
                                   {p.department ? `${p.department} Dept` : 'College Staff'}
                                 </Text>

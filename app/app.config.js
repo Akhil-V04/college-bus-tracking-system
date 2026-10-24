@@ -2,7 +2,7 @@ module.exports = {
   expo: {
     name: "College Bus Manage",
     slug: "college-bus-tracker",
-    version: "1.1.0",
+    version: "1.5.0",
     orientation: "portrait",
     icon: "./assets/icon.png",
     scheme: "college-bus",
