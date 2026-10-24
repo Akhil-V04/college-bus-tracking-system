@@ -47,7 +47,7 @@ function passengerAssignmentSummary(passenger) {
 
 const rosterUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 10, parts: 20 },
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
   fileFilter: (_req, file, callback) => {
     const extension = path.extname(file.originalname || '').toLowerCase();
     if (extension === '.csv' || extension === '.xlsx') return callback(null, true);
@@ -59,7 +59,7 @@ function receiveRosterFile(req, res, next) {
   rosterUpload.single('file')(req, res, (error) => {
     if (!error) return next();
     if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ error: 'Roster file must not exceed 10 MB' });
+      return res.status(413).json({ error: 'Roster file must not exceed 25 MB' });
     }
     return res.status(400).json({ error: error.message || 'Roster upload failed' });
   });
