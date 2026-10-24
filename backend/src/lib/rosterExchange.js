@@ -395,7 +395,7 @@ function validateRosterRows(rawRows, context) {
               if (context.virtualStops) context.virtualStops.set(normName, virtual);
             }
             boardingStop = virtual;
-            addIssue(result, 'warnings', 'NEW_STOP_AUTO_CREATED', `Stop "${requestedStopName}" will be auto-created as a new stop landmark`);
+            addIssue(result, 'warnings', 'NEW_STOP_RECORDED', `Stop "${requestedStopName}" recorded (boarding reference for database)`);
           }
         }
       }
@@ -409,7 +409,9 @@ function validateRosterRows(rawRows, context) {
     for (const [value, label, seen, existing] of identifiers) {
       if (!value) continue;
       const identifier = normalizeLookup(value);
-      if (existing.has(identifier)) addIssue(result, 'errors', 'DUPLICATE_EXISTING_IDENTIFIER', `${label} already exists in this draft`, label);
+      if (!context.isOverwriteMode && existing && existing.has(identifier)) {
+        addIssue(result, 'errors', 'DUPLICATE_EXISTING_IDENTIFIER', `${label} already exists in this draft`, label);
+      }
       if (seen.has(identifier)) addIssue(result, 'errors', 'DUPLICATE_FILE_IDENTIFIER', `${label} duplicates file row ${seen.get(identifier)}`, label);
       else seen.set(identifier, rawRow.rowNumber);
     }
@@ -451,7 +453,7 @@ function validateRosterRows(rawRows, context) {
     candidateCounts.set(routeId, (candidateCounts.get(routeId) || 0) + 1);
   }
   for (const route of context.routes) {
-    const existing = context.existingCountsByRoute.get(route.id) || 0;
+    const existing = context.isOverwriteMode ? 0 : (context.existingCountsByRoute.get(route.id) || 0);
     const incoming = candidateCounts.get(route.id) || 0;
     if (existing + incoming <= route.capacity) continue;
     for (const result of results) {
@@ -533,6 +535,7 @@ function summarizeResults(results) {
 async function previewRosterImport(db, rosterId, buffer, originalName) {
   const parsed = await parseRosterFile(buffer, originalName);
   const { roster, context } = await loadValidationContext(db, rosterId);
+  context.isOverwriteMode = true;
 
   // If the uploaded file had a Class Advisors sheet, integrate them into context.advisorKeys
   if (parsed.advisors && parsed.advisors.length > 0) {

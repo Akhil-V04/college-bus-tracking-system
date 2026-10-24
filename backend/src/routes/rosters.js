@@ -297,6 +297,7 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
     const imported = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "TransportRoster" WHERE "id" = ${rosterId} FOR UPDATE`;
       const { roster, context } = await loadValidationContext(tx, rosterId);
+      context.isOverwriteMode = true;
       if (Number.isInteger(rosterVersion) && roster.version !== rosterVersion) {
         throw new RosterExchangeError('Roster version changed; preview the file again', 409);
       }
@@ -400,6 +401,10 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
         } = result.normalized;
         return { rosterId, ...passenger };
       });
+
+      // Option A: Clean overwrite - delete previous draft passengers before inserting new rows
+      await tx.rosterPassenger.deleteMany({ where: { rosterId } });
+
       for (let offset = 0; offset < data.length; offset += 500) {
         await tx.rosterPassenger.createMany({ data: data.slice(offset, offset + 500) });
       }
@@ -410,9 +415,11 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
         entityId: roster.id,
         beforeSummary: { passengerRows: existingRows },
         afterSummary: {
-          passengerRows: existingRows + data.length,
+          passengerRows: data.length,
           importedRows: data.length,
+          previousRowsReplaced: existingRows,
           format: parsed.format,
+          mode: 'FULL_OVERWRITE',
         },
       });
       return {
