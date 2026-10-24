@@ -123,6 +123,11 @@ function getAuditHeadline(entry) {
     const year = data.academicYear ? `for ${data.academicYear}` : '';
     return `Published official passenger roster ${year}`.trim();
   }
+  if (action === 'ROSTER_DELETED') {
+    const year = data.academicYear ? `for ${data.academicYear}` : '';
+    const name = data.name ? `"${data.name}"` : 'roster';
+    return `Deleted passenger roster ${name} ${year}`.trim();
+  }
 
   // Class Advisors
   if (action === 'CLASS_ADVISOR_CREATED') {

@@ -156,6 +156,28 @@ export default function RostersScreen() {
     }
   }
 
+  async function deleteRoster(roster) {
+    if (roster.status === 'PUBLISHED') {
+      setMessage({ type: 'error', text: 'Cannot delete the active published roster. Please publish another roster first.' });
+      return;
+    }
+    const passengerCount = roster._count?.passengers ?? detail?.pagination?.total ?? 0;
+    const passengerNotice = passengerCount > 0 ? ` and its ${passengerCount} passenger assignment(s)` : '';
+    if (!window.confirm(`Are you sure you want to delete the roster "${roster.name}" (${roster.academicYear} v${roster.version})${passengerNotice}? This action cannot be undone.`)) {
+      return;
+    }
+    try {
+      await api.delete(`/rosters/${roster.id}`);
+      setMessage({ type: 'success', text: `Roster "${roster.name}" deleted successfully.` });
+      if (detail?.roster?.id === roster.id) {
+        setDetail(null);
+      }
+      await load();
+    } catch (error) {
+      setMessage({ type: 'error', text: errorMessage(error, 'Roster could not be deleted.') });
+    }
+  }
+
   async function downloadCsv(roster) {
     setExportingId(roster.id);
     try {
@@ -371,6 +393,15 @@ export default function RostersScreen() {
                       <button className="text-button" onClick={() => openDetail(roster.id)}>
                         Manage
                       </button>
+                      {roster.status !== 'PUBLISHED' && (
+                        <button
+                          className="text-button text-button-danger"
+                          onClick={() => deleteRoster(roster)}
+                          title="Delete this roster"
+                        >
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -443,6 +474,14 @@ export default function RostersScreen() {
                   {detail.roster.status === 'DRAFT' && (
                     <button className="button button-primary" onClick={publishRoster}>
                       Publish
+                    </button>
+                  )}
+                  {detail.roster.status !== 'PUBLISHED' && (
+                    <button
+                      className="button button-danger"
+                      onClick={() => deleteRoster({ ...detail.roster, _count: { passengers: detail.pagination.total } })}
+                    >
+                      Delete roster
                     </button>
                   )}
                 </div>

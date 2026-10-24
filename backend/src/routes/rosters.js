@@ -549,6 +549,50 @@ router.delete('/:id/passengers/:passengerId', async (req, res) => {
   return res.json({ deleted: true });
 });
 
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid roster ID' });
+
+  const roster = await prisma.transportRoster.findUnique({
+    where: { id },
+    include: { _count: { select: { trips: true, passengers: true } } },
+  });
+  if (!roster) return res.status(404).json({ error: 'Roster not found' });
+
+  if (roster.status === 'PUBLISHED') {
+    return res.status(409).json({ error: 'Cannot delete the active published roster. Please publish another roster first.' });
+  }
+
+  if (roster._count.trips > 0) {
+    return res.status(409).json({
+      error: `Cannot delete roster because it is linked to ${roster._count.trips} historical trip record(s).`,
+    });
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.rosterPassenger.deleteMany({ where: { rosterId: id } });
+      await tx.transportRoster.delete({ where: { id } });
+      await writeAdminAudit(tx, req, {
+        action: 'ROSTER_DELETED',
+        entityType: 'TransportRoster',
+        entityId: id,
+        beforeSummary: {
+          ...rosterAuditSummary(roster),
+          passengerCount: roster._count.passengers,
+        },
+      });
+    });
+    return res.json({ deleted: true, id });
+  } catch (error) {
+    if (error.code === 'P2003') {
+      return res.status(409).json({ error: 'Cannot delete roster because other records depend on it.' });
+    }
+    console.error('[rosters/delete]', error);
+    return res.status(500).json({ error: 'Failed to delete roster' });
+  }
+});
+
 router.post('/:id/validate', async (req, res) => {
   const { roster, errors, warnings } = await validateRoster(Number(req.params.id));
   if (!roster) return res.status(404).json({ error: 'Roster not found' });
