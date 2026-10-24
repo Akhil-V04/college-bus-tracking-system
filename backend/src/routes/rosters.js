@@ -338,7 +338,6 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
                   name: rawName,
                   latitude: 17.3551,
                   longitude: 78.5833,
-                  landmark: 'Auto-created from roster import',
                 },
               });
             }
