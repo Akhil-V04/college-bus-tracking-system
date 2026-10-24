@@ -52,86 +52,91 @@ async function validateSchedule(scheduleId) {
 }
 
 router.get('/route/:routeServiceId', async (req, res) => {
-  const routeServiceId = Number(req.params.routeServiceId);
-  const now = new Date();
+  try {
+    const routeServiceId = Number(req.params.routeServiceId);
+    const now = new Date();
 
-  // 1. Check if there is an active event/custom override schedule whose date range covers NOW
-  const activeOverride = await prisma.scheduleVersion.findFirst({
-    where: {
-      routeServiceId,
-      status: 'PUBLISHED',
-      direction: 'EVENT_OVERRIDE',
-      effectiveFrom: { lte: now },
-      effectiveTo: { gte: now },
-    },
-    orderBy: { publishedAt: 'desc' },
-    select: {
-      id: true,
-      name: true,
-      direction: true,
-      version: true,
-      effectiveFrom: true,
-      effectiveTo: true,
-      geometryPolyline: true,
-      geometryFormat: true,
-      geometryDistanceMeters: true,
-      geometryDurationSeconds: true,
-      geometryGeneratedAt: true,
-      geometryProvider: true,
-      stops: {
-        orderBy: { sequenceOrder: 'asc' },
-        select: {
-          id: true,
-          sequenceOrder: true,
-          scheduledTime: true,
-          stop: { select: { id: true, name: true, latitude: true, longitude: true } },
+    // 1. Check if there is an active event/custom override schedule whose date range covers NOW
+    const activeOverride = await prisma.scheduleVersion.findFirst({
+      where: {
+        routeServiceId,
+        status: 'PUBLISHED',
+        direction: 'EVENT_OVERRIDE',
+        effectiveFrom: { lte: now },
+        effectiveTo: { gte: now },
+      },
+      orderBy: { publishedAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        direction: true,
+        version: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+        geometryPolyline: true,
+        geometryFormat: true,
+        geometryDistanceMeters: true,
+        geometryDurationSeconds: true,
+        geometryGeneratedAt: true,
+        geometryProvider: true,
+        stops: {
+          orderBy: { sequenceOrder: 'asc' },
+          select: {
+            id: true,
+            sequenceOrder: true,
+            scheduledTime: true,
+            stop: { select: { id: true, name: true, latitude: true, longitude: true } },
+          },
         },
       },
-    },
-  });
-
-  if (activeOverride) {
-    return res.json({
-      ...activeOverride,
-      isEventOverride: true,
-      remainingMinutes: Math.max(0, Math.round((new Date(activeOverride.effectiveTo) - now) / 60000)),
     });
-  }
 
-  // 2. Otherwise return standard published regular schedule
-  const schedule = await prisma.scheduleVersion.findFirst({
-    where: {
-      routeServiceId,
-      status: 'PUBLISHED',
-      direction: { not: 'EVENT_OVERRIDE' },
-    },
-    orderBy: { publishedAt: 'desc' },
-    select: {
-      id: true,
-      name: true,
-      direction: true,
-      version: true,
-      effectiveFrom: true,
-      effectiveTo: true,
-      geometryPolyline: true,
-      geometryFormat: true,
-      geometryDistanceMeters: true,
-      geometryDurationSeconds: true,
-      geometryGeneratedAt: true,
-      geometryProvider: true,
-      stops: {
-        orderBy: { sequenceOrder: 'asc' },
-        select: {
-          id: true,
-          sequenceOrder: true,
-          scheduledTime: true,
-          stop: { select: { id: true, name: true, latitude: true, longitude: true } },
+    if (activeOverride) {
+      return res.json({
+        ...activeOverride,
+        isEventOverride: true,
+        remainingMinutes: Math.max(0, Math.round((new Date(activeOverride.effectiveTo) - now) / 60000)),
+      });
+    }
+
+    // 2. Otherwise return standard published regular schedule
+    const schedule = await prisma.scheduleVersion.findFirst({
+      where: {
+        routeServiceId,
+        status: 'PUBLISHED',
+        direction: { not: 'EVENT_OVERRIDE' },
+      },
+      orderBy: { publishedAt: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        direction: true,
+        version: true,
+        effectiveFrom: true,
+        effectiveTo: true,
+        geometryPolyline: true,
+        geometryFormat: true,
+        geometryDistanceMeters: true,
+        geometryDurationSeconds: true,
+        geometryGeneratedAt: true,
+        geometryProvider: true,
+        stops: {
+          orderBy: { sequenceOrder: 'asc' },
+          select: {
+            id: true,
+            sequenceOrder: true,
+            scheduledTime: true,
+            stop: { select: { id: true, name: true, latitude: true, longitude: true } },
+          },
         },
       },
-    },
-  });
-  if (!schedule) return res.status(404).json({ error: 'No published schedule for this route' });
-  return res.json(schedule);
+    });
+    if (!schedule) return res.status(404).json({ error: 'No published schedule for this route' });
+    return res.json(schedule);
+  } catch (error) {
+    console.error('[schedules/route-get]', error);
+    return res.status(500).json({ error: 'Failed to load route schedule' });
+  }
 });
 
 router.post('/preview-geometry', async (req, res) => {

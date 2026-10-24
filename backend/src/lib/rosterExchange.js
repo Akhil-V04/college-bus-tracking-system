@@ -9,7 +9,6 @@ const MAX_CELL_LENGTH = 500;
 const ROSTER_COLUMNS = [
   { key: 'passengerType', header: 'Passenger Type', width: 18 },
   { key: 'name', header: 'Name', width: 28 },
-  { key: 'busPassId', header: 'Bus Pass ID', width: 18 },
   { key: 'rollNo', header: 'Student Roll Number', width: 22 },
   { key: 'facultyId', header: 'Faculty ID', width: 18 },
   { key: 'department', header: 'Department', width: 18 },
@@ -29,6 +28,8 @@ const HEADER_ALIASES = new Map([
   ['year', 'year'], ['academicyearnumber', 'year'], ['yr', 'year'], ['classyear', 'year'],
   ['section', 'section'], ['sec', 'section'],
   ['routenumber', 'routeNo'], ['routeno', 'routeNo'], ['busnumber', 'routeNo'], ['busno', 'routeNo'], ['route', 'routeNo'],
+  ['routename', 'routeName'], ['busname', 'routeName'],
+  ['academicyear', 'academicYear'], ['rosterversion', 'rosterVersion'], ['version', 'rosterVersion'],
   ['boardingstop', 'boardingStop'], ['stop', 'boardingStop'], ['stopname', 'boardingStop'], ['boardingpoint', 'boardingStop'], ['pickuppoint', 'boardingStop'], ['pickupstop', 'boardingStop'], ['pickup', 'boardingStop'], ['stoplocation', 'boardingStop'],
 ]);
 
@@ -176,6 +177,10 @@ function mapMatrixToRows(matrix) {
       values[column.key] = text;
       if (cell.formula) formulaColumns.push(column.header);
     }
+    if (positions.has('busPassId')) {
+      const cell = matrixRow[positions.get('busPassId')] || { text: '', formula: false };
+      values.busPassId = normalizeText(cell.text);
+    }
     rows.push({ rowNumber: matrixRow.sourceRowNumber || index + 1, values, formulaColumns });
   }
   if (!rows.length) throw new RosterExchangeError('The file contains headers but no passenger rows');
@@ -256,7 +261,6 @@ function validateRosterRows(rawRows, context) {
 
     requireValue(result, values, 'passengerType', 'Passenger Type');
     requireValue(result, values, 'name', 'Name');
-    requireValue(result, values, 'busPassId', 'Bus Pass ID');
     requireValue(result, values, 'routeNo', 'Route Number');
     requireValue(result, values, 'boardingStop', 'Boarding Stop');
     checkLength(result, values.name, 150, 'Name');
@@ -303,7 +307,7 @@ function validateRosterRows(rawRows, context) {
     }
 
     const identifiers = [
-      [values.busPassId, 'Bus Pass ID', seenBusPasses, context.existingBusPassIds],
+      [rawRow.values?.busPassId ? values.busPassId : '', 'Bus Pass ID', seenBusPasses, context.existingBusPassIds],
       [passengerType === 'STUDENT' ? values.rollNo : '', 'Student Roll Number', seenRollNos, context.existingRollNos],
       [passengerType === 'FACULTY' ? values.facultyId : '', 'Faculty ID', seenFacultyIds, context.existingFacultyIds],
     ];
@@ -448,8 +452,8 @@ function configurePassengerSheet(worksheet) {
   worksheet.columns = ROSTER_COLUMNS.map((column) => ({ header: column.header, key: column.key, width: column.width }));
   styleHeader(worksheet.getRow(1));
   worksheet.views = [{ state: 'frozen', ySplit: 1 }];
-  worksheet.autoFilter = { from: 'A1', to: 'J1' };
-  for (const column of ['C', 'D', 'E', 'I']) worksheet.getColumn(column).numFmt = '@';
+  worksheet.autoFilter = { from: 'A1', to: 'I1' };
+  for (const column of ['C', 'D', 'H']) worksheet.getColumn(column).numFmt = '@';
   worksheet.dataValidations.add('A2:A10001', {
     type: 'list', allowBlank: false, formulae: ['"STUDENT,FACULTY"'],
     showErrorMessage: true, errorTitle: 'Passenger type', error: 'Choose STUDENT or FACULTY.',
@@ -474,7 +478,7 @@ async function buildTemplateXlsx(routeReferences) {
     ['Faculty fields', 'Faculty require Faculty ID. Student Roll Number, Year, and Section must be blank. Department is optional.'],
     ['Route Number', 'Use the operational route/bus number from the Route & Stop Reference sheet.'],
     ['Boarding Stop', 'Must match a published schedule stop for the chosen route.'],
-    ['Identifiers', 'Bus Pass ID, Student Roll Number, and Faculty ID must be unique within the roster.'],
+    ['Identifiers', 'Student Roll Number (for students) and Faculty ID (for faculty) must be unique within the roster.'],
     ['Capacity', 'The existing draft rows plus the import must not exceed a route’s configured capacity.'],
     ['Formulas', 'Formula cells are rejected. Enter identifiers and names as plain values.'],
     ['Limits', `Maximum ${MAX_IMPORT_ROWS.toLocaleString('en-IN')} passenger rows and a 5 MB upload.`],
@@ -487,13 +491,13 @@ async function buildTemplateXlsx(routeReferences) {
   const examples = workbook.addWorksheet('Examples');
   configurePassengerSheet(examples);
   examples.addRow({
-    passengerType: 'STUDENT', name: 'Example Student (do not import)', busPassId: 'PASS-EXAMPLE-001',
-    rollNo: 'ROLL-EXAMPLE-001', department: 'CSE', year: 2, section: 'A',
+    passengerType: 'STUDENT', name: 'Example Student (do not import)',
+    rollNo: '24B01A0501', department: 'CSE', year: 2, section: 'A',
     routeNo: routeReferences[0]?.routeNo || '01', boardingStop: routeReferences[0]?.stops[0]?.name || 'Example Stop',
   });
   examples.addRow({
-    passengerType: 'FACULTY', name: 'Example Faculty (do not import)', busPassId: 'PASS-EXAMPLE-002',
-    facultyId: 'FAC-EXAMPLE-001', department: 'CSE', routeNo: routeReferences[0]?.routeNo || '01',
+    passengerType: 'FACULTY', name: 'Example Faculty (do not import)',
+    facultyId: 'FAC-CSE-001', department: 'CSE', routeNo: routeReferences[0]?.routeNo || '01',
     boardingStop: routeReferences[0]?.stops[0]?.name || 'Example Stop',
   });
 
@@ -526,7 +530,7 @@ function buildTemplateCsv() {
 }
 function exportRow(passenger) {
   return [
-    passenger.passengerType, passenger.name, passenger.busPassId, passenger.rollNo, passenger.facultyId,
+    passenger.passengerType, passenger.name, passenger.rollNo, passenger.facultyId,
     passenger.department, passenger.year, passenger.section, passenger.routeService.routeNo, passenger.boardingStop.name,
   ];
 }
@@ -557,7 +561,6 @@ async function buildRosterExportXlsx(roster, passengers) {
     const row = worksheet.addRow({
       passengerType: passenger.passengerType,
       name: passenger.name,
-      busPassId: passenger.busPassId,
       rollNo: passenger.rollNo,
       facultyId: passenger.facultyId,
       department: passenger.department,

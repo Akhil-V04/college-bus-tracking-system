@@ -99,9 +99,19 @@ export default function Layout() {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <span className="admin-label">Signed in as</span>
-          <strong>{user?.id || 'Administrator'}</strong>
-          <button type="button" onClick={logout} className="text-button" style={{ color: 'var(--muted)', padding: '2px 0', textAlign: 'left', fontSize: 11 }}>
+          <div className="sidebar-footer-user">
+            <span className="admin-status-dot" aria-hidden="true" />
+            <div className="sidebar-footer-info">
+              <strong>{user?.id || 'admin'}</strong>
+              <span>Administrator</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={logout}
+            className="sidebar-signout-btn"
+            title="Sign out of administration"
+          >
             Sign out →
           </button>
         </div>

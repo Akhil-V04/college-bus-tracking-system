@@ -51,11 +51,18 @@ function setupStaleTripMonitor(io, options = {}) {
     }
   }
 
+  const handleMonitorError = (error) => {
+    const isTransient = error?.code === 'P1001' || error?.code === 'P2024' || error?.message?.includes("Can't reach database server");
+    if (!isTransient) {
+      console.error('[trip/stale-monitor]', error);
+    }
+  };
+
   const timer = setInterval(() => {
-    check().catch((error) => console.error('[trip/stale-monitor]', error));
+    check().catch(handleMonitorError);
   }, intervalMs);
   timer.unref?.();
-  check().catch((error) => console.error('[trip/stale-monitor]', error));
+  check().catch(handleMonitorError);
   return { check, stop: () => clearInterval(timer), staleTripIds };
 }
 

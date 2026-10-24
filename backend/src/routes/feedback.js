@@ -78,6 +78,9 @@ router.get('/', async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
   const where = status ? { status } : {};
+  if (req.query.issueId) {
+    where.issueId = String(req.query.issueId);
+  }
   const [items, total] = await Promise.all([
     prisma.feedbackReport.findMany({
       where, skip: (page - 1) * limit, take: limit, orderBy: { createdAt: 'desc' },

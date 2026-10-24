@@ -2,7 +2,7 @@ const express = require('express');
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const { verifyChain } = require('../lib/hashChain');
-const { deriveMissingAdvisorGroups } = require('../lib/lateAlert');
+const { deriveMissingAdvisorGroups, deadlineForToday, createLateAlert } = require('../lib/lateAlert');
 const { writeAdminAudit } = require('../lib/adminAudit');
 
 const router = express.Router();
@@ -130,6 +130,7 @@ router.get('/', async (req, res) => {
       trip: {
         select: {
           id: true,
+          collegeDeadlineAt: true,
           routeService: { select: { routeNo: true, name: true } },
           driver: { select: { name: true } },
         },
@@ -151,6 +152,80 @@ router.get('/', async (req, res) => {
   });
   res.setHeader('Cache-Control', 'private, no-store');
   return res.json(alerts.map(withMissingAdvisorGroups));
+});
+
+router.get('/deadline', async (_req, res) => {
+  const deadline = process.env.COLLEGE_ARRIVAL_DEADLINE || '09:45';
+  const [h, m] = deadline.split(':').map(Number);
+  const hour12 = ((h + 11) % 12) + 1;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const formatted = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+  return res.json({
+    deadline,
+    formatted,
+    timeZone: process.env.APP_TIMEZONE || 'Asia/Kolkata',
+    deadlineTodayIso: deadlineForToday().toISOString(),
+  });
+});
+
+router.patch('/deadline', async (req, res) => {
+  const { deadline } = req.body || {};
+  if (!deadline || !/^\d{2}:\d{2}$/.test(String(deadline).trim())) {
+    return res.status(400).json({ error: 'Deadline must be in HH:MM format (e.g. 09:45)' });
+  }
+  const clean = String(deadline).trim();
+  const prev = process.env.COLLEGE_ARRIVAL_DEADLINE || '09:45';
+  process.env.COLLEGE_ARRIVAL_DEADLINE = clean;
+
+  await writeAdminAudit(prisma, req, {
+    action: 'COLLEGE_ARRIVAL_DEADLINE_UPDATED',
+    entityType: 'SystemConfig',
+    entityId: 'COLLEGE_ARRIVAL_DEADLINE',
+    beforeSummary: { deadline: prev },
+    afterSummary: { deadline: clean },
+  });
+
+  const [h, m] = clean.split(':').map(Number);
+  const hour12 = ((h + 11) % 12) + 1;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const formatted = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+  return res.json({
+    success: true,
+    deadline: clean,
+    formatted,
+  });
+});
+
+router.post('/check', async (_req, res) => {
+  const deadline = deadlineForToday();
+  const runningTrips = await prisma.trip.findMany({
+    where: { status: 'RUNNING' },
+    select: {
+      id: true,
+      currentEta: true,
+      collegeDeadlineAt: true,
+      routeService: { select: { routeNo: true, name: true } },
+    },
+  });
+
+  const triggered = [];
+  for (const trip of runningTrips) {
+    const finalStop = Array.isArray(trip.currentEta?.stops)
+      ? trip.currentEta.stops[trip.currentEta.stops.length - 1]
+      : null;
+    if (finalStop?.etaMinutes != null) {
+      const predictedEta = new Date(Date.now() + finalStop.etaMinutes * 60 * 1000);
+      if (predictedEta > deadline) {
+        const created = await createLateAlert(trip.id, predictedEta);
+        if (created) triggered.push(created);
+      }
+    }
+  }
+
+  return res.json({
+    evaluatedTrips: runningTrips.length,
+    triggered,
+  });
 });
 
 router.get('/verify', async (_req, res) => {

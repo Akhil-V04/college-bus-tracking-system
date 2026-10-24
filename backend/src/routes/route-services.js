@@ -36,42 +36,57 @@ router.get('/', async (_req, res) => {
 });
 
 router.get('/mine', requireAuth(['driver']), async (req, res) => {
-  const route = await prisma.routeService.findFirst({
-    where: { driverId: Number(req.user.id) },
-    select: {
-      ...publicSelect,
-      schedules: {
-        where: { status: 'PUBLISHED' },
-        orderBy: { publishedAt: 'desc' },
-        take: 1,
-        include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
+  try {
+    const route = await prisma.routeService.findFirst({
+      where: { driverId: Number(req.user.id) },
+      select: {
+        ...publicSelect,
+        schedules: {
+          where: { status: 'PUBLISHED' },
+          orderBy: { publishedAt: 'desc' },
+          take: 1,
+          include: { stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } } },
+        },
       },
-    },
-  });
-  if (!route) return res.status(404).json({ error: 'No route is assigned to this driver' });
-  return res.json(route);
+    });
+    if (!route) return res.status(404).json({ error: 'No route is assigned to this driver' });
+    return res.json(route);
+  } catch (error) {
+    console.error('[route-services/mine]', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/admin', requireAuth(['admin']), async (req, res) => {
-  const { page, limit, skip, take } = parsePagination(req.query);
-  const [items, total] = await Promise.all([
-    prisma.routeService.findMany({
-      skip,
-      take,
-      include: { driver: { select: { id: true, driverCode: true, name: true, phone: true } } },
-      orderBy: { routeNo: 'asc' },
-    }),
-    prisma.routeService.count(),
-  ]);
-  return res.json({ items, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  try {
+    const { page, limit, skip, take } = parsePagination(req.query);
+    const [items, total] = await Promise.all([
+      prisma.routeService.findMany({
+        skip,
+        take,
+        include: { driver: { select: { id: true, driverCode: true, name: true, phone: true } } },
+        orderBy: { routeNo: 'asc' },
+      }),
+      prisma.routeService.count(),
+    ]);
+    return res.json({ items, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) {
+    console.error('[route-services/admin]', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid route id' });
-  const route = await prisma.routeService.findUnique({ where: { id }, select: publicSelect });
-  if (!route) return res.status(404).json({ error: 'Route not found' });
-  return res.json(route);
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid route id' });
+    const route = await prisma.routeService.findUnique({ where: { id }, select: publicSelect });
+    if (!route) return res.status(404).json({ error: 'Route not found' });
+    return res.json(route);
+  } catch (error) {
+    console.error('[route-services/get-by-id]', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.post('/', requireAuth(['admin']), async (req, res) => {

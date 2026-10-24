@@ -61,7 +61,7 @@ const rosterPassengerSchema = z
     boardingStopId: z.number().int().positive(),
     passengerType: z.enum(['STUDENT', 'FACULTY']),
     name: z.string().trim().min(1).max(150),
-    busPassId: z.string().trim().min(1).max(100),
+    busPassId: z.string().trim().min(1).max(100).optional(),
     rollNo: z.string().trim().min(1).max(100).nullable().optional(),
     facultyId: z.string().trim().min(1).max(100).nullable().optional(),
     department: z.string().trim().min(1).max(100).nullable().optional(),

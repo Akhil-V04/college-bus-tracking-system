@@ -19,10 +19,15 @@ export default function IssuesScreen() {
   async function openIssue(issue) {
     setSelectedIssue(issue);
     try {
-      const res = await api.get(`/feedback?issueId=${issue.id}`);
-      setReports(res.data?.items || res.data || []);
+      const res = await api.get(`/issues/${issue.id}/reports`);
+      setReports(Array.isArray(res.data) ? res.data : (res.data?.items || []));
     } catch {
-      setReports([]);
+      try {
+        const res = await api.get(`/feedback?issueId=${issue.id}`);
+        setReports(res.data?.items || res.data || []);
+      } catch {
+        setReports([]);
+      }
     }
   }
 

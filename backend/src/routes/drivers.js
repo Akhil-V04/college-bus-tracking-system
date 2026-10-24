@@ -181,14 +181,19 @@ router.post('/import/confirm', driverImportLimiter, receiveDriverFile, async (re
 });
 
 router.get('/', async (req, res) => {
-  const { page, limit, skip, take } = parsePagination(req.query);
-  const includeInactive = req.query.includeInactive === 'true';
-  const where = includeInactive ? {} : { status: 'ACTIVE' };
-  const [items, total] = await Promise.all([
-    prisma.driver.findMany({ where, skip, take, select: adminSelect, orderBy: { driverCode: 'asc' } }),
-    prisma.driver.count({ where }),
-  ]);
-  return res.json({ items, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  try {
+    const { page, limit, skip, take } = parsePagination(req.query);
+    const includeInactive = req.query.includeInactive === 'true';
+    const where = includeInactive ? {} : { status: 'ACTIVE' };
+    const [items, total] = await Promise.all([
+      prisma.driver.findMany({ where, skip, take, select: adminSelect, orderBy: { driverCode: 'asc' } }),
+      prisma.driver.count({ where }),
+    ]);
+    return res.json({ items, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+  } catch (error) {
+    console.error('[drivers/list]', error);
+    return res.status(500).json({ error: 'Failed to load drivers' });
+  }
 });
 
 router.post('/', async (req, res) => {

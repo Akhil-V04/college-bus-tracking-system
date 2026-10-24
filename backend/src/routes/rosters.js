@@ -437,6 +437,9 @@ router.post('/:id/passengers', async (req, res) => {
   const roster = await prisma.transportRoster.findUnique({ where: { id: rosterId } });
   if (!roster) return res.status(404).json({ error: 'Roster not found' });
   if (roster.status !== 'DRAFT') return res.status(409).json({ error: 'Only draft rosters can be edited' });
+  if (!input.busPassId) {
+    input.busPassId = input.rollNo ? `PASS-${input.rollNo}` : (input.facultyId ? `PASS-${input.facultyId}` : `PASS-${Date.now()}`);
+  }
   try {
     const passenger = await prisma.$transaction(async (tx) => {
       const created = await tx.rosterPassenger.create({

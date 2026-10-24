@@ -72,6 +72,24 @@ export default function RouteDetailsScreen() {
     refetchInterval: 15_000,
   });
 
+  const notificationsQuery = useQuery({
+    queryKey: ['admin-notifications'],
+    queryFn: () => apiRequest<any[]>('/admin-notifications'),
+    staleTime: 60_000,
+  });
+
+  const activeRouteNotice = useMemo(() => {
+    if (!notificationsQuery.data || !route.data) return null;
+    const currentRouteNo = String(route.data.routeNo).trim();
+    return notificationsQuery.data.find((n) => {
+      if (n.targetType === 'ROUTE') {
+        const routes = (n.targetRouteNos || n.targetRoutes?.map((r: any) => r.routeNo) || []).map(String);
+        return routes.includes(currentRouteNo) || routes.includes(String(Number(currentRouteNo)));
+      }
+      return false;
+    });
+  }, [notificationsQuery.data, route.data]);
+
   // Socket.IO live tracking
   useEffect(() => {
     if (!activeTripId) {
@@ -158,6 +176,45 @@ export default function RouteDetailsScreen() {
               Departure and stop timings have been adjusted for today's special college session.
             </Text>
           </View>
+        )}
+
+        {/* Route-Specific Active Announcement Banner */}
+        {activeRouteNotice && (
+          <Pressable
+            onPress={() => router.push('/passenger/notifications')}
+            style={[
+              styles.eventOverrideBanner,
+              {
+                backgroundColor: activeRouteNotice.priority === 'URGENT' ? colors.dangerBg : colors.accentBg || 'rgba(234, 88, 12, 0.15)',
+                borderColor: activeRouteNotice.priority === 'URGENT' ? colors.danger : colors.accent || '#EA580C',
+                marginBottom: spacing.sm,
+              },
+            ]}
+          >
+            <View style={styles.eventOverrideHeader}>
+              <Text style={styles.eventOverrideIcon}>
+                {activeRouteNotice.priority === 'URGENT' ? '🚨' : '📢'}
+              </Text>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <Text
+                    style={[
+                      styles.eventOverrideTitle,
+                      { color: activeRouteNotice.priority === 'URGENT' ? colors.danger : colors.accent || '#EA580C' },
+                    ]}
+                  >
+                    {activeRouteNotice.title}
+                  </Text>
+                  <Pill tone={activeRouteNotice.priority === 'URGENT' ? 'danger' : 'warning'}>
+                    Notice for Route {detail.routeNo}
+                  </Pill>
+                </View>
+                <Text style={[styles.eventOverrideNote, { marginTop: 4, color: colors.textPrimary }]}>
+                  {activeRouteNotice.message}
+                </Text>
+              </View>
+            </View>
+          </Pressable>
         )}
 
         {/* Direction Indicator Banner (When Trip is Active) */}

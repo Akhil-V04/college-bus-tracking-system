@@ -4,7 +4,7 @@ import { EmptyState, Field, LoadingState, Modal, Notice, PageHeader, StatusBadge
 
 const emptyRoster = { name: '', academicYear: '', copyFromRosterId: '' };
 const emptyPassenger = {
-  routeServiceId: '', boardingStopId: '', passengerType: 'STUDENT', name: '', busPassId: '',
+  routeServiceId: '', boardingStopId: '', passengerType: 'STUDENT', name: '',
   rollNo: '', facultyId: '', department: '', year: '', section: '',
 };
 
@@ -93,15 +93,18 @@ export default function RostersScreen() {
     event.preventDefault();
     setSaving(true);
     const student = passengerForm.passengerType === 'STUDENT';
+    const rollNo = student ? passengerForm.rollNo.trim() : null;
+    const facultyId = student ? null : passengerForm.facultyId.trim();
+    const autoPassId = student ? `PASS-${rollNo}` : `PASS-${facultyId}`;
     try {
       await api.post(`/rosters/${detail.roster.id}/passengers`, {
         routeServiceId: Number(passengerForm.routeServiceId),
         boardingStopId: Number(passengerForm.boardingStopId),
         passengerType: passengerForm.passengerType,
         name: passengerForm.name.trim(),
-        busPassId: passengerForm.busPassId.trim(),
-        rollNo: student ? passengerForm.rollNo.trim() : null,
-        facultyId: student ? null : passengerForm.facultyId.trim(),
+        busPassId: autoPassId,
+        rollNo,
+        facultyId,
         department: passengerForm.department.trim() || null,
         year: student ? Number(passengerForm.year) : null,
         section: student ? passengerForm.section.trim() : null,
@@ -156,24 +159,8 @@ export default function RostersScreen() {
   async function downloadCsv(roster) {
     setExportingId(roster.id);
     try {
-      const passengers = [];
-      let page = 1;
-      let totalPages = 1;
-      do {
-        const { data } = await api.get(`/rosters/${roster.id}`, { params: { page, limit: 200 } });
-        passengers.push(...data.passengers);
-        totalPages = data.pagination.totalPages;
-        page += 1;
-      } while (page <= totalPages);
-
-      const headers = ['Academic Year', 'Roster Version', 'Route Number', 'Route Name', 'Passenger Type', 'Name', 'Bus Pass ID', 'Student Roll No', 'Faculty ID', 'Department', 'Year', 'Section', 'Boarding Stop'];
-      const rows = passengers.map((passenger) => [
-        roster.academicYear, roster.version, passenger.routeService.routeNo, passenger.routeService.name,
-        passenger.passengerType, passenger.name, passenger.busPassId, passenger.rollNo, passenger.facultyId,
-        passenger.department, passenger.year, passenger.section, passenger.boardingStop.name,
-      ]);
-      const csv = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
-      const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+      const response = await api.get(`/rosters/${roster.id}/export?format=csv`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' });
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
       link.download = `transport-roster-${roster.academicYear}-v${roster.version}.csv`;
@@ -181,7 +168,7 @@ export default function RostersScreen() {
       link.click();
       link.remove();
       URL.revokeObjectURL(link.href);
-      setMessage({ type: 'success', text: `Downloaded ${passengers.length} passenger rows in table-column CSV format.` });
+      setMessage({ type: 'success', text: 'Downloaded roster CSV (.csv).' });
     } catch (error) {
       setMessage({ type: 'error', text: errorMessage(error, 'Roster CSV could not be downloaded.') });
     } finally {
@@ -481,7 +468,9 @@ export default function RostersScreen() {
                         <tr key={passenger.id}>
                           <td>
                             <div className="cell-title">{passenger.name}</div>
-                            <div className="cell-subtitle">Pass {passenger.busPassId}</div>
+                            <div className="cell-subtitle">
+                              {passenger.passengerType === 'STUDENT' ? passenger.rollNo : (passenger.facultyId || 'Faculty')}
+                            </div>
                           </td>
                           <td><StatusBadge value={passenger.passengerType} /></td>
                           <td>
@@ -534,14 +523,9 @@ export default function RostersScreen() {
                         <option value="FACULTY">Faculty</option>
                       </select>
                     </Field>
-                    <Field label="Bus pass ID">
-                      <input value={passengerForm.busPassId} placeholder="e.g. PASS-24B01A0501" onChange={(event) => setPassengerForm({ ...passengerForm, busPassId: event.target.value })} required />
+                    <Field label="Full name">
+                      <input value={passengerForm.name} placeholder="e.g. Rahul Sharma" onChange={(event) => setPassengerForm({ ...passengerForm, name: event.target.value })} required />
                     </Field>
-                    <div className="form-span">
-                      <Field label="Full name">
-                        <input value={passengerForm.name} placeholder="e.g. Rahul Sharma" onChange={(event) => setPassengerForm({ ...passengerForm, name: event.target.value })} required />
-                      </Field>
-                    </div>
                     <Field label="Route">
                       <select value={passengerForm.routeServiceId} onChange={(event) => setPassengerForm({ ...passengerForm, routeServiceId: event.target.value })} required>
                         <option value="">Select route</option>

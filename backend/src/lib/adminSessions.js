@@ -40,9 +40,20 @@ function adminSessionExpiry(now, minutes) {
   return new Date(now.getTime() + minutes * 60 * 1000);
 }
 
+const activeSessionCache = new Map();
+const SESSION_CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
 async function findActiveAdminSession(client, decoded, now = new Date()) {
   if (!decoded?.sessionId || typeof decoded.sessionId !== 'string') return null;
-  return client.adminSession.findFirst({
+
+  const cached = activeSessionCache.get(decoded.sessionId);
+  if (cached && (now.getTime() - cached.timestamp < SESSION_CACHE_TTL_MS)) {
+    if (new Date(cached.session.expiresAt) > now && !cached.session.revokedAt) {
+      return cached.session;
+    }
+  }
+
+  const session = await client.adminSession.findFirst({
     where: {
       id: decoded.sessionId,
       adminIdentifier: String(decoded.id),
@@ -50,9 +61,17 @@ async function findActiveAdminSession(client, decoded, now = new Date()) {
       expiresAt: { gt: now },
     },
   });
+
+  if (session) {
+    activeSessionCache.set(decoded.sessionId, { session, timestamp: now.getTime() });
+  } else {
+    activeSessionCache.delete(decoded.sessionId);
+  }
+  return session;
 }
 
 async function revokeAdminSession(client, sessionId, reason, now = new Date()) {
+  activeSessionCache.delete(sessionId);
   return client.adminSession.updateMany({
     where: { id: sessionId, revokedAt: null },
     data: { revokedAt: now, revokeReason: String(reason).slice(0, 100) },
@@ -60,6 +79,7 @@ async function revokeAdminSession(client, sessionId, reason, now = new Date()) {
 }
 
 async function revokeAllAdminSessions(client, adminIdentifier, reason, now = new Date()) {
+  activeSessionCache.clear();
   return client.adminSession.updateMany({
     where: { adminIdentifier: String(adminIdentifier), revokedAt: null, expiresAt: { gt: now } },
     data: { revokedAt: now, revokeReason: String(reason).slice(0, 100) },

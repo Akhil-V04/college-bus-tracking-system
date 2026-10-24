@@ -146,6 +146,10 @@ if (require.main === module) {
     console.log(JSON.stringify({ type: 'shutdown', signal, state: 'complete' }));
   }
 
+  process.on('unhandledRejection', (reason) => {
+    console.error('[unhandledRejection]', reason);
+  });
+
   process.once('SIGTERM', () => shutdown('SIGTERM').catch((error) => {
     console.error(`[shutdown] ${error.message}`);
     process.exitCode = 1;

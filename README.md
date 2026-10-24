@@ -36,6 +36,8 @@ Main features include real-time bus tracking, emergency accident reporting, pass
 
 ## Architecture
 
+> 📖 **Deep Dive Reference:** For detailed mathematical formulations, algorithms, security standards, and viva cheat sheet, see [TECHNICAL_ARCHITECTURE_AND_ALGORITHMS.md](./TECHNICAL_ARCHITECTURE_AND_ALGORITHMS.md).
+
 ```text
        Passengers / Drivers
                |

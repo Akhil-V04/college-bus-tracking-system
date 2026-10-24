@@ -142,7 +142,10 @@ function setupPushOutboxWorker(options = {}) {
       return { ...delivery, receipts };
     }
     catch (error) {
-      (options.logger || console).error('[push-worker] delivery cycle failed');
+      const isTransient = error?.code === 'P1001' || error?.code === 'P2024' || error?.message?.includes("Can't reach database server");
+      if (!isTransient) {
+        (options.logger || console).error('[push-worker] delivery cycle failed');
+      }
       return { claimed: 0, sent: 0, error: 'DELIVERY_CYCLE_FAILED' };
     } finally { running = false; }
   };

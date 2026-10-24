@@ -28,7 +28,7 @@ function timeZoneOffsetMs(date, timeZone) {
 
 function deadlineForToday(now = new Date()) {
   const timeZone = process.env.APP_TIMEZONE || 'Asia/Kolkata';
-  const [hour, minute] = (process.env.COLLEGE_ARRIVAL_DEADLINE || '09:50').split(':').map(Number);
+  const [hour, minute] = (process.env.COLLEGE_ARRIVAL_DEADLINE || '09:45').split(':').map(Number);
   const local = getZonedParts(now, timeZone);
   const utcGuess = new Date(Date.UTC(local.year, local.month - 1, local.day, hour, minute, 0));
   return new Date(utcGuess.getTime() - timeZoneOffsetMs(utcGuess, timeZone));
