@@ -147,7 +147,7 @@ test('generated XLSX template has instructions, empty import sheet, examples, an
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
   assert.deepEqual(workbook.worksheets.map((sheet) => sheet.name), [
-    'Instructions', 'Passengers', 'Examples', 'Route & Stop Reference',
+    'Instructions', 'Passengers', 'Class Advisors', 'Examples', 'Route & Stop Reference',
   ]);
   assert.deepEqual(workbook.getWorksheet('Passengers').getRow(1).values.slice(1), ROSTER_COLUMNS.map((column) => column.header));
   assert.equal(workbook.getWorksheet('Passengers').actualRowCount, 1);

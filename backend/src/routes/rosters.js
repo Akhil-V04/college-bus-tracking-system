@@ -17,6 +17,7 @@ const {
   buildTemplateXlsx,
   loadRouteReferences,
   loadValidationContext,
+  normalizeLookup,
   parseRosterFile,
   previewRosterImport,
   summarizeResults,
@@ -118,16 +119,16 @@ async function validateRoster(rosterId) {
     countsByRoute.set(passenger.routeServiceId, (countsByRoute.get(passenger.routeServiceId) || 0) + 1);
     const allowedStops = stopsByRoute.get(passenger.routeServiceId);
     if (!allowedStops) {
-      errors.push({
+      warnings.push({
         code: 'NO_PUBLISHED_SCHEDULE',
         passengerId: passenger.id,
         message: `Route ${passenger.routeService.routeNo} has no published schedule`,
       });
     } else if (!allowedStops.has(passenger.boardingStopId)) {
-      errors.push({
-        code: 'STOP_NOT_ON_ROUTE',
+      warnings.push({
+        code: 'STOP_NOT_ON_SCHEDULE',
         passengerId: passenger.id,
-        message: `${passenger.boardingStop.name} is not on route ${passenger.routeService.routeNo}`,
+        message: `${passenger.boardingStop?.name || 'Boarding stop'} is not on route ${passenger.routeService.routeNo}'s timetable schedule`,
       });
     }
 
@@ -160,7 +161,11 @@ async function validateRoster(rosterId) {
   for (const key of classKeys) {
     const [department, year, section] = key.split('|');
     const advisor = await prisma.classAdvisor.findFirst({
-      where: { department, year: Number(year), section },
+      where: {
+        department,
+        year: Number(year),
+        section: { in: [section, 'ALL', '*'] },
+      },
       select: { id: true },
     });
     if (!advisor) {
@@ -294,6 +299,13 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
       if (Number.isInteger(rosterVersion) && roster.version !== rosterVersion) {
         throw new RosterExchangeError('Roster version changed; preview the file again', 409);
       }
+      if (parsed.advisors && parsed.advisors.length > 0) {
+        for (const advisor of parsed.advisors) {
+          for (const sec of advisor.sections) {
+            context.advisorKeys.add(`${advisor.department.toUpperCase()}|${advisor.year}|${sec.toUpperCase()}`);
+          }
+        }
+      }
       const results = validateRosterRows(parsed.rows, context);
       const summary = summarizeResults(results);
       if (summary.invalidRows > 0) {
@@ -309,8 +321,83 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
         });
       }
 
+      const stopNameToId = new Map();
+      for (const result of results) {
+        if (!result.normalized) continue;
+        if (result.normalized.isNewStop || result.normalized.boardingStopId < 0) {
+          const rawName = (result.normalized.boardingStopName || result.normalized.boardingStop || '').trim();
+          const normKey = normalizeLookup(rawName);
+          if (!stopNameToId.has(normKey)) {
+            let stop = await tx.stop.findFirst({
+              where: { name: { equals: rawName, mode: 'insensitive' } },
+            });
+            if (!stop) {
+              stop = await tx.stop.create({
+                data: {
+                  name: rawName,
+                  latitude: 17.3551,
+                  longitude: 78.5833,
+                  landmark: 'Auto-created from roster import',
+                },
+              });
+            }
+            stopNameToId.set(normKey, stop.id);
+          }
+          result.normalized.boardingStopId = stopNameToId.get(normKey);
+        }
+      }
+
+      if (parsed.advisors && parsed.advisors.length > 0) {
+        for (const advisor of parsed.advisors) {
+          const sectionsToApply = new Set(advisor.sections.map((s) => s.toUpperCase()));
+          if (sectionsToApply.has('ALL') || sectionsToApply.has('*')) {
+            for (const row of results) {
+              if (
+                row.normalized &&
+                row.normalized.department &&
+                row.normalized.department.toUpperCase() === advisor.department.toUpperCase() &&
+                row.normalized.year === advisor.year &&
+                row.normalized.section
+              ) {
+                sectionsToApply.add(row.normalized.section.toUpperCase());
+              }
+            }
+          }
+          for (const sec of sectionsToApply) {
+            await tx.classAdvisor.upsert({
+              where: {
+                department_year_section: {
+                  department: advisor.department,
+                  year: advisor.year,
+                  section: sec,
+                },
+              },
+              update: {
+                name: advisor.name,
+                email: advisor.email,
+                phone: advisor.phone,
+              },
+              create: {
+                department: advisor.department,
+                year: advisor.year,
+                section: sec,
+                name: advisor.name,
+                email: advisor.email,
+                phone: advisor.phone,
+              },
+            });
+          }
+        }
+      }
+
       const data = results.map((result) => {
-        const { routeNo: _routeNo, boardingStop: _boardingStop, ...passenger } = result.normalized;
+        const {
+          routeNo: _routeNo,
+          boardingStop: _boardingStop,
+          boardingStopName: _boardingStopName,
+          isNewStop: _isNewStop,
+          ...passenger
+        } = result.normalized;
         return { rosterId, ...passenger };
       });
       for (let offset = 0; offset < data.length; offset += 500) {

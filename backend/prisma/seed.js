@@ -107,7 +107,7 @@ async function main() {
   });
 
   await prisma.classAdvisor.upsert({
-    where: { email: 'advisor@example.edu' },
+    where: { department_year_section: { department: 'CSE', year: 3, section: 'A' } },
     update: {},
     create: {
       name: 'Demo Class Advisor',

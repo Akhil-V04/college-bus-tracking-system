@@ -313,7 +313,7 @@ model ClassAdvisor {
   id         Int      @id @default(autoincrement())
   name       String
   phone      String
-  email      String   @unique
+  email      String
   department String
   year       Int
   section    String
@@ -321,6 +321,7 @@ model ClassAdvisor {
   updatedAt  DateTime @updatedAt @db.Timestamptz(3)
 
   @@unique([department, year, section])
+  @@index([email])
 }
 
 model Trip {

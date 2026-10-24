@@ -136,7 +136,49 @@ async function parseXlsxMatrix(buffer) {
     values.sourceRowNumber = rowNumber;
     matrix.push(values);
   });
-  return matrix;
+
+  const advisorSheet = workbook.getWorksheet('Class Advisors') || workbook.getWorksheet('Advisors') || workbook.getWorksheet('ClassAdvisors');
+  const advisorRows = [];
+  if (advisorSheet && advisorSheet.actualRowCount > 1) {
+    const headers = [];
+    const headerRow = advisorSheet.getRow(1);
+    for (let c = 1; c <= advisorSheet.actualColumnCount; c += 1) {
+      headers.push(normalizeHeader(cellValue(headerRow.getCell(c)).text));
+    }
+    const deptIdx = headers.findIndex((h) => h.includes('dept') || h.includes('branch'));
+    const yrIdx = headers.findIndex((h) => h.includes('year') || h.includes('yr'));
+    const secIdx = headers.findIndex((h) => h.includes('sec'));
+    const nameIdx = headers.findIndex((h) => h.includes('name') || h.includes('advisor'));
+    const emailIdx = headers.findIndex((h) => h.includes('mail'));
+    const phoneIdx = headers.findIndex((h) => h.includes('phone') || h.includes('mobile') || h.includes('contact'));
+
+    advisorSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const dept = normalizeText(cellValue(row.getCell(deptIdx + 1)).text);
+      const yr = Number(cellValue(row.getCell(yrIdx + 1)).text);
+      const secRaw = normalizeText(cellValue(row.getCell(secIdx + 1)).text);
+      const name = normalizeText(cellValue(row.getCell(nameIdx + 1)).text);
+      const email = normalizeText(cellValue(row.getCell(emailIdx + 1)).text);
+      const phone = normalizeText(cellValue(row.getCell(phoneIdx + 1)).text);
+
+      if (dept && Number.isInteger(yr) && yr > 0 && name && email) {
+        const sections = secRaw
+          ? secRaw.split(/[,;\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)
+          : ['ALL'];
+        advisorRows.push({
+          department: dept.toUpperCase(),
+          year: yr,
+          sections: sections.length ? sections : ['ALL'],
+          rawSection: secRaw,
+          name,
+          email,
+          phone: phone || '9000000000',
+        });
+      }
+    });
+  }
+
+  return { matrix, advisorRows };
 }
 
 function isBlankMatrixRow(row) {
@@ -190,10 +232,17 @@ function mapMatrixToRows(matrix) {
 async function parseRosterFile(buffer, originalName) {
   const extension = path.extname(originalName || '').toLowerCase();
   let matrix;
-  if (extension === '.csv') matrix = parseCsvMatrix(buffer);
-  else if (extension === '.xlsx') matrix = await parseXlsxMatrix(buffer);
-  else throw new RosterExchangeError('Only .csv and .xlsx roster files are accepted');
-  return { ...mapMatrixToRows(matrix), format: extension.slice(1) };
+  let advisorRows = [];
+  if (extension === '.csv') {
+    matrix = parseCsvMatrix(buffer);
+  } else if (extension === '.xlsx') {
+    const result = await parseXlsxMatrix(buffer);
+    matrix = result.matrix;
+    advisorRows = result.advisorRows;
+  } else {
+    throw new RosterExchangeError('Only .csv and .xlsx roster files are accepted');
+  }
+  return { ...mapMatrixToRows(matrix), format: extension.slice(1), advisors: advisorRows };
 }
 function buildRouteLookups(routes) {
   const exact = new Map();
@@ -297,12 +346,42 @@ function validateRosterRows(rawRows, context) {
 
     let boardingStop = null;
     if (route) {
-      if (!route.allowedStops.length) addIssue(result, 'errors', 'NO_PUBLISHED_SCHEDULE', `Route ${route.routeNo} has no published schedule`, 'Route Number');
-      else {
-        const matches = route.allowedStops.filter((stop) => normalizeLookup(stop.name) === normalizeLookup(values.boardingStop));
-        if (matches.length === 1) boardingStop = matches[0];
-        else if (matches.length > 1) addIssue(result, 'errors', 'AMBIGUOUS_STOP', 'Boarding Stop is duplicated on this route', 'Boarding Stop');
-        else addIssue(result, 'errors', 'STOP_NOT_ON_ROUTE', `${values.boardingStop || 'Boarding stop'} is not on route ${route.routeNo}`, 'Boarding Stop');
+      if (!route.hasPublishedSchedule) {
+        addIssue(result, 'warnings', 'NO_PUBLISHED_SCHEDULE', `Route ${route.routeNo} has no published schedule yet`);
+      }
+
+      const requestedStopName = values.boardingStop ? values.boardingStop.trim() : '';
+      if (!requestedStopName) {
+        addIssue(result, 'errors', 'REQUIRED', 'Boarding Stop is required', 'Boarding Stop');
+      } else {
+        const routeStops = route.allowedStops || [];
+        const routeMatches = routeStops.filter((stop) => normalizeLookup(stop.name) === normalizeLookup(requestedStopName));
+        if (routeMatches.length >= 1) {
+          boardingStop = routeMatches[0];
+        } else if (routeStops.length > 0 && (!context.allStops || !context.allStops.length)) {
+          addIssue(result, 'errors', 'STOP_NOT_ON_ROUTE', `${requestedStopName} is not on route ${route.routeNo}`, 'Boarding Stop');
+        } else {
+          const globalMatches = (context.allStops || []).filter((stop) => normalizeLookup(stop.name) === normalizeLookup(requestedStopName));
+          if (globalMatches.length >= 1) {
+            boardingStop = globalMatches[0];
+            if (routeStops.length > 0) {
+              addIssue(result, 'warnings', 'STOP_NOT_ON_SCHEDULE', `Boarding stop "${boardingStop.name}" is not on Route ${route.routeNo}'s timetable schedule`);
+            }
+          } else {
+            const normName = normalizeLookup(requestedStopName);
+            let virtual = context.virtualStops ? context.virtualStops.get(normName) : null;
+            if (!virtual) {
+              virtual = {
+                id: -((context.virtualStops ? context.virtualStops.size : 0) + 1),
+                name: requestedStopName,
+                isNew: true,
+              };
+              if (context.virtualStops) context.virtualStops.set(normName, virtual);
+            }
+            boardingStop = virtual;
+            addIssue(result, 'warnings', 'NEW_STOP_AUTO_CREATED', `Stop "${requestedStopName}" will be auto-created as a new stop landmark`);
+          }
+        }
       }
     }
 
@@ -319,14 +398,21 @@ function validateRosterRows(rawRows, context) {
       else seen.set(identifier, rawRow.rowNumber);
     }
 
-    if (passengerType === 'STUDENT' && values.department && Number.isInteger(year) && values.section && !context.advisorKeys.has(classKey(values.department, year, values.section))) {
-      addIssue(result, 'warnings', 'MISSING_ADVISOR', `No class advisor is configured for ${values.department} Year ${year} Section ${values.section}`);
+    if (passengerType === 'STUDENT' && values.department && Number.isInteger(year) && values.section) {
+      const hasSpecific = context.advisorKeys.has(classKey(values.department, year, values.section));
+      const hasAll = context.advisorKeys.has(classKey(values.department, year, 'ALL')) ||
+                     context.advisorKeys.has(classKey(values.department, year, '*'));
+      if (!hasSpecific && !hasAll) {
+        addIssue(result, 'warnings', 'MISSING_ADVISOR', `No class advisor is configured for ${values.department} Year ${year} Section ${values.section}`);
+      }
     }
 
     if (route && boardingStop && (passengerType === 'STUDENT' || passengerType === 'FACULTY')) {
       result.normalized = {
         routeServiceId: route.id,
         boardingStopId: boardingStop.id,
+        boardingStopName: boardingStop.name,
+        isNewStop: Boolean(boardingStop.isNew),
         passengerType,
         name: values.name,
         busPassId: values.busPassId,
@@ -362,14 +448,13 @@ function validateRosterRows(rawRows, context) {
   return results;
 }
 async function loadValidationContext(db, rosterId) {
-  const [roster, routes, existingPassengers, advisors] = await Promise.all([
+  const [roster, routes, existingPassengers, advisors, allStops] = await Promise.all([
     db.transportRoster.findUnique({ where: { id: rosterId } }),
     db.routeService.findMany({
       select: {
         id: true, routeNo: true, name: true, capacity: true,
         schedules: {
-          where: { status: 'PUBLISHED' },
-          select: { direction: true, stops: { select: { stop: { select: { id: true, name: true } } } } },
+          select: { status: true, direction: true, stops: { select: { stop: { select: { id: true, name: true } } } } },
         },
       },
       orderBy: { routeNo: 'asc' },
@@ -379,6 +464,7 @@ async function loadValidationContext(db, rosterId) {
       select: { routeServiceId: true, busPassId: true, rollNo: true, facultyId: true },
     }),
     db.classAdvisor.findMany({ select: { department: true, year: true, section: true } }),
+    db.stop.findMany({ select: { id: true, name: true } }),
   ]);
 
   if (!roster) throw new RosterExchangeError('Roster not found', 404);
@@ -386,25 +472,35 @@ async function loadValidationContext(db, rosterId) {
 
   const contextRoutes = routes.map((route) => {
     const uniqueStops = new Map();
+    let hasPublished = false;
     for (const schedule of route.schedules) {
+      if (schedule.status === 'PUBLISHED') hasPublished = true;
       for (const entry of schedule.stops) uniqueStops.set(entry.stop.id, entry.stop);
     }
-    return { ...route, allowedStops: [...uniqueStops.values()] };
+    return {
+      ...route,
+      allowedStops: [...uniqueStops.values()],
+      hasPublishedSchedule: hasPublished,
+    };
   });
   const existingCountsByRoute = new Map();
   for (const passenger of existingPassengers) {
     existingCountsByRoute.set(passenger.routeServiceId, (existingCountsByRoute.get(passenger.routeServiceId) || 0) + 1);
   }
 
+  const advisorKeys = new Set(advisors.map((item) => classKey(item.department, item.year, item.section)));
+
   return {
     roster,
     context: {
       routes: contextRoutes,
+      allStops: allStops || [],
+      virtualStops: new Map(),
       existingCountsByRoute,
       existingBusPassIds: new Set(existingPassengers.map((item) => normalizeLookup(item.busPassId))),
       existingRollNos: new Set(existingPassengers.filter((item) => item.rollNo).map((item) => normalizeLookup(item.rollNo))),
       existingFacultyIds: new Set(existingPassengers.filter((item) => item.facultyId).map((item) => normalizeLookup(item.facultyId))),
-      advisorKeys: new Set(advisors.map((item) => classKey(item.department, item.year, item.section))),
+      advisorKeys,
     },
   };
 }
@@ -421,6 +517,16 @@ function summarizeResults(results) {
 async function previewRosterImport(db, rosterId, buffer, originalName) {
   const parsed = await parseRosterFile(buffer, originalName);
   const { roster, context } = await loadValidationContext(db, rosterId);
+
+  // If the uploaded file had a Class Advisors sheet, integrate them into context.advisorKeys
+  if (parsed.advisors && parsed.advisors.length > 0) {
+    for (const adv of parsed.advisors) {
+      for (const sec of adv.sections) {
+        context.advisorKeys.add(classKey(adv.department, adv.year, sec));
+      }
+    }
+  }
+
   const results = validateRosterRows(parsed.rows, context);
   const rawByRow = new Map(parsed.rows.map((row) => [row.rowNumber, row]));
   return {
@@ -429,6 +535,7 @@ async function previewRosterImport(db, rosterId, buffer, originalName) {
     format: parsed.format,
     previewDigest: crypto.createHash('sha256').update(buffer).digest('hex'),
     unknownHeaders: parsed.unknownHeaders,
+    advisorsFound: parsed.advisors ? parsed.advisors.length : 0,
     summary: summarizeResults(results),
     rows: results.map((result) => ({
       rowNumber: result.rowNumber,
@@ -476,8 +583,9 @@ async function buildTemplateXlsx(routeReferences) {
     ['Passenger Type', 'Use STUDENT or FACULTY.'],
     ['Student fields', 'Students require Student Roll Number, Department, Year, and Section. Faculty ID must be blank.'],
     ['Faculty fields', 'Faculty require Faculty ID. Student Roll Number, Year, and Section must be blank. Department is optional.'],
+    ['Class Advisors', 'Fill the Class Advisors sheet to automatically link advisors. A branch advisor can cover multiple sections (e.g. "A, B, C, D" or "ALL") for a year.'],
     ['Route Number', 'Use the operational route/bus number from the Route & Stop Reference sheet.'],
-    ['Boarding Stop', 'Must match a published schedule stop for the chosen route.'],
+    ['Boarding Stop', 'Must match a schedule stop or a known bus stop. Unlisted stops will be registered as landmarks.'],
     ['Identifiers', 'Student Roll Number (for students) and Faculty ID (for faculty) must be unique within the roster.'],
     ['Capacity', 'The existing draft rows plus the import must not exceed a route’s configured capacity.'],
     ['Formulas', 'Formula cells are rejected. Enter identifiers and names as plain values.'],
@@ -487,6 +595,42 @@ async function buildTemplateXlsx(routeReferences) {
 
   const passengers = workbook.addWorksheet('Passengers');
   configurePassengerSheet(passengers);
+
+  const advisors = workbook.addWorksheet('Class Advisors', { views: [{ state: 'frozen', ySplit: 1 }] });
+  advisors.columns = [
+    { header: 'Department', key: 'department', width: 18 },
+    { header: 'Year', key: 'year', width: 10 },
+    { header: 'Section(s)', key: 'section', width: 24 },
+    { header: 'Advisor Name', key: 'name', width: 28 },
+    { header: 'Advisor Email', key: 'email', width: 34 },
+    { header: 'Advisor Phone', key: 'phone', width: 18 },
+  ];
+  styleHeader(advisors.getRow(1));
+  advisors.autoFilter = { from: 'A1', to: 'F1' };
+  advisors.addRow({
+    department: 'CSE',
+    year: 1,
+    section: 'A, B, C, D',
+    name: 'Prof. K. Sharma (Branch Advisor)',
+    email: 'sharma.cse@vbithyd.ac.in',
+    phone: '9876543210',
+  });
+  advisors.addRow({
+    department: 'CSE',
+    year: 2,
+    section: 'A, B, C, D',
+    name: 'Dr. P. Reddy (Branch Advisor)',
+    email: 'reddy.cse@vbithyd.ac.in',
+    phone: '9876543211',
+  });
+  advisors.addRow({
+    department: 'ECE',
+    year: 1,
+    section: 'ALL',
+    name: 'Prof. S. Rao',
+    email: 'rao.ece@vbithyd.ac.in',
+    phone: '9876543212',
+  });
 
   const examples = workbook.addWorksheet('Examples');
   configurePassengerSheet(examples);
@@ -611,6 +755,7 @@ module.exports = {
   csvSafeValue,
   loadRouteReferences,
   loadValidationContext,
+  normalizeLookup,
   parseCsvMatrix,
   parseRosterFile,
   previewRosterImport,
