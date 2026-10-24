@@ -337,7 +337,7 @@ export default function RostersScreen() {
               📥 Driver Template (.xlsx)
             </button>
             <button className="button button-primary" onClick={() => setCreating(true)}>
-              + Create next-year draft
+              + Create new draft
             </button>
           </div>
         }
