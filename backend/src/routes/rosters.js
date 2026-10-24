@@ -70,7 +70,8 @@ function sendExchangeError(res, error, scope) {
     return res.status(error.statusCode).json({ error: error.message, ...(error.details || {}) });
   }
   console.error(`[${scope}]`, error);
-  return res.status(500).json({ error: 'Roster file operation failed' });
+  const message = error?.message ? `Roster file operation failed: ${error.message}` : 'Roster file operation failed';
+  return res.status(500).json({ error: message });
 }
 
 function safeFilePart(value) {

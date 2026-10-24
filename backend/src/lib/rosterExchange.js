@@ -125,7 +125,21 @@ async function parseXlsxMatrix(buffer) {
   } catch (_error) {
     throw new RosterExchangeError('The XLSX file is damaged, encrypted, or not a supported workbook');
   }
-  const worksheet = workbook.getWorksheet('Passengers') || workbook.worksheets[0];
+  let worksheet = workbook.getWorksheet('Passengers') ||
+                  workbook.getWorksheet('Students') ||
+                  workbook.getWorksheet('Passenger') ||
+                  workbook.getWorksheet('Roster');
+  if (!worksheet) {
+    for (const sheet of workbook.worksheets) {
+      const lower = sheet.name.toLowerCase();
+      if (lower.includes('instruction') || lower.includes('example') || lower.includes('reference') || lower.includes('advisor')) {
+        continue;
+      }
+      worksheet = sheet;
+      break;
+    }
+  }
+  if (!worksheet) worksheet = workbook.worksheets[0];
   if (!worksheet) throw new RosterExchangeError('The XLSX workbook has no worksheet');
   if (worksheet.actualRowCount > MAX_IMPORT_ROWS + 1) throw new RosterExchangeError(`The file exceeds the ${MAX_IMPORT_ROWS}-row import limit`);
   if (worksheet.actualColumnCount > MAX_IMPORT_COLUMNS) throw new RosterExchangeError(`The file exceeds the ${MAX_IMPORT_COLUMNS}-column safety limit`);
@@ -145,37 +159,39 @@ async function parseXlsxMatrix(buffer) {
     for (let c = 1; c <= advisorSheet.actualColumnCount; c += 1) {
       headers.push(normalizeHeader(cellValue(headerRow.getCell(c)).text));
     }
-    const deptIdx = headers.findIndex((h) => h.includes('dept') || h.includes('branch'));
-    const yrIdx = headers.findIndex((h) => h.includes('year') || h.includes('yr'));
+    const deptIdx = headers.findIndex((h) => h.includes('dept') || h.includes('depart') || h.includes('branch') || h.includes('course'));
+    const yrIdx = headers.findIndex((h) => h.includes('year') || h.includes('yr') || h.includes('class'));
     const secIdx = headers.findIndex((h) => h.includes('sec'));
-    const nameIdx = headers.findIndex((h) => h.includes('name') || h.includes('advisor'));
-    const emailIdx = headers.findIndex((h) => h.includes('mail'));
+    const nameIdx = headers.findIndex((h) => h.includes('name') || h.includes('advisor') || h.includes('faculty'));
+    const emailIdx = headers.findIndex((h) => h.includes('mail') || h.includes('email'));
     const phoneIdx = headers.findIndex((h) => h.includes('phone') || h.includes('mobile') || h.includes('contact'));
 
-    advisorSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowNumber === 1) return;
-      const dept = normalizeText(cellValue(row.getCell(deptIdx + 1)).text);
-      const yr = Number(cellValue(row.getCell(yrIdx + 1)).text);
-      const secRaw = normalizeText(cellValue(row.getCell(secIdx + 1)).text);
-      const name = normalizeText(cellValue(row.getCell(nameIdx + 1)).text);
-      const email = normalizeText(cellValue(row.getCell(emailIdx + 1)).text);
-      const phone = normalizeText(cellValue(row.getCell(phoneIdx + 1)).text);
+    if (deptIdx >= 0 && yrIdx >= 0 && nameIdx >= 0 && emailIdx >= 0) {
+      advisorSheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        if (rowNumber === 1) return;
+        const dept = normalizeText(cellValue(row.getCell(deptIdx + 1)).text);
+        const yr = Number(cellValue(row.getCell(yrIdx + 1)).text);
+        const secRaw = secIdx >= 0 ? normalizeText(cellValue(row.getCell(secIdx + 1)).text) : '';
+        const name = normalizeText(cellValue(row.getCell(nameIdx + 1)).text);
+        const email = normalizeText(cellValue(row.getCell(emailIdx + 1)).text);
+        const phone = phoneIdx >= 0 ? normalizeText(cellValue(row.getCell(phoneIdx + 1)).text) : '';
 
-      if (dept && Number.isInteger(yr) && yr > 0 && name && email) {
-        const sections = secRaw
-          ? secRaw.split(/[,;\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)
-          : ['ALL'];
-        advisorRows.push({
-          department: dept.toUpperCase(),
-          year: yr,
-          sections: sections.length ? sections : ['ALL'],
-          rawSection: secRaw,
-          name,
-          email,
-          phone: phone || '9000000000',
-        });
-      }
-    });
+        if (dept && Number.isInteger(yr) && yr > 0 && name && email) {
+          const sections = secRaw
+            ? secRaw.split(/[,;\s]+/).map((s) => s.trim().toUpperCase()).filter(Boolean)
+            : ['ALL'];
+          advisorRows.push({
+            department: dept.toUpperCase(),
+            year: yr,
+            sections: sections.length ? sections : ['ALL'],
+            rawSection: secRaw,
+            name,
+            email,
+            phone: phone || '9000000000',
+          });
+        }
+      });
+    }
   }
 
   return { matrix, advisorRows };
