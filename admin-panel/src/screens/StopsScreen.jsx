@@ -142,6 +142,7 @@ export default function StopsScreen() {
   const [routes, setRoutes] = useState([]);
   const [selectedRouteId, setSelectedRouteId] = useState(urlRoute || '');
   const [direction, setDirection] = useState(urlDirection === 'EVENING' ? 'EVENING' : 'MORNING');
+  const [allSchedules, setAllSchedules] = useState([]);
   const [routeStops, setRouteStops] = useState([]);
   const [scheduleInfo, setScheduleInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -166,17 +167,32 @@ export default function StopsScreen() {
   // Guard to prevent map clicks from re-adding a stop immediately after clicking "Remove Stop"
   const ignoreMapClickUntilRef = useRef(0);
 
-  // 1. Initial load: all routes and master stops
+  // Helper to re-fetch schedules list across all routes
+  const refreshSchedules = useCallback(async () => {
+    try {
+      const res = await api.get('/schedules');
+      const list = res.data || [];
+      setAllSchedules(list);
+      return list;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  // 1. Initial load: all routes, master stops, and schedules
   const loadInitial = useCallback(async () => {
     setLoading(true);
     try {
-      const [routesRes, stopsRes] = await Promise.all([
+      const [routesRes, stopsRes, schedRes] = await Promise.all([
         api.get('/route-services'),
         api.get('/stops', { params: { limit: 500 } }),
+        api.get('/schedules').catch(() => ({ data: [] })),
       ]);
       const fetchedRoutes = routesRes.data || [];
+      const fetchedSchedules = schedRes.data || [];
       setRoutes(fetchedRoutes);
       setMasterStops(stopsRes.data?.items || []);
+      setAllSchedules(fetchedSchedules);
 
       if (fetchedRoutes.length > 0) {
         if (urlRoute) {
@@ -205,7 +221,7 @@ export default function StopsScreen() {
   }, [loadInitial]);
 
   // 2. Load stops for the selected route
-  const loadRouteDetails = useCallback(async (routeId, dir = 'MORNING', schedId = null) => {
+  const loadRouteDetails = useCallback(async (routeId, dir = 'MORNING', schedId = null, schedulesList = allSchedules) => {
     if (!routeId) {
       setRouteStops([]);
       setScheduleInfo(null);
@@ -215,14 +231,52 @@ export default function StopsScreen() {
     setMessage(null);
     try {
       let schedule = null;
-      if (schedId) {
-        try {
-          const { data } = await api.get(`/schedules/${schedId}`);
-          schedule = data;
-        } catch (_err) {
-          // Fall back to route detail
+      let targetScheduleId = schedId;
+
+      // When no specific scheduleId is provided in URL, pick the best schedule:
+      // Priority 1: Published schedule for this route & direction
+      // Priority 2: Draft schedule for this route & direction
+      // Priority 3: Any published schedule for this route
+      if (!targetScheduleId && schedulesList && schedulesList.length > 0) {
+        const routeSchedules = schedulesList.filter((s) => Number(s.routeServiceId) === Number(routeId));
+        const pubForDir = routeSchedules.find((s) => s.direction === dir && s.status === 'PUBLISHED');
+        if (pubForDir) {
+          targetScheduleId = pubForDir.id;
+        } else {
+          const draftForDir = routeSchedules.find((s) => s.direction === dir && s.status === 'DRAFT');
+          if (draftForDir) {
+            targetScheduleId = draftForDir.id;
+          } else {
+            const anyPub = routeSchedules.find((s) => s.status === 'PUBLISHED');
+            if (anyPub) {
+              targetScheduleId = anyPub.id;
+            }
+          }
         }
       }
+
+      if (targetScheduleId) {
+        try {
+          const { data } = await api.get(`/schedules/${targetScheduleId}`);
+          schedule = data;
+        } catch (_err) {
+          // Fall back below
+        }
+      }
+
+      // If still not resolved via schedule list, check public route schedule (always returns published timetable)
+      if (!schedule) {
+        try {
+          const { data } = await api.get(`/schedules/route/${routeId}`);
+          if (data && data.stops && data.stops.length > 1) {
+            schedule = { ...data, status: 'PUBLISHED' };
+          }
+        } catch (_pubErr) {
+          // Fall back to detail endpoint below
+        }
+      }
+
+      // Final fallback to detail endpoint
       if (!schedule) {
         const { data } = await api.get(`/schedules/route/${routeId}/detail`, {
           params: { direction: dir },
@@ -265,14 +319,14 @@ export default function StopsScreen() {
     } finally {
       setRouteLoading(false);
     }
-  }, []);
+  }, [allSchedules]);
 
   useEffect(() => {
     if (selectedRouteId) {
       const schedToUse = (urlScheduleId && String(selectedRouteId) === String(urlRoute)) ? urlScheduleId : null;
-      loadRouteDetails(selectedRouteId, direction, schedToUse);
+      loadRouteDetails(selectedRouteId, direction, schedToUse, allSchedules);
     }
-  }, [selectedRouteId, direction, urlScheduleId, urlRoute, loadRouteDetails]);
+  }, [selectedRouteId, direction, urlScheduleId, urlRoute, allSchedules, loadRouteDetails]);
 
   const selectedRoute = useMemo(() => {
     return routes.find((r) => String(r.id) === String(selectedRouteId)) || null;
@@ -584,8 +638,9 @@ export default function StopsScreen() {
           : `Route ${selectedRoute?.routeNo} stops and timetable saved successfully. You can now select the next route from the dropdown.`,
       });
 
-      // Reload route details to sync ids
-      await loadRouteDetails(selectedRouteId);
+      // Reload route details and refreshed schedules
+      const updatedList = await refreshSchedules();
+      await loadRouteDetails(selectedRouteId, direction, data?.id, updatedList);
     } catch (error) {
       setMessage({ type: 'error', text: errorMessage(error, 'Could not save route stops.') });
     } finally {
