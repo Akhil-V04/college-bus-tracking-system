@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import api, { errorMessage } from '../api';
@@ -133,9 +134,14 @@ function MapController({ onMapReady }) {
 }
 
 export default function StopsScreen() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlRoute = searchParams.get('route') || searchParams.get('routeId');
+  const urlScheduleId = searchParams.get('scheduleId');
+  const urlDirection = searchParams.get('direction');
+
   const [routes, setRoutes] = useState([]);
-  const [selectedRouteId, setSelectedRouteId] = useState('');
-  const [direction, setDirection] = useState('MORNING');
+  const [selectedRouteId, setSelectedRouteId] = useState(urlRoute || '');
+  const [direction, setDirection] = useState(urlDirection === 'EVENING' ? 'EVENING' : 'MORNING');
   const [routeStops, setRouteStops] = useState([]);
   const [scheduleInfo, setScheduleInfo] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -168,26 +174,38 @@ export default function StopsScreen() {
         api.get('/route-services'),
         api.get('/stops', { params: { limit: 500 } }),
       ]);
-      setRoutes(routesRes.data || []);
+      const fetchedRoutes = routesRes.data || [];
+      setRoutes(fetchedRoutes);
       setMasterStops(stopsRes.data?.items || []);
 
-      // If routes exist, auto-select the first route
-      if (routesRes.data?.length > 0 && !selectedRouteId) {
-        setSelectedRouteId(String(routesRes.data[0].id));
+      if (fetchedRoutes.length > 0) {
+        if (urlRoute) {
+          const matched = fetchedRoutes.find((r) => String(r.id) === String(urlRoute) || String(r.routeNo) === String(urlRoute));
+          if (matched) {
+            setSelectedRouteId(String(matched.id));
+          } else {
+            setSelectedRouteId(String(urlRoute));
+          }
+        } else if (!selectedRouteId) {
+          setSelectedRouteId(String(fetchedRoutes[0].id));
+        }
+      }
+      if (urlDirection && (urlDirection === 'MORNING' || urlDirection === 'EVENING')) {
+        setDirection(urlDirection);
       }
     } catch (error) {
       setMessage({ type: 'error', text: errorMessage(error, 'Could not load transport routes.') });
     } finally {
       setLoading(false);
     }
-  }, [selectedRouteId]);
+  }, [urlRoute, urlDirection, selectedRouteId]);
 
   useEffect(() => {
     loadInitial();
   }, [loadInitial]);
 
   // 2. Load stops for the selected route
-  const loadRouteDetails = useCallback(async (routeId) => {
+  const loadRouteDetails = useCallback(async (routeId, dir = 'MORNING', schedId = null) => {
     if (!routeId) {
       setRouteStops([]);
       setScheduleInfo(null);
@@ -196,7 +214,21 @@ export default function StopsScreen() {
     setRouteLoading(true);
     setMessage(null);
     try {
-      const { data: schedule } = await api.get(`/schedules/route/${routeId}/detail`);
+      let schedule = null;
+      if (schedId) {
+        try {
+          const { data } = await api.get(`/schedules/${schedId}`);
+          schedule = data;
+        } catch (_err) {
+          // Fall back to route detail
+        }
+      }
+      if (!schedule) {
+        const { data } = await api.get(`/schedules/route/${routeId}/detail`, {
+          params: { direction: dir },
+        });
+        schedule = data;
+      }
       setScheduleInfo(schedule);
 
       if (schedule.stops && schedule.stops.length > 0) {
@@ -237,9 +269,10 @@ export default function StopsScreen() {
 
   useEffect(() => {
     if (selectedRouteId) {
-      loadRouteDetails(selectedRouteId);
+      const schedToUse = (urlScheduleId && String(selectedRouteId) === String(urlRoute)) ? urlScheduleId : null;
+      loadRouteDetails(selectedRouteId, direction, schedToUse);
     }
-  }, [selectedRouteId, loadRouteDetails]);
+  }, [selectedRouteId, direction, urlScheduleId, urlRoute, loadRouteDetails]);
 
   const selectedRoute = useMemo(() => {
     return routes.find((r) => String(r.id) === String(selectedRouteId)) || null;
@@ -576,6 +609,17 @@ export default function StopsScreen() {
     }
   }, [mapInstance, stopCoordinates]);
 
+  // Auto-fit and center map bounds whenever route stops or map instance are loaded
+  useEffect(() => {
+    if (!mapInstance) return;
+    if (stopCoordinates.length > 1) {
+      const bounds = L.latLngBounds(stopCoordinates);
+      mapInstance.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+    } else if (stopCoordinates.length === 1) {
+      mapInstance.setView(stopCoordinates[0], 13);
+    }
+  }, [mapInstance, selectedRouteId, scheduleInfo?.id, stopCoordinates.length]);
+
   // Decode saved route geometry if available from backend schedule
   useEffect(() => {
     if (scheduleInfo?.geometryPolyline && scheduleInfo.geometryProvider !== 'FALLBACK_INTERPOLATION') {
@@ -692,13 +736,16 @@ export default function StopsScreen() {
 
       {/* ─── Route Selector Toolbar ─── */}
       <div className="panel" style={{ padding: '16px 20px', marginBottom: 20, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
-        <div style={{ minWidth: 260, flex: '1 1 300px' }}>
+        <div style={{ minWidth: 240, flex: '1 1 260px' }}>
           <label style={{ display: 'block', fontSize: 11, fontWeight: 750, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             Select Route To Map Stops
           </label>
           <select
             value={selectedRouteId}
-            onChange={(e) => setSelectedRouteId(e.target.value)}
+            onChange={(e) => {
+              setSelectedRouteId(e.target.value);
+              setSearchParams({ route: e.target.value, direction });
+            }}
             style={{ width: '100%', padding: '10px 14px', borderRadius: 9, border: '1px solid var(--line)', background: 'var(--canvas)', color: 'var(--ink)', fontSize: 13, fontWeight: 650, outline: 'none' }}
           >
             <option value="">-- Choose a route --</option>
@@ -707,6 +754,23 @@ export default function StopsScreen() {
                 Route {r.routeNo} — {r.name}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div style={{ minWidth: 170 }}>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 750, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Direction
+          </label>
+          <select
+            value={direction}
+            onChange={(e) => {
+              setDirection(e.target.value);
+              setSearchParams({ route: selectedRouteId, direction: e.target.value });
+            }}
+            style={{ width: '100%', padding: '10px 14px', borderRadius: 9, border: '1px solid var(--line)', background: 'var(--canvas)', color: 'var(--ink)', fontSize: 13, fontWeight: 650, outline: 'none' }}
+          >
+            <option value="MORNING">🌅 Morning (To College)</option>
+            <option value="EVENING">🌆 Evening (From College)</option>
           </select>
         </div>
 

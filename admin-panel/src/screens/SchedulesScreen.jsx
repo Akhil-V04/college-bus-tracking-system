@@ -174,7 +174,7 @@ export default function SchedulesScreen() {
         description="Build draft stop timelines, validate their order, and publish one active version per route and direction."
         actions={
           <div style={{ display: 'flex', gap: 8 }}>
-            <Link to="/schedule-builder" className="button button-secondary">🗺️ Map Builder</Link>
+            <Link to="/stops" className="button button-secondary">🗺️ Stops & Map</Link>
             <button className="button button-primary" onClick={() => setCreating(true)}>+ New schedule</button>
           </div>
         } />
@@ -192,11 +192,13 @@ export default function SchedulesScreen() {
               <td>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <button className="text-button" onClick={() => openDetail(schedule.id)}>Manage</button>
-                  {schedule.status === 'DRAFT' && (
-                    <Link to="/schedule-builder" className="text-button" style={{ color: 'var(--brand-primary, #0284c7)' }}>
-                      🗺️ Map
-                    </Link>
-                  )}
+                  <Link
+                    to={`/stops?route=${schedule.routeServiceId}&scheduleId=${schedule.id}&direction=${schedule.direction}`}
+                    className="text-button"
+                    style={{ color: 'var(--brand-primary, #0284c7)' }}
+                  >
+                    🗺️ View on Map
+                  </Link>
                   <button className="text-button text-button-danger" onClick={() => deleteSchedule(schedule)}>Delete</button>
                 </div>
               </td>
@@ -232,7 +234,12 @@ export default function SchedulesScreen() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18 }}>
             <StatusBadge value={detail.status} />
             <div className="row-actions">
-              <Link to="/schedule-builder" className="button button-secondary">🗺️ Map Builder</Link>
+              <Link
+                to={`/stops?route=${detail.routeService.id}&scheduleId=${detail.id}&direction=${detail.direction}`}
+                className="button button-secondary"
+              >
+                🗺️ View on Map
+              </Link>
               <button className="button button-secondary" onClick={validateSchedule}>Validate</button>
               {detail.status === 'DRAFT' && <button className="button button-primary" onClick={publishSchedule}>Publish</button>}
               <button className="button button-danger" onClick={() => deleteSchedule(detail)}>Delete Schedule</button>

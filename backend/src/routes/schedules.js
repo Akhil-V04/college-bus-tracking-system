@@ -361,18 +361,23 @@ router.get('/route/:routeServiceId/detail', async (req, res) => {
   const routeServiceId = Number(req.params.routeServiceId);
   if (!Number.isInteger(routeServiceId)) return res.status(400).json({ error: 'Invalid routeServiceId' });
 
-  const draft = await prisma.scheduleVersion.findFirst({
-    where: { routeServiceId, status: 'DRAFT' },
-    orderBy: { version: 'desc' },
-    include: {
-      routeService: true,
-      stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
-    },
-  });
-  if (draft) return res.json(draft);
+  // If a specific schedule ID was requested, fetch it directly
+  if (req.query.scheduleId) {
+    const specific = await prisma.scheduleVersion.findUnique({
+      where: { id: Number(req.query.scheduleId) },
+      include: {
+        routeService: true,
+        stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+      },
+    });
+    if (specific) return res.json(specific);
+  }
 
+  const direction = req.query.direction ? String(req.query.direction).trim() : 'MORNING';
+
+  // 1. Prefer published schedule for the requested direction so live routes and pins always display
   const published = await prisma.scheduleVersion.findFirst({
-    where: { routeServiceId, status: 'PUBLISHED' },
+    where: { routeServiceId, direction, status: 'PUBLISHED' },
     orderBy: { publishedAt: 'desc' },
     include: {
       routeService: true,
@@ -381,7 +386,29 @@ router.get('/route/:routeServiceId/detail', async (req, res) => {
   });
   if (published) return res.json(published);
 
-  // Return a clean default template schedule with VBIT College so all routes can be mapped immediately
+  // 2. If no published schedule exists, return a draft schedule for this direction
+  const draft = await prisma.scheduleVersion.findFirst({
+    where: { routeServiceId, direction, status: 'DRAFT' },
+    orderBy: { version: 'desc' },
+    include: {
+      routeService: true,
+      stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+    },
+  });
+  if (draft) return res.json(draft);
+
+  // 3. If neither exists for this direction, check if any published schedule exists for the route
+  const anyPublished = await prisma.scheduleVersion.findFirst({
+    where: { routeServiceId, status: 'PUBLISHED' },
+    orderBy: { publishedAt: 'desc' },
+    include: {
+      routeService: true,
+      stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+    },
+  });
+  if (anyPublished) return res.json(anyPublished);
+
+  // 4. Return a clean default template schedule with VBIT College so all routes can be mapped immediately
   const route = await prisma.routeService.findUnique({ where: { id: routeServiceId } });
   if (!route) return res.status(404).json({ error: 'Route not found' });
 
@@ -397,15 +424,15 @@ router.get('/route/:routeServiceId/detail', async (req, res) => {
   return res.json({
     id: null,
     routeServiceId,
-    name: `Route ${route.routeNo} Morning Schedule`,
-    direction: 'MORNING',
+    name: `Route ${route.routeNo} ${direction === 'EVENING' ? 'Evening' : 'Morning'} Schedule`,
+    direction,
     status: 'NEW_ROUTE',
     routeService: route,
     stops: [
       {
         id: null,
         sequenceOrder: 1,
-        scheduledTime: '09:25',
+        scheduledTime: direction === 'EVENING' ? '16:30' : '09:25',
         stop: vbitStop,
       },
     ],
