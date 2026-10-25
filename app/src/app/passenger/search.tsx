@@ -1,22 +1,28 @@
 import { useQuery } from '@tanstack/react-query';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useState, useMemo } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui';
+import { AppIcon } from '@/components/AppIcon';
 import { fontWeight, radius, spacing } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { RouteSummary } from '@/types/api';
-import { useTheme } from "@/contexts/ThemeContext";
+import { useTheme } from '@/contexts/ThemeContext';
 
 export default function SearchScreen() {
-    const styles = useStyles();
+  const styles = useStyles();
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const isStopMode = mode === 'stop';
   const [filterText, setFilterText] = useState('');
 
   const routes = useQuery({
     queryKey: ['passenger-routes-search', filterText],
-    queryFn: () => apiRequest<RouteSummary[]>(`/passenger/routes${filterText ? `?q=${encodeURIComponent(filterText)}` : ''}`),
+    queryFn: () =>
+      apiRequest<RouteSummary[]>(
+        `/passenger/routes${filterText ? `?q=${encodeURIComponent(filterText)}` : ''}`
+      ),
     staleTime: 30_000,
   });
 
@@ -30,13 +36,18 @@ export default function SearchScreen() {
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Pressable
-            onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/passenger'); }}
+            onPress={() => {
+              if (router.canGoBack()) router.back();
+              else router.replace('/passenger');
+            }}
             style={styles.backBtn}
           >
             <Text style={styles.backIcon}>←</Text>
           </Pressable>
-          <Text style={styles.headerTitle}>Search by Route Number</Text>
-          <View style={styles.backBtn} /> {/* spacer */}
+          <Text style={styles.headerTitle}>
+            {isStopMode ? 'Find Bus Stop Near Me' : 'Search by Route Number'}
+          </Text>
+          <View style={styles.backBtn} />
         </View>
 
         {/* Search Input */}
@@ -45,26 +56,34 @@ export default function SearchScreen() {
             style={styles.searchInput}
             value={filterText}
             onChangeText={setFilterText}
-            placeholder="Search by route number, name, or stop..."
+            placeholder={
+              isStopMode
+                ? 'Search by stop name, locality, or area...'
+                : 'Search by route number, name, or stop...'
+            }
             placeholderTextColor="#9CA3AF"
             autoFocus
           />
-          <Text style={styles.searchIcon}>🔍</Text>
+          <View style={styles.searchIconBox}>
+            <AppIcon name={isStopMode ? 'pin' : 'search'} size={20} colorScheme="light" />
+          </View>
         </View>
       </View>
 
-      {/* Results */}
+      {/* Results Header */}
       <View style={styles.listHeader}>
-        <Text style={styles.listHeaderText}>Route Number</Text>
-        {routes.data && (
+        <Text style={styles.listHeaderText}>
+          {isStopMode ? 'Matching Routes & Stops' : 'Route Number'}
+        </Text>
+        {routes.data ? (
           <Text style={styles.resultCount}>{routes.data.length} results</Text>
-        )}
+        ) : null}
       </View>
 
-      {routes.isPending && <LoadingState label="Searching routes..." />}
-      {routes.isError && (
+      {routes.isPending ? <LoadingState label="Searching routes..." /> : null}
+      {routes.isError ? (
         <ErrorState message={routes.error.message} retry={() => routes.refetch()} />
-      )}
+      ) : null}
 
       <FlatList
         data={routes.data || []}
@@ -75,7 +94,11 @@ export default function SearchScreen() {
           !routes.isPending && !routes.isError ? (
             <EmptyState
               title="No routes found"
-              message={filterText ? `No routes matching "${filterText}"` : 'No routes available.'}
+              message={
+                filterText
+                  ? `No routes matching "${filterText}"`
+                  : 'No routes available.'
+              }
             />
           ) : null
         }
@@ -86,11 +109,11 @@ export default function SearchScreen() {
           >
             <View style={styles.routeItemLeft}>
               <View style={styles.busIcon}>
-                <Text style={styles.busIconEmoji}>🚌</Text>
+                <AppIcon name="bus" size={24} />
               </View>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={styles.routeNumber}>{item.routeNo}</Text>
-                {item.name && <Text style={styles.routeSubtitle}>{item.name}</Text>}
+                {item.name ? <Text style={styles.routeSubtitle}>{item.name}</Text> : null}
               </View>
             </View>
             <View style={styles.activeBadge}>
@@ -111,110 +134,116 @@ export default function SearchScreen() {
 
 const useStyles = () => {
   const { colors } = useTheme();
-  return useMemo(() => StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  header: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.md,
-    paddingBottom: 20,
-    gap: spacing.md,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 20,
-  },
-  backIcon: { color: colors.white, fontSize: 24, fontWeight: fontWeight.bold },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: fontWeight.bold,
-    color: colors.white,
-    letterSpacing: 0.3,
-  },
-  searchContainer: { position: 'relative' },
-  searchInput: {
-    height: 48,
-    paddingHorizontal: 16,
-    paddingRight: 44,
-    borderRadius: radius.sm,
-    backgroundColor: colors.white,
-    color: '#1F2937',
-    fontSize: 15,
-    fontWeight: fontWeight.normal,
-  },
-  searchIcon: {
-    position: 'absolute',
-    right: 14,
-    top: 12,
-    fontSize: 20,
-  },
-  listHeader: {
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  listHeaderText: {
-    fontSize: 13,
-    fontWeight: fontWeight.medium,
-    color: colors.textMuted,
-    letterSpacing: 0.5,
-  },
-  resultCount: { fontSize: 12, color: colors.textMuted },
-  listContent: {
-    backgroundColor: colors.surfaceElevated,
-    paddingBottom: 20,
-  },
-  routeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-  },
-  routeItemPressed: { backgroundColor: colors.surface },
-  routeItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  busIcon: {
-    width: 32,
-    height: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  busIconEmoji: { fontSize: 22 },
-  routeNumber: {
-    fontSize: 17,
-    fontWeight: fontWeight.medium,
-    color: colors.textPrimary,
-    letterSpacing: 0.3,
-  },
-  routeSubtitle: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
-  activeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-    backgroundColor: colors.accentBg,
-  },
-  activeBadgeText: {
-    color: colors.accent,
-    fontSize: 12,
-    fontWeight: fontWeight.bold,
-  },
-  separator: { height: 1, backgroundColor: colors.border, marginHorizontal: 20 },
-  bottomIndicator: { paddingVertical: 12, alignItems: 'center' },
-  indicatorBar: {
-    width: 140,
-    height: 4,
-    backgroundColor: colors.accent,
-    borderRadius: 2,
-  },
-}), [colors]);
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flex: 1, backgroundColor: colors.background },
+        header: {
+          backgroundColor: colors.accent,
+          paddingHorizontal: spacing.md,
+          paddingTop: spacing.md,
+          paddingBottom: 20,
+          gap: spacing.md,
+        },
+        headerTop: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        backBtn: {
+          width: 40,
+          height: 40,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 20,
+        },
+        backIcon: { color: colors.white, fontSize: 24, fontWeight: fontWeight.bold },
+        headerTitle: {
+          fontSize: 18,
+          fontWeight: fontWeight.bold,
+          color: colors.white,
+          letterSpacing: 0.3,
+        },
+        searchContainer: { position: 'relative' },
+        searchInput: {
+          height: 48,
+          paddingHorizontal: 16,
+          paddingRight: 44,
+          borderRadius: radius.sm,
+          backgroundColor: colors.white,
+          color: '#1F2937',
+          fontSize: 15,
+          fontWeight: fontWeight.normal,
+        },
+        searchIconBox: {
+          position: 'absolute',
+          right: 14,
+          top: 14,
+          width: 20,
+          height: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        listHeader: {
+          paddingHorizontal: 20,
+          paddingVertical: 12,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        },
+        listHeaderText: {
+          fontSize: 13,
+          fontWeight: fontWeight.medium,
+          color: colors.textMuted,
+          letterSpacing: 0.5,
+        },
+        resultCount: { fontSize: 12, color: colors.textMuted },
+        listContent: {
+          backgroundColor: colors.surfaceElevated,
+          paddingBottom: 20,
+        },
+        routeItem: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 20,
+          paddingVertical: 14,
+        },
+        routeItemPressed: { backgroundColor: colors.surface },
+        routeItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 },
+        busIcon: {
+          width: 32,
+          height: 32,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        routeNumber: {
+          fontSize: 17,
+          fontWeight: fontWeight.medium,
+          color: colors.textPrimary,
+          letterSpacing: 0.3,
+        },
+        routeSubtitle: { fontSize: 12, color: colors.textMuted, marginTop: 1 },
+        activeBadge: {
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          borderRadius: 4,
+          backgroundColor: colors.accentBg,
+        },
+        activeBadgeText: {
+          color: colors.accent,
+          fontSize: 12,
+          fontWeight: fontWeight.bold,
+        },
+        separator: { height: 1, backgroundColor: colors.border, marginHorizontal: 20 },
+        bottomIndicator: { paddingVertical: 12, alignItems: 'center' },
+        indicatorBar: {
+          width: 140,
+          height: 4,
+          backgroundColor: colors.accent,
+          borderRadius: 2,
+        },
+      }),
+    [colors]
+  );
 };

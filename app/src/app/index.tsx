@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { fontWeight, radius, spacing } from '@/constants/theme';
 import { useTheme } from "@/contexts/ThemeContext";
+import { AppIcon } from '@/components/AppIcon';
 
 type Role = 'passenger' | 'driver';
 
@@ -38,7 +39,7 @@ export default function RoleSelectionScreen() {
         <View style={styles.branding}>
           <View style={styles.logoContainer}>
             <View style={styles.logoBg}>
-              <Text style={styles.logoEmoji}>🚌</Text>
+              <AppIcon name="bus" size={36} />
             </View>
           </View>
           <Text style={styles.brandTitle}>CampusTransit</Text>
@@ -67,7 +68,7 @@ export default function RoleSelectionScreen() {
                 selectedRole === 'passenger' && styles.roleIconSelected,
               ]}
             >
-              <Text style={styles.roleIcon}>👤</Text>
+              <AppIcon name="passenger" size={30} />
             </View>
             <Text style={styles.roleTitle}>Passenger</Text>
             <Text style={styles.roleSubtext}>Student / Faculty</Text>
@@ -92,7 +93,7 @@ export default function RoleSelectionScreen() {
                 selectedRole === 'driver' && styles.roleIconSelected,
               ]}
             >
-              <Text style={styles.roleIcon}>🚌</Text>
+              <AppIcon name="driver" size={30} />
             </View>
             <Text style={styles.roleTitle}>Bus Driver</Text>
             <Text style={styles.roleSubtext}>Transit Operator</Text>

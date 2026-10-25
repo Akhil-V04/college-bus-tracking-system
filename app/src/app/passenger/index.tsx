@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { BlurView } from 'expo-blur';
 import { router } from 'expo-router';
 import { useRef, useState, useMemo } from 'react';
 import {
@@ -65,11 +64,11 @@ function RouteCard({ route }: { route: RouteSummary }) {
         </Pill>
       </View>
 
-      {route.isEventOverride && (
+      {route.isEventOverride ? (
         <View style={styles.eventOverrideCardBadge}>
           <Text style={styles.eventOverrideCardBadgeText}>⚡ Special Event Timetable Active</Text>
         </View>
-      )}
+      ) : null}
 
       <View style={styles.routeMeta}>
         <View style={styles.metaItem}>
@@ -79,14 +78,14 @@ function RouteCard({ route }: { route: RouteSummary }) {
         <Text style={styles.viewRoute}>View route →</Text>
       </View>
 
-      {route.hasActiveTrip && (
+      {route.hasActiveTrip ? (
         <View style={[styles.liveBanner, route.tripDirection === 'FROM_COLLEGE' && styles.liveBannerReturn]}>
           <View style={[styles.liveDot, route.tripDirection === 'FROM_COLLEGE' && styles.liveDotReturn]} />
           <Text style={[styles.liveText, route.tripDirection === 'FROM_COLLEGE' && styles.liveTextReturn]}>
             {route.tripDirection === 'FROM_COLLEGE' ? '🏠 Return Trip Live (College ➔ Home)' : '🎓 Inbound Live (To College)'}
           </Text>
         </View>
-      )}
+      ) : null}
     </Pressable>
   );
 }
@@ -199,7 +198,7 @@ function AssistantOverlay({ visible, onClose }: { visible: boolean; onClose: () 
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
-      <BlurView intensity={100} tint="dark" style={overlayStyles.blurFill}>
+      <View style={[overlayStyles.blurFill, { backgroundColor: 'rgba(9, 15, 22, 0.96)' }]}>
         <SafeAreaView style={overlayStyles.safeArea} edges={['top', 'bottom']}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -281,7 +280,7 @@ function AssistantOverlay({ visible, onClose }: { visible: boolean; onClose: () 
             </View>
           </KeyboardAvoidingView>
         </SafeAreaView>
-      </BlurView>
+      </View>
     </Modal>
   );
 }
@@ -315,6 +314,14 @@ export default function PassengerDashboard() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
+          <Pressable
+            onPress={() => router.replace('/')}
+            style={({ pressed }) => [styles.headerBackBtn, pressed && { opacity: 0.6 }]}
+            hitSlop={10}
+            accessibilityLabel="Back to Role Selection"
+          >
+            <Text style={styles.headerBackIcon}>←</Text>
+          </Pressable>
           <View style={styles.headerIcon}>
             <AppIcon name="bus" size={26} />
           </View>
@@ -332,7 +339,7 @@ export default function PassengerDashboard() {
         {/* Service Menu */}
         <Pressable
           style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-          onPress={() => router.push('/passenger/search')}
+          onPress={() => router.push('/passenger/search?mode=route')}
         >
           <View style={styles.menuIconBox}>
             <AppIcon name="search" size={22} />
@@ -343,7 +350,7 @@ export default function PassengerDashboard() {
 
         <Pressable
           style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-          onPress={() => router.push('/passenger/search')}
+          onPress={() => router.push('/passenger/search?mode=stop')}
         >
           <View style={styles.menuIconBox}>
             <AppIcon name="pin" size={22} />
@@ -380,16 +387,16 @@ export default function PassengerDashboard() {
           <Pill tone="accent">{routes.data?.length || 0} routes</Pill>
         </View>
 
-        {routes.isPending && <LoadingState label="Loading college routes..." />}
-        {routes.isError && (
+        {routes.isPending ? <LoadingState label="Loading college routes..." /> : null}
+        {routes.isError ? (
           <ErrorState message={routes.error.message} retry={() => routes.refetch()} />
-        )}
-        {routes.data?.length === 0 && (
+        ) : null}
+        {routes.data && routes.data.length === 0 ? (
           <EmptyState
             title="No routes published"
             message="The transport administrator has not added route services yet."
           />
-        )}
+        ) : null}
         {routes.data?.map((route) => <RouteCard key={route.id} route={route} />)}
 
         {/* Privacy Notice */}
@@ -400,13 +407,13 @@ export default function PassengerDashboard() {
           </Text>
         </View>
 
-        {/* Bottom Actions */}
+        {/* Bottom Actions - Back to Role Selection */}
         <View style={styles.bottomActions}>
           <Pressable
             style={({ pressed }) => [styles.actionBtn, pressed && styles.actionBtnPressed]}
-            onPress={() => router.push('/driver/login')}
+            onPress={() => router.replace('/')}
           >
-            <Text style={styles.actionBtnText}>🔐 Driver Login</Text>
+            <Text style={styles.actionBtnText}>← Switch Role (Driver / Passenger)</Text>
           </Pressable>
         </View>
 
@@ -453,7 +460,19 @@ const useStyles = () => {
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerBackBtn: {
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    marginRight: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerBackIcon: {
+    color: colors.textPrimary,
+    fontSize: 22,
+    fontWeight: fontWeight.bold,
+  },
   headerIcon: {
     width: 40,
     height: 40,

@@ -1,23 +1,30 @@
 # Mobile App Icons
 
 This folder contains the icons used across the mobile app screens and buttons.
+The app automatically switches between the default icon (light theme) and `*_white.png` (dark theme).
 
-## How to Customize or Change App Icons
-You can drop your own custom `.png` icon files into this directory.
-**Keep the file names exactly the same** so the app dynamically renders your custom icons!
+## Customizing / Adding Your Icons Manually
+You can replace or drop your custom `.png` icon files into this directory.
+**Keep the file names exactly the same** so the app dynamically renders your custom icons in both light and dark modes!
 
 ### Icon Mapping Table:
 
-| File Name | App Screen / Button | Recommended Size |
-| :--- | :--- | :--- |
-| `bus.png` | **Header logo & Route Cards** | 48x48 px or 64x64 px PNG |
-| `notifications.png` | **Notifications Button (Bell)** | 48x48 px PNG |
-| `search.png` | **Search by Route Number** | 48x48 px PNG |
-| `pin.png` | **Bus Stop Near Me** | 48x48 px PNG |
-| `emergency.png` | **Emergency Assistance (SOS)** | 48x48 px PNG |
-| `report.png` | **Report an Issue** | 48x48 px PNG |
-| `assistant.png` | **AI Assistant (Chatbot FAB)** | 48x48 px or 64x64 px PNG |
-| `driver.png` | **Driver Portal / Console** | 48x48 px PNG |
-| `route.png` | **Route Map & Timeline** | 48x48 px PNG |
+| Icon Key | Light Theme Icon (Default) | Dark Theme Icon (White) | Used In Screen / Button |
+| :--- | :--- | :--- | :--- |
+| **bus** | `bus.png` | `bus_white.png` | Header logo, route cards, search results |
+| **passenger** | `passenger.png` | `passenger_white.png` | Role selection card ("Passenger") |
+| **driver** | `driver.png` | `driver_white.png` | Role selection card ("Bus Driver") |
+| **search** | `search.png` | `search_white.png` | "Search by Route Number" menu item & search screen |
+| **pin** | `pin.png` | `pin_white.png` | "Bus Stop Near Me" menu item & search screen |
+| **emergency** | `emergency.png` | `emergency_white.png` | "Emergency" SOS menu item & emergency screen |
+| **report** | `report.png` | `report_white.png` | "Report an Issue" menu item & report screen |
+| **assistant** | `assistant.png` | `assistant_white.png` | Floating AI Assistant Action Button (FAB) |
+| **notifications** | `notifications.png` | `notifications_white.png` | Notification bell in top header |
+| **route** | `route.png` | `route_white.png` | Route details, map & timeline |
 
-*Tip: For sharpest quality on mobile retina screens, use transparent PNGs (recommended 64x64 or 96x96 pixels).*
+### Notes for Custom Icons:
+1. **Format**: Transparent PNG (`.png`).
+2. **Recommended Dimensions**: 64x64 px or 96x96 px (square).
+3. **Theming**:
+   - `*.png` should have dark or branded colors (for light backgrounds).
+   - `*_white.png` should have crisp white or bright lines (for dark mode backgrounds).
