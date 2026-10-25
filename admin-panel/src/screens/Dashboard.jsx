@@ -6,6 +6,7 @@ import { LoadingState, Notice, PageHeader, StatusBadge } from '../components';
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [message, setMessage] = useState(null);
+  const [showAllRoutes, setShowAllRoutes] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -16,9 +17,13 @@ export default function Dashboard() {
       api.get('/schedules'),
       api.get('/class-advisors', { params: { limit: 200 } }),
       api.get('/late-alerts'),
+      api.get('/passenger/routes').catch(() => ({ data: [] })),
     ])
-      .then(([routes, drivers, rosters, schedules, advisors, alerts]) => {
+      .then(([routes, drivers, rosters, schedules, advisors, alerts, passengerRoutes]) => {
         if (!active) return;
+        const passengerCounts = new Map(
+          (passengerRoutes.data || []).map((route) => [route.id, route.assignedPassengerCount])
+        );
         setData({
           routes: routes.data.items,
           drivers: drivers.data.items,
@@ -26,6 +31,7 @@ export default function Dashboard() {
           schedules: schedules.data,
           advisors: advisors.data.items,
           alerts: alerts.data,
+          passengerCounts,
         });
       })
       .catch((error) => {
@@ -45,6 +51,11 @@ export default function Dashboard() {
     };
   }, [data]);
 
+  const displayRoutes = useMemo(() => {
+    if (!data?.routes) return [];
+    return showAllRoutes ? data.routes : data.routes.slice(0, 8);
+  }, [data?.routes, showAllRoutes]);
+
   return (
     <>
       <PageHeader eyebrow="Operations overview" title="Transport dashboard"
@@ -62,23 +73,61 @@ export default function Dashboard() {
 
           <section className="dashboard-grid">
             <article className="panel">
-              <header className="panel-header"><h2>Route capacity overview</h2><Link className="text-button" to="/routes">Open routes</Link></header>
+              <header className="panel-header">
+                <h2>Route capacity overview</h2>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  {data.routes.length > 8 && (
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setShowAllRoutes((prev) => !prev)}
+                    >
+                      {showAllRoutes ? 'Show top 8' : `Show all ${data.routes.length}`}
+                    </button>
+                  )}
+                  <Link className="text-button" to="/routes">Open routes</Link>
+                </div>
+              </header>
               <div className="table-wrap">
                 <table className="data-table">
-                  <thead><tr><th>Route</th><th>Driver</th><th>Capacity</th></tr></thead>
+                  <thead><tr><th>Route</th><th>Driver</th><th>Assigned / Capacity</th></tr></thead>
                   <tbody>
-                    {data.routes.slice(0, 8).map((route) => {
-                      const assigned = route._count?.rosterPassengers || 0;
-                      const percentage = Math.min(100, Math.round((assigned / route.capacity) * 100));
+                    {displayRoutes.map((route) => {
+                      const assigned =
+                        route.assignedPassengerCount ??
+                        route._count?.rosterPassengers ??
+                        data.passengerCounts?.get(route.id) ??
+                        0;
+                      const percentage = route.capacity > 0 ? Math.min(100, Math.round((assigned / route.capacity) * 100)) : 0;
+                      const over = assigned > route.capacity;
                       return <tr key={route.id}>
                         <td><div className="cell-title">Route {route.routeNo}</div><div className="cell-subtitle">{route.name}</div></td>
                         <td>{route.driver?.name || <span className="cell-subtitle">Not assigned</span>}</td>
-                        <td><div className="cell-title">{route.capacity} seats</div><div className="capacity-meter"><i style={{ width: `${percentage}%` }} /></div></td>
+                        <td>
+                          <div className="cell-title" style={{ color: over ? 'var(--red)' : undefined }}>
+                            {assigned} / {route.capacity} seats <span className="cell-subtitle" style={{ fontSize: 11, marginLeft: 4 }}>({percentage}%)</span>
+                          </div>
+                          <div className="capacity-meter">
+                            <i style={{ width: `${percentage}%`, background: over ? 'var(--red)' : undefined }} />
+                          </div>
+                        </td>
                       </tr>;
                     })}
                   </tbody>
                 </table>
               </div>
+              {data.routes.length > 8 && (
+                <div style={{ padding: '10px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--line)', fontSize: 12 }}>
+                  <span className="cell-subtitle">Showing {displayRoutes.length} of {data.routes.length} routes</span>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setShowAllRoutes((prev) => !prev)}
+                  >
+                    {showAllRoutes ? 'Collapse to top 8' : `View all ${data.routes.length} routes →`}
+                  </button>
+                </div>
+              )}
             </article>
 
             <div style={{ display: 'grid', gap: 18 }}>

@@ -127,7 +127,7 @@ export default function RouteServicesScreen() {
           <table className="data-table">
             <thead><tr><th>Route</th><th>Area covered</th><th>Assigned driver</th><th>Assigned / capacity</th><th /></tr></thead>
             <tbody>{routes.map((route) => {
-              const assigned = assignedCounts.get(route.id) || 0;
+              const assigned = assignedCounts.get(route.id) ?? route.assignedPassengerCount ?? route._count?.rosterPassengers ?? 0;
               const over = assigned > route.capacity;
               return <tr key={route.id}>
                 <td><div className="cell-title">Route {route.routeNo}</div><div className="cell-subtitle">{route.name}</div></td>

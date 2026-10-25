@@ -60,16 +60,41 @@ router.get('/mine', requireAuth(['driver']), async (req, res) => {
 router.get('/admin', requireAuth(['admin']), async (req, res) => {
   try {
     const { page, limit, skip, take } = parsePagination(req.query);
+
+    const publishedRoster = await prisma.transportRoster.findFirst({
+      where: { status: 'PUBLISHED' },
+      orderBy: { publishedAt: 'desc' },
+      select: { id: true },
+    });
+
     const [items, total] = await Promise.all([
       prisma.routeService.findMany({
         skip,
         take,
-        include: { driver: { select: { id: true, driverCode: true, name: true, phone: true } } },
+        include: {
+          driver: { select: { id: true, driverCode: true, name: true, phone: true } },
+          _count: {
+            select: {
+              rosterPassengers: publishedRoster
+                ? { where: { rosterId: publishedRoster.id } }
+                : true,
+            },
+          },
+        },
         orderBy: { routeNo: 'asc' },
       }),
       prisma.routeService.count(),
     ]);
-    return res.json({ items, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } });
+
+    const itemsWithAssigned = items.map((item) => ({
+      ...item,
+      assignedPassengerCount: item._count?.rosterPassengers || 0,
+    }));
+
+    return res.json({
+      items: itemsWithAssigned,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
   } catch (error) {
     console.error('[route-services/admin]', error);
     return res.status(500).json({ error: 'Internal server error' });
