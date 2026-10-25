@@ -30,6 +30,7 @@ export type RouteDetail = Omit<RouteSummary, 'roster'> & {
     direction: string;
     isEventOverride?: boolean;
     remainingMinutes?: number | null;
+    geometryPolyline?: string | null;
     stops: ScheduleStop[];
   } | null;
   activeTrip: {
@@ -39,6 +40,7 @@ export type RouteDetail = Omit<RouteSummary, 'roster'> & {
     tripDirection?: 'TO_COLLEGE' | 'FROM_COLLEGE';
     trackingState?: string;
   } | null;
+  availableDirections?: string[];
   roster: { name: string; academicYear: string } | null;
 };
 

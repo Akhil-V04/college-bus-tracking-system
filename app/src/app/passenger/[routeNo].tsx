@@ -1,96 +1,102 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery } from '@tanstack/react-query';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Alert,
+  Animated,
+  Dimensions,
+  FlatList,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Card, EmptyState, ErrorState, LabelValue, LoadingState, Notice, Pill, SectionTitle } from '@/components/ui';
+import { AppIcon } from '@/components/AppIcon';
+import { EmptyState, ErrorState, LoadingState } from '@/components/ui';
 import { fontWeight, radius, spacing } from '@/constants/theme';
+import { useTheme } from '@/contexts/ThemeContext';
 import { apiRequest } from '@/lib/api';
+import { decodePolyline } from '@/lib/polyline';
 import { createLiveSocket } from '@/lib/socket';
-import { BusUpdate, EtaResult, RouteDetail, RouteRoster } from '@/types/api';
-import { useTheme } from "@/contexts/ThemeContext";
+import { BusUpdate, RouteDetail, ScheduleStop } from '@/types/api';
 
-type TabType = 'MY ROUTE' | 'FULL ROUTE' | 'BUS INFO';
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SHEET_COLLAPSED_HEIGHT = 280;
+const SHEET_EXPANDED_HEIGHT = Math.round(SCREEN_HEIGHT * 0.72);
 
-function etaTone(status?: string): 'info' | 'warning' | 'danger' | 'success' {
-  if (['PASSED', 'POSSIBLY_SKIPPED', 'TRIP_ENDED'].includes(status || '')) return 'danger';
-  if (['NO_LIVE_DATA', 'NOT_STARTED', 'GPS_UNRELIABLE', 'STALE_LOCATION', 'OFF_ROUTE', 'NOT_MOVING'].includes(status || '')) return 'warning';
-  if (['AT_STOP', 'ARRIVING', 'ROUTE_COMPLETED'].includes(status || '')) return 'success';
-  return 'info';
-}
+const TEAL_ACCENT = '#00BFA5';
 
-function etaTitle(eta?: EtaResult | null) {
-  if (!eta) return 'Select a stop to calculate ETA';
-  if (eta.status === 'PASSED') return 'Bus missed — this stop was already passed';
-  if (eta.status === 'POSSIBLY_SKIPPED') return 'Bus may have already passed this stop';
-  if (eta.status === 'AT_STOP') return 'Bus is at this stop';
-  if (eta.status === 'NO_LIVE_DATA') return 'Live location unavailable';
-  if (eta.status === 'NOT_STARTED') return 'Trip has not started';
-  if (eta.status === 'GPS_UNRELIABLE') return 'GPS signal is unreliable';
-  if (eta.status === 'STALE_LOCATION') return 'Last bus location is stale';
-  if (eta.status === 'OFF_ROUTE') return 'Bus appears off route';
-  if (eta.status === 'NOT_MOVING') return 'Bus is currently not moving';
-  if (eta.status === 'ROUTE_COMPLETED') return 'Bus completed this route';
-  if (eta.status === 'TRIP_ENDED') return 'Trip has ended';
-  if (eta.etaRangeMinutes) {
-    return `Estimated arrival: ${eta.etaRangeMinutes.min}–${eta.etaRangeMinutes.max} minutes`;
-  }
-  return eta.message || 'ETA is being calculated';
-}
+type TabType = 'FULL ROUTE' | 'BUS INFO';
+type ReminderFrequency = 'TODAY' | 'DAILY' | 'WEEK';
+
+type SavedReminder = {
+  routeNo: string;
+  stopId: number;
+  stopName: string;
+  minutesBefore: number;
+  frequency: ReminderFrequency;
+  scheduledTime: string;
+  createdAt: string;
+};
 
 export default function RouteDetailsScreen() {
-    const { colors } = useTheme();
-    const styles = useStyles();
+  const { colors, isDark } = useTheme();
+  const styles = useStyles();
   const params = useLocalSearchParams<{ routeNo: string }>();
   const routeNo = Array.isArray(params.routeNo) ? params.routeNo[0] : params.routeNo;
-  const [activeTab, setActiveTab] = useState<TabType>('MY ROUTE');
-  const [selectedStopId, setSelectedStopId] = useState<number | null>(null);
-  const [showRoster, setShowRoster] = useState(false);
-  const [busUpdate, setBusUpdate] = useState<BusUpdate | null>(null);
-  const [connectionState, setConnectionState] = useState<'waiting' | 'connected' | 'reconnecting'>('waiting');
 
+  const [activeTab, setActiveTab] = useState<TabType>('FULL ROUTE');
+  const [selectedDirection, setSelectedDirection] = useState<'MORNING' | 'EVENING'>('MORNING');
+  const [busUpdate, setBusUpdate] = useState<BusUpdate | null>(null);
+
+  // Bottom Sheet expansion state
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+  const sheetHeightAnim = useRef(new Animated.Value(SHEET_COLLAPSED_HEIGHT)).current;
+
+  // Remind Me Modal state
+  const [reminderModalVisible, setReminderModalVisible] = useState(false);
+  const [selectedReminderStopId, setSelectedReminderStopId] = useState<number | null>(null);
+  const [reminderMinutes, setReminderMinutes] = useState<number>(3);
+  const [reminderFrequency, setReminderFrequency] = useState<ReminderFrequency>('TODAY');
+  const [savedReminder, setSavedReminder] = useState<SavedReminder | null>(null);
+
+  const mapRef = useRef<MapView>(null);
+
+  // Toggle bottom sheet between collapsed and expanded
+  const toggleSheet = () => {
+    const toValue = sheetExpanded ? SHEET_COLLAPSED_HEIGHT : SHEET_EXPANDED_HEIGHT;
+    Animated.spring(sheetHeightAnim, {
+      toValue,
+      friction: 8,
+      tension: 40,
+      useNativeDriver: false,
+    }).start();
+    setSheetExpanded(!sheetExpanded);
+  };
+
+  // Fetch route details with direction (defaults to MORNING in backend)
   const route = useQuery({
-    queryKey: ['passenger-route', routeNo],
-    queryFn: () => apiRequest<RouteDetail>(`/passenger/routes/${encodeURIComponent(routeNo)}`),
+    queryKey: ['passenger-route', routeNo, selectedDirection],
+    queryFn: () =>
+      apiRequest<RouteDetail>(
+        `/passenger/routes/${encodeURIComponent(routeNo)}?direction=${selectedDirection}`
+      ),
     enabled: Boolean(routeNo),
     refetchInterval: 30_000,
   });
 
-  const roster = useQuery({
-    queryKey: ['passenger-roster', routeNo],
-    queryFn: () => apiRequest<RouteRoster>(`/passenger/routes/${encodeURIComponent(routeNo)}/roster`),
-    enabled: Boolean(routeNo && showRoster),
-  });
-
   const activeTripId = route.data?.activeTrip?.id || null;
 
-  const eta = useQuery({
-    queryKey: ['eta', activeTripId, selectedStopId],
-    queryFn: () => apiRequest<EtaResult>(`/passenger/trips/${activeTripId}/eta/${selectedStopId}`),
-    enabled: Boolean(activeTripId && selectedStopId),
-    refetchInterval: 15_000,
-  });
-
-  const notificationsQuery = useQuery({
-    queryKey: ['admin-notifications'],
-    queryFn: () => apiRequest<any[]>('/admin-notifications'),
-    staleTime: 60_000,
-  });
-
-  const activeRouteNotice = useMemo(() => {
-    if (!notificationsQuery.data || !route.data) return null;
-    const currentRouteNo = String(route.data.routeNo).trim();
-    return notificationsQuery.data.find((n) => {
-      if (n.targetType === 'ROUTE') {
-        const routes = (n.targetRouteNos || n.targetRoutes?.map((r: any) => r.routeNo) || []).map(String);
-        return routes.includes(currentRouteNo) || routes.includes(String(Number(currentRouteNo)));
-      }
-      return false;
-    });
-  }, [notificationsQuery.data, route.data]);
-
-  // Socket.IO live tracking
+  // Socket.IO live updates
   useEffect(() => {
     if (!activeTripId) {
       setBusUpdate(null);
@@ -98,624 +104,1082 @@ export default function RouteDetailsScreen() {
     }
     const socket = createLiveSocket();
     socket.connect();
-    socket.on('connect', () => {
-      setConnectionState('connected');
-      socket.emit('join:trip', { tripId: activeTripId });
-    });
-    socket.on('disconnect', () => setConnectionState('reconnecting'));
-    socket.on('connect_error', () => setConnectionState('reconnecting'));
+    socket.emit('join:trip', { tripId: activeTripId });
     socket.on('bus:update', (update: BusUpdate) => {
       if (update.tripId === activeTripId) setBusUpdate(update);
     });
-    return () => { socket.disconnect(); };
+    return () => {
+      socket.disconnect();
+    };
   }, [activeTripId]);
 
-  const stops = route.data?.schedule?.stops || [];
-  const currentStopIndex = busUpdate?.currentStopIndex ?? route.data?.activeTrip?.currentStopIndex ?? 0;
-  const isReturnTrip = route.data?.activeTrip?.tripDirection === 'FROM_COLLEGE';
+  // Load saved reminder for this route
+  useEffect(() => {
+    if (routeNo) {
+      AsyncStorage.getItem(`bus_reminder_${routeNo}`).then((val) => {
+        if (val) {
+          try {
+            setSavedReminder(JSON.parse(val));
+          } catch {
+            // ignore
+          }
+        }
+      });
+    }
+  }, [routeNo]);
 
-  if (route.isPending) return <SafeAreaView style={styles.container}><LoadingState label="Loading route..." /></SafeAreaView>;
-  if (route.isError) return <SafeAreaView style={styles.container}><ErrorState message={route.error.message} retry={() => route.refetch()} /></SafeAreaView>;
-  if (!route.data) return <SafeAreaView style={styles.container}><EmptyState title="Route not found" message="Check the route number." /></SafeAreaView>;
+  const stops = useMemo(() => route.data?.schedule?.stops || [], [route.data?.schedule?.stops]);
+
+  // Auto-select first stop for reminder if none selected
+  useEffect(() => {
+    if (stops.length > 0 && selectedReminderStopId === null) {
+      setSelectedReminderStopId(stops[0].stop.id);
+    }
+  }, [stops, selectedReminderStopId]);
+
+  // Current bus index from live socket or route
+  const currentStopIndex =
+    busUpdate?.currentStopIndex ?? route.data?.activeTrip?.currentStopIndex ?? 0;
+
+  // Polyline coordinates: decoded geometry if available, else stops
+  const polylineCoordinates = useMemo(() => {
+    if (route.data?.schedule?.geometryPolyline) {
+      const decoded = decodePolyline(route.data.schedule.geometryPolyline);
+      if (decoded.length > 0) return decoded;
+    }
+    return stops.map((s) => ({
+      latitude: s.stop.latitude,
+      longitude: s.stop.longitude,
+    }));
+  }, [route.data?.schedule?.geometryPolyline, stops]);
+
+  // Map initial region
+  const initialRegion = useMemo(() => {
+    if (stops.length === 0) {
+      return {
+        latitude: 17.4706,
+        longitude: 78.7256,
+        latitudeDelta: 0.1,
+        longitudeDelta: 0.1,
+      };
+    }
+    const lats = stops.map((s) => s.stop.latitude);
+    const lngs = stops.map((s) => s.stop.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.max(0.04, (maxLat - minLat) * 1.3),
+      longitudeDelta: Math.max(0.04, (maxLng - minLng) * 1.3),
+    };
+  }, [stops]);
+
+  // Live bus position
+  const liveBusCoords = useMemo(() => {
+    if (busUpdate?.latitude && busUpdate?.longitude) {
+      return { latitude: busUpdate.latitude, longitude: busUpdate.longitude };
+    }
+    if (stops.length > 0 && currentStopIndex > 0) {
+      const activeStop = stops.find((s) => s.sequenceOrder === currentStopIndex) || stops[0];
+      return { latitude: activeStop.stop.latitude, longitude: activeStop.stop.longitude };
+    }
+    return null;
+  }, [busUpdate, stops, currentStopIndex]);
+
+  // Center map on a specific stop
+  const focusOnStop = (stop: ScheduleStop) => {
+    mapRef.current?.animateToRegion(
+      {
+        latitude: stop.stop.latitude,
+        longitude: stop.stop.longitude,
+        latitudeDelta: 0.015,
+        longitudeDelta: 0.015,
+      },
+      600
+    );
+  };
+
+  // Re-center map to show all stops
+  const resetMapZoom = () => {
+    if (stops.length > 0) {
+      mapRef.current?.animateToRegion(initialRegion, 600);
+    }
+    route.refetch();
+  };
+
+  // Share route information
+  const handleShare = async () => {
+    if (!route.data) return;
+    try {
+      const stopList = stops.map((s) => `• ${s.stop.name} (${s.scheduledTime})`).join('\n');
+      await Share.share({
+        title: `VBIT College Bus Route ${route.data.routeNo}`,
+        message: `VBIT College Bus - Route ${route.data.routeNo} (${route.data.name})\nSchedule:\n${stopList}\n\nTrack live on CampusTransit App.`,
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  // Save Reminder
+  const handleSaveReminder = async () => {
+    const selectedStop = stops.find((s) => s.stop.id === selectedReminderStopId);
+    if (!selectedStop) {
+      Alert.alert('Select Stop', 'Please select a bus stop for your reminder.');
+      return;
+    }
+
+    const freqText =
+      reminderFrequency === 'TODAY'
+        ? 'For Today'
+        : reminderFrequency === 'DAILY'
+        ? 'Daily (Mon-Sat)'
+        : 'For Next 7 Days';
+
+    const reminder: SavedReminder = {
+      routeNo: String(routeNo),
+      stopId: selectedStop.stop.id,
+      stopName: selectedStop.stop.name,
+      minutesBefore: reminderMinutes,
+      frequency: reminderFrequency,
+      scheduledTime: selectedStop.scheduledTime,
+      createdAt: new Date().toISOString(),
+    };
+
+    await AsyncStorage.setItem(`bus_reminder_${routeNo}`, JSON.stringify(reminder));
+    setSavedReminder(reminder);
+    setReminderModalVisible(false);
+
+    Alert.alert(
+      '🔔 Reminder Created!',
+      `You will be reminded ${reminderMinutes} min before bus reaches ${selectedStop.stop.name} (${selectedStop.scheduledTime}) - ${freqText}.`
+    );
+  };
+
+  // Delete Reminder
+  const handleDeleteReminder = async () => {
+    await AsyncStorage.removeItem(`bus_reminder_${routeNo}`);
+    setSavedReminder(null);
+    setReminderModalVisible(false);
+    Alert.alert('Reminder Removed', 'Your scheduled reminder has been cleared.');
+  };
+
+  // Helper to calculate departure time (typically arrival + 2 mins)
+  const getDepartureTime = (scheduledTime: string) => {
+    if (!scheduledTime) return '--:--';
+    const parts = scheduledTime.split(':');
+    if (parts.length < 2) return scheduledTime;
+    let h = parseInt(parts[0], 10);
+    let m = parseInt(parts[1], 10) + 2;
+    if (m >= 60) {
+      h = (h + 1) % 24;
+      m = m - 60;
+    }
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  if (route.isPending) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <LoadingState label="Loading bus route details..." />
+      </SafeAreaView>
+    );
+  }
+
+  if (route.isError || !route.data) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ErrorState
+          message={route.error?.message || 'Route not found.'}
+          retry={() => route.refetch()}
+        />
+      </SafeAreaView>
+    );
+  }
 
   const detail = route.data;
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Header */}
+      {/* ─── Top Navbar (Teal) ─── */}
       <View style={styles.header}>
-        <Pressable onPress={() => { if (router.canGoBack()) router.back(); else router.replace('/passenger'); }} style={styles.backBtn}>
+        <Pressable
+          onPress={() => {
+            if (router.canGoBack()) router.back();
+            else router.replace('/passenger');
+          }}
+          style={styles.backBtn}
+          hitSlop={10}
+          accessibilityLabel="Back"
+        >
           <Text style={styles.backIcon}>←</Text>
         </Pressable>
+
         <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Route {detail.routeNo}</Text>
-          <Text style={styles.headerSubtitle} numberOfLines={1}>{detail.name}</Text>
+          <Text style={styles.headerTitle}>Bus Details</Text>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            Route {detail.routeNo} • VBIT Campus
+          </Text>
         </View>
-        <View style={styles.headerRight}>
-          {detail.activeTrip && (
-            <View style={styles.livePulse}>
-              <View style={styles.livePulseDot} />
-            </View>
-          )}
-        </View>
-      </View>
 
-      {/* Tab Bar */}
-      <View style={styles.tabBar}>
-        {(['MY ROUTE', 'FULL ROUTE', 'BUS INFO'] as TabType[]).map((tab) => (
-          <Pressable
-            key={tab}
-            onPress={() => setActiveTab(tab)}
-            style={[styles.tab, activeTab === tab && styles.tabActive]}
-          >
-            <Text style={[styles.tabText, activeTab === tab && styles.tabTextActive]}>
-              {tab}
-            </Text>
+        <View style={styles.headerActions}>
+          <Pressable onPress={handleShare} style={styles.navActionBtn} hitSlop={8}>
+            <Text style={styles.navActionIcon}>↗</Text>
           </Pressable>
-        ))}
+
+          <Pressable
+            onPress={() => setReminderModalVisible(true)}
+            style={[styles.navActionBtn, savedReminder ? styles.navActionBtnActive : null]}
+            hitSlop={8}
+            accessibilityLabel="Set Bus Reminder"
+          >
+            <Text style={styles.navActionIcon}>🔔</Text>
+            {savedReminder ? <View style={styles.bellBadge} /> : null}
+          </Pressable>
+        </View>
       </View>
 
-      {/* Content */}
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Special Event Override Notice Banner */}
-        {detail.schedule?.isEventOverride && (
-          <View style={styles.eventOverrideBanner}>
-            <View style={styles.eventOverrideHeader}>
-              <Text style={styles.eventOverrideIcon}>⚡</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.eventOverrideTitle}>Special College Event Schedule</Text>
-                <Text style={styles.eventOverrideSub}>
-                  {detail.schedule.name || 'Event Timetable'}
-                  {detail.schedule.remainingMinutes != null
-                    ? ` • ~${Math.ceil(detail.schedule.remainingMinutes / 60)} hrs remaining`
-                    : ''}
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.eventOverrideNote}>
-              Departure and stop timings have been adjusted for today's special college session.
-            </Text>
-          </View>
-        )}
+      {/* ─── Tabs (FULL ROUTE | BUS INFO) ─── */}
+      <View style={styles.tabBar}>
+        <Pressable
+          onPress={() => setActiveTab('FULL ROUTE')}
+          style={[styles.tabItem, activeTab === 'FULL ROUTE' && styles.tabItemActive]}
+        >
+          <Text
+            style={[styles.tabItemText, activeTab === 'FULL ROUTE' && styles.tabItemTextActive]}
+          >
+            FULL ROUTE
+          </Text>
+        </Pressable>
 
-        {/* Route-Specific Active Announcement Banner */}
-        {activeRouteNotice && (
-          <Pressable
-            onPress={() => router.push('/passenger/notifications')}
+        <Pressable
+          onPress={() => setActiveTab('BUS INFO')}
+          style={[styles.tabItem, activeTab === 'BUS INFO' && styles.tabItemActive]}
+        >
+          <Text style={[styles.tabItemText, activeTab === 'BUS INFO' && styles.tabItemTextActive]}>
+            BUS INFO
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* ─── Direction Selector (Morning vs Evening) ─── */}
+      <View style={styles.directionBar}>
+        <Pressable
+          onPress={() => setSelectedDirection('MORNING')}
+          style={[
+            styles.directionPill,
+            selectedDirection === 'MORNING' && styles.directionPillActive,
+          ]}
+        >
+          <Text
             style={[
-              styles.eventOverrideBanner,
-              {
-                backgroundColor: activeRouteNotice.priority === 'URGENT' ? colors.dangerBg : colors.accentBg || 'rgba(234, 88, 12, 0.15)',
-                borderColor: activeRouteNotice.priority === 'URGENT' ? colors.danger : colors.accent || '#EA580C',
-                marginBottom: spacing.sm,
-              },
+              styles.directionPillText,
+              selectedDirection === 'MORNING' && styles.directionPillTextActive,
             ]}
           >
-            <View style={styles.eventOverrideHeader}>
-              <Text style={styles.eventOverrideIcon}>
-                {activeRouteNotice.priority === 'URGENT' ? '🚨' : '📢'}
-              </Text>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                  <Text
-                    style={[
-                      styles.eventOverrideTitle,
-                      { color: activeRouteNotice.priority === 'URGENT' ? colors.danger : colors.accent || '#EA580C' },
+            🌅 Morning (To College)
+          </Text>
+        </Pressable>
+
+        <Pressable
+          onPress={() => setSelectedDirection('EVENING')}
+          style={[
+            styles.directionPill,
+            selectedDirection === 'EVENING' && styles.directionPillActive,
+          ]}
+        >
+          <Text
+            style={[
+              styles.directionPillText,
+              selectedDirection === 'EVENING' && styles.directionPillTextActive,
+            ]}
+          >
+            🌆 Evening (Return)
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* ─── TAB 1: FULL ROUTE (MAP & TIMELINE SHEET) ─── */}
+      {activeTab === 'FULL ROUTE' ? (
+        <View style={styles.fullRouteContainer}>
+          {/* Map Section */}
+          <View style={styles.mapContainer}>
+            <MapView
+              ref={mapRef}
+              style={StyleSheet.absoluteFill}
+              provider={PROVIDER_GOOGLE}
+              initialRegion={initialRegion}
+            >
+              {/* Route Polyline */}
+              {polylineCoordinates.length > 0 ? (
+                <Polyline
+                  coordinates={polylineCoordinates}
+                  strokeColor={TEAL_ACCENT}
+                  strokeWidth={4}
+                />
+              ) : null}
+
+              {/* Stop Markers */}
+              {stops.map((entry, idx) => (
+                <Marker
+                  key={`stop-${entry.stop.id}-${idx}`}
+                  coordinate={{
+                    latitude: entry.stop.latitude,
+                    longitude: entry.stop.longitude,
+                  }}
+                  title={entry.stop.name}
+                  description={`Stop ${entry.sequenceOrder} • Scheduled: ${entry.scheduledTime}`}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={styles.stopMarkerDot}>
+                    <View style={styles.stopMarkerInner} />
+                  </View>
+                </Marker>
+              ))}
+
+              {/* Live Bus Marker */}
+              {liveBusCoords ? (
+                <Marker
+                  coordinate={liveBusCoords}
+                  title="Campus Bus"
+                  description={`Route ${detail.routeNo}`}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={styles.busMarkerHalo}>
+                    <Text style={styles.busMarkerEmoji}>🚌</Text>
+                  </View>
+                </Marker>
+              ) : null}
+            </MapView>
+
+            {/* Floating Re-center / Refresh Button on Map */}
+            <Pressable onPress={resetMapZoom} style={styles.floatingRefreshBtn} hitSlop={10}>
+              <Text style={styles.floatingRefreshIcon}>↻</Text>
+            </Pressable>
+          </View>
+
+          {/* Bottom Expandable Timeline Sheet */}
+          <Animated.View style={[styles.bottomSheet, { height: sheetHeightAnim }]}>
+            {/* Sheet Drag / Pull Handle */}
+            <Pressable onPress={toggleSheet} style={styles.sheetHandleArea}>
+              <View style={styles.sheetHandleBar} />
+              <View style={styles.sheetHeaderRow}>
+                <Text style={styles.sheetHeaderText}>
+                  {sheetExpanded ? '↓ Tap to collapse view' : '↑ Pull Up to view more'}
+                </Text>
+                <Text style={styles.sheetStopsCount}>{stops.length} Stops</Text>
+              </View>
+            </Pressable>
+
+            {/* Stop Timeline List */}
+            <FlatList
+              data={stops}
+              keyExtractor={(item) => String(item.id)}
+              contentContainerStyle={styles.timelineList}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item, index }) => {
+                const isPassed = currentStopIndex > item.sequenceOrder;
+                const isAtStop = currentStopIndex === item.sequenceOrder && currentStopIndex > 0;
+                const isLast = index === stops.length - 1;
+
+                return (
+                  <Pressable
+                    onPress={() => focusOnStop(item)}
+                    style={({ pressed }) => [
+                      styles.timelineRow,
+                      pressed ? styles.timelineRowPressed : null,
                     ]}
                   >
-                    {activeRouteNotice.title}
-                  </Text>
-                  <Pill tone={activeRouteNotice.priority === 'URGENT' ? 'danger' : 'warning'}>
-                    Notice for Route {detail.routeNo}
-                  </Pill>
-                </View>
-                <Text style={[styles.eventOverrideNote, { marginTop: 4, color: colors.textPrimary }]}>
-                  {activeRouteNotice.message}
-                </Text>
-              </View>
-            </View>
-          </Pressable>
-        )}
-
-        {/* Direction Indicator Banner (When Trip is Active) */}
-        {detail.activeTrip && (
-          <View
-            style={[
-              styles.directionBanner,
-              detail.activeTrip.tripDirection === 'FROM_COLLEGE'
-                ? styles.directionBannerReturn
-                : styles.directionBannerInbound,
-            ]}
-          >
-            <Text style={styles.directionIcon}>
-              {detail.activeTrip.tripDirection === 'FROM_COLLEGE' ? '🏠' : '🎓'}
-            </Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.directionTitle}>
-                {detail.activeTrip.tripDirection === 'FROM_COLLEGE'
-                  ? 'Return Trip: College ➔ Home Drops'
-                  : 'Inbound Trip: Towards VBIT College'}
-              </Text>
-              <Text style={styles.directionSub}>
-                {detail.activeTrip.tripDirection === 'FROM_COLLEGE'
-                  ? 'Bus departs from VBIT Campus and drops passengers along the reverse route.'
-                  : 'Bus picks up passengers along the route towards VBIT Campus.'}
-              </Text>
-            </View>
-          </View>
-        )}
-        {/* Trip Status Banner */}
-        {!detail.activeTrip ? (
-          <Notice
-            tone="warning"
-            title="Trip has not started"
-            message="Scheduled times are shown below. Live tracking activates after the driver starts."
-          />
-        ) : busUpdate ? (
-          <Notice
-            tone="success"
-            title="Live bus tracking connected"
-            message={`Last update: ${new Date(busUpdate.timestamp).toLocaleTimeString()}`}
-          />
-        ) : (
-          <Notice
-            tone={connectionState === 'reconnecting' ? 'warning' : 'info'}
-            title={connectionState === 'reconnecting' ? 'Reconnecting...' : 'Waiting for live GPS'}
-            message="Scheduled information remains available."
-          />
-        )}
-
-        {/* MY ROUTE Tab */}
-        {activeTab === 'MY ROUTE' && (
-          <>
-            {/* ETA Section */}
-            <Card>
-              <SectionTitle>{isReturnTrip ? 'Ask Drop-off Arrival ETA' : 'Ask estimated time'}</SectionTitle>
-              <Text style={styles.helpText}>
-                {isReturnTrip ? 'Select your destination stop below for arrival drop ETA.' : 'Select your boarding stop below. ETA is calculated from live GPS data.'}
-              </Text>
-              <View style={styles.stopChoices}>
-                {stops.map((entry) => {
-                  const passed = currentStopIndex > entry.sequenceOrder;
-                  const selected = selectedStopId === entry.stop.id;
-                  return (
-                    <Pressable
-                      key={entry.stop.id}
-                      onPress={() => setSelectedStopId(entry.stop.id)}
-                      style={[
-                        styles.stopChip,
-                        selected && styles.stopChipSelected,
-                        passed && styles.stopChipPassed,
-                      ]}
-                    >
-                      <Text style={[styles.stopChipText, selected && styles.stopChipTextSelected]}>
-                        {entry.sequenceOrder + 1}. {entry.stop.name}
-                      </Text>
-                      <Text style={styles.stopChipTime}>{entry.scheduledTime}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              {eta.isFetching && <LoadingState label="Calculating from live movement..." />}
-              {eta.isError && <Notice tone="danger" title="ETA unavailable" message={eta.error.message} />}
-              {!eta.isFetching && !eta.isError && (
-                <Notice
-                  tone={etaTone(eta.data?.status)}
-                  title={etaTitle(eta.data)}
-                  message={eta.data?.message}
-                />
-              )}
-            </Card>
-          </>
-        )}
-
-        {/* FULL ROUTE Tab */}
-        {activeTab === 'FULL ROUTE' && (
-          <Card>
-            <View style={styles.sectionHeader}>
-              <SectionTitle>{isReturnTrip ? 'Outbound Drops Timeline' : 'Stop Timeline'}</SectionTitle>
-              <Pill tone="info">{stops.length} stops</Pill>
-            </View>
-            {stops.length === 0 ? (
-              <Text style={styles.helpText}>No published schedule available.</Text>
-            ) : (
-              stops.map((entry, index) => {
-                const isPassed = currentStopIndex > entry.sequenceOrder;
-                const isLive = currentStopIndex === entry.sequenceOrder && detail.activeTrip;
-                return (
-                  <View key={entry.id} style={styles.timelineRow}>
-                    {/* Rail */}
-                    <View style={styles.timelineRail}>
-                      {isLive ? (
-                        <View style={styles.timelineLiveDot}>
-                          <Text style={styles.timelineLiveIcon}>🚌</Text>
-                        </View>
-                      ) : isPassed ? (
-                        <View style={styles.timelineDotPassed} />
-                      ) : (
-                        <View style={styles.timelineDot} />
-                      )}
-                      {index < stops.length - 1 && (
-                        <View style={[
-                          styles.timelineLine,
-                          isPassed && styles.timelineLinePassed,
-                        ]} />
-                      )}
+                    {/* Left Column: Vertical Line & Node */}
+                    <View style={styles.timelineNodeColumn}>
+                      <View
+                        style={[
+                          styles.timelineCircle,
+                          isPassed
+                            ? styles.timelineCirclePassed
+                            : isAtStop
+                            ? styles.timelineCircleActive
+                            : styles.timelineCircleUpcoming,
+                        ]}
+                      />
+                      {!isLast ? (
+                        <View
+                          style={[
+                            styles.timelineLine,
+                            isPassed ? styles.timelineLinePassed : styles.timelineLineUpcoming,
+                          ]}
+                        />
+                      ) : null}
                     </View>
-                    {/* Content */}
-                    <View style={styles.timelineContent}>
-                      <View style={styles.timelineNameRow}>
-                        <Text style={styles.timelineName}>{entry.stop.name}</Text>
-                        {isLive && (
-                          <View style={styles.liveNowBadge}>
-                            <Text style={styles.liveNowText}>LIVE NOW</Text>
-                          </View>
-                        )}
-                      </View>
-                      <View style={styles.timelineTimes}>
-                        <Text style={[styles.timelineTime, isPassed && styles.timelineTimePassed]}>
-                          ➔ {entry.scheduledTime}
+
+                    {/* Middle Column: Stop Name & Timings */}
+                    <View style={styles.timelineDetails}>
+                      <Text style={styles.stopNameText} numberOfLines={2}>
+                        {item.stop.name.toUpperCase()}
+                      </Text>
+
+                      <View style={styles.timingRow}>
+                        <Text style={styles.arrivalText}>→ {item.scheduledTime}</Text>
+                        <Text style={styles.departureText}>
+                          ↳ {getDepartureTime(item.scheduledTime)}
                         </Text>
                       </View>
                     </View>
-                  </View>
+
+                    {/* Right Column: Status Badge */}
+                    <View style={styles.statusCol}>
+                      {isPassed ? (
+                        <Text style={styles.statusBusLeft}>Bus Left</Text>
+                      ) : isAtStop ? (
+                        <Text style={styles.statusAtStop}>At Stop</Text>
+                      ) : (
+                        <Text style={styles.statusScheduled}>On Time</Text>
+                      )}
+                    </View>
+                  </Pressable>
                 );
-              })
-            )}
-          </Card>
-        )}
+              }}
+            />
+          </Animated.View>
+        </View>
+      ) : (
+        /* ─── TAB 2: BUS INFO ─── */
+        <ScrollView contentContainerStyle={styles.busInfoContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.infoCard}>
+            <View style={styles.infoCardHeader}>
+              <View style={styles.busIconBox}>
+                <AppIcon name="bus" size={28} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.infoRouteTitle}>Route {detail.routeNo}</Text>
+                <Text style={styles.infoRouteSub}>{detail.name}</Text>
+              </View>
+            </View>
 
-        {/* BUS INFO Tab */}
-        {activeTab === 'BUS INFO' && (
-          <>
-            <Card>
-              <SectionTitle>Route Information</SectionTitle>
-              <LabelValue label="Route" value={`${detail.routeNo} — ${detail.name}`} />
-              <LabelValue label="Area" value={detail.areaCovered} />
-              <LabelValue label="Capacity" value={`${detail.assignedPassengerCount} / ${detail.capacity}`} />
-              <LabelValue label="Driver" value={detail.driver?.name || 'Not assigned'} />
-              <LabelValue label="Academic Year" value={detail.roster?.academicYear || 'Not published'} />
-            </Card>
+            <View style={styles.infoDivider} />
 
-            <Card>
-              <SectionTitle>Trip Status</SectionTitle>
-              {detail.activeTrip ? (
-                <>
-                  <View style={styles.tripStatusRow}>
-                    <Text style={styles.tripStatusLabel}>Status</Text>
-                    <Pill tone="success">Running</Pill>
-                  </View>
-                  <LabelValue label="Started at" value={new Date(detail.activeTrip.startTime).toLocaleTimeString()} />
-                  <LabelValue label="Progress" value={`${detail.activeTrip.currentStopIndex} of ${stops.length} stops reached`} />
-                </>
-              ) : (
-                <View style={styles.tripStatusRow}>
-                  <Text style={styles.tripStatusLabel}>Status</Text>
-                  <Pill tone="neutral">Not started</Pill>
-                </View>
-              )}
-            </Card>
+            <View style={styles.infoGrid}>
+              <View style={styles.infoGridItem}>
+                <Text style={styles.infoGridLabel}>ASSIGNED DRIVER</Text>
+                <Text style={styles.infoGridValue}>{detail.driver?.name || 'Assigned'}</Text>
+              </View>
 
-            {/* Roster toggle */}
+              <View style={styles.infoGridItem}>
+                <Text style={styles.infoGridLabel}>SEAT CAPACITY</Text>
+                <Text style={styles.infoGridValue}>
+                  {detail.assignedPassengerCount}/{detail.capacity} Seats
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.infoGrid}>
+              <View style={styles.infoGridItem}>
+                <Text style={styles.infoGridLabel}>COLLEGE ARRIVAL</Text>
+                <Text style={styles.infoGridValue}>09:25 AM</Text>
+              </View>
+
+              <View style={styles.infoGridItem}>
+                <Text style={styles.infoGridLabel}>EVENING DEPARTURE</Text>
+                <Text style={styles.infoGridValue}>04:30 PM</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Area Covered Card */}
+          <View style={styles.infoCard}>
+            <Text style={styles.cardSectionLabel}>AREA COVERED</Text>
+            <Text style={styles.areaCoveredText}>{detail.areaCovered || 'All major campus stops.'}</Text>
+          </View>
+
+          {/* Transport Helpdesk & In-Charge */}
+          <View style={styles.infoCard}>
+            <Text style={styles.cardSectionLabel}>CAMPUS TRANSPORT IN-CHARGES</Text>
+
             <Pressable
-              onPress={() => setShowRoster((v) => !v)}
-              style={({ pressed }) => [styles.rosterToggle, pressed && styles.rosterTogglePressed]}
+              onPress={() => Linking.openURL('tel:7993453629')}
+              style={styles.inchargeRow}
             >
-              <Text style={styles.rosterToggleText}>
-                {showRoster ? 'Hide passenger list' : 'View passenger list'}
-              </Text>
-              <Text style={styles.rosterToggleChevron}>{showRoster ? '▲' : '▼'}</Text>
+              <View style={styles.phoneIconBox}>
+                <Text style={{ fontSize: 16 }}>📞</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inchargeName}>Mr. P. Venu Gopal</Text>
+                <Text style={styles.inchargeRole}>Transport In-Charge • 7993453629</Text>
+              </View>
+              <Text style={styles.callBadge}>Call</Text>
             </Pressable>
 
-            {showRoster && roster.isPending && <LoadingState label="Loading passengers..." />}
-            {showRoster && roster.isError && <ErrorState message={roster.error.message} retry={() => roster.refetch()} />}
-            {showRoster && roster.data && (
-              <Card>
-                <View style={styles.sectionHeader}>
-                  <SectionTitle>Assigned Passengers</SectionTitle>
-                  <Pill>{String(roster.data.total)}</Pill>
-                </View>
-                {roster.data.driver && (
-                  <View style={styles.rosterDriverBanner}>
-                    <Text style={styles.rosterDriverIcon}>👤</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.rosterDriverLabel}>Assigned Driver</Text>
-                      <Text style={styles.rosterDriverName}>{roster.data.driver.name}</Text>
-                    </View>
-                    <Pill tone="info">{roster.data.driver.driverCode}</Pill>
-                  </View>
-                )}
-                {roster.data.stops.map((stop) => (
-                  <View key={stop.stopId} style={styles.rosterStop}>
-                    <View style={styles.rosterStopHeader}>
-                      <Text style={styles.rosterStopName}>{stop.stopName}</Text>
-                      <Text style={styles.rosterStopTime}>{stop.scheduledTime}</Text>
-                    </View>
-                    {stop.passengers.length === 0 ? (
-                      <Text style={styles.helpText}>No passengers at this stop.</Text>
-                    ) : (
-                      stop.passengers.map((p, idx) => (
-                        <View key={p.name + idx} style={styles.passengerRow}>
-                          <View style={styles.passengerInfoCol}>
-                            <Text style={styles.passengerName}>{p.name}</Text>
-                            {p.passengerType === 'STUDENT' ? (
-                              <View style={styles.passengerMetaRow}>
-                                {p.rollNo ? (
-                                  <Text style={styles.passengerRollNo}>Roll: {p.rollNo}</Text>
-                                ) : null}
-                                {p.department ? (
-                                  <Text style={styles.passengerClass}>
-                                    {p.department}
-                                    {p.year ? ` · Y${p.year}` : ''}
-                                    {p.section ? `-${p.section}` : ''}
-                                  </Text>
-                                ) : null}
-                              </View>
-                            ) : (
-                              <View style={styles.passengerMetaRow}>
-                                {p.facultyId ? (
-                                  <Text style={styles.passengerRollNo}>ID: {p.facultyId}</Text>
-                                ) : null}
-                                <Text style={styles.facultyMetaText}>
-                                  {p.department ? `${p.department} Dept` : 'College Staff'}
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                          <Pill tone={p.passengerType === 'STUDENT' ? 'info' : 'success'}>
-                            {p.passengerType === 'STUDENT' ? 'Student' : 'Faculty'}
-                          </Pill>
-                        </View>
-                      ))
-                    )}
-                  </View>
-                ))}
-              </Card>
-            )}
-          </>
-        )}
+            <View style={styles.infoDivider} />
 
-        {/* Bottom footer */}
-        <View style={styles.footerDock}>
-          <View style={styles.footerLeft}>
-            {detail.activeTrip && (
-              <>
-                <View style={styles.footerLiveDot} />
-                <Text style={styles.footerBusLabel}>Route {detail.routeNo}</Text>
-              </>
-            )}
+            <Pressable
+              onPress={() => Linking.openURL('tel:7993453635')}
+              style={styles.inchargeRow}
+            >
+              <View style={styles.phoneIconBox}>
+                <Text style={{ fontSize: 16 }}>📞</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.inchargeName}>Mr. G. Ramesh</Text>
+                <Text style={styles.inchargeRole}>Transport In-Charge • 7993453635</Text>
+              </View>
+              <Text style={styles.callBadge}>Call</Text>
+            </Pressable>
           </View>
-          {busUpdate && (
-            <Text style={styles.footerEta}>
-              <Text style={{ color: colors.success }}>Live</Text> · {new Date(busUpdate.timestamp).toLocaleTimeString()}
+        </ScrollView>
+      )}
+
+      {/* ─── REMIND ME MODAL (Screenshot 3) ─── */}
+      <Modal visible={reminderModalVisible} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            {/* Modal Title */}
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>🔔 Remind Me</Text>
+              <Pressable onPress={() => setReminderModalVisible(false)} hitSlop={10}>
+                <Text style={styles.modalCloseText}>✕</Text>
+              </Pressable>
+            </View>
+
+            {/* Stop Selector Dropdown List */}
+            <Text style={styles.modalFieldLabel}>SELECT BUS STOP</Text>
+            <ScrollView
+              style={styles.stopPickerBox}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+            >
+              {stops.map((s) => {
+                const isSelected = selectedReminderStopId === s.stop.id;
+                return (
+                  <Pressable
+                    key={`reminder-stop-${s.stop.id}`}
+                    onPress={() => setSelectedReminderStopId(s.stop.id)}
+                    style={[
+                      styles.stopPickerOption,
+                      isSelected ? styles.stopPickerOptionSelected : null,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.stopPickerOptionText,
+                        isSelected ? styles.stopPickerOptionTextSelected : null,
+                      ]}
+                    >
+                      {s.stop.name} ({s.scheduledTime})
+                    </Text>
+                    {isSelected ? <Text style={styles.checkIcon}>✓</Text> : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            {/* Reminder Frequency Selector (Today, Daily, Week) */}
+            <Text style={styles.modalFieldLabel}>SCHEDULE FREQUENCY</Text>
+            <View style={styles.freqRow}>
+              {(['TODAY', 'DAILY', 'WEEK'] as ReminderFrequency[]).map((f) => {
+                const isSel = reminderFrequency === f;
+                const label = f === 'TODAY' ? 'For Today' : f === 'DAILY' ? 'Daily' : 'For a Week';
+                return (
+                  <Pressable
+                    key={f}
+                    onPress={() => setReminderFrequency(f)}
+                    style={[styles.freqBtn, isSel ? styles.freqBtnSelected : null]}
+                  >
+                    <Text style={[styles.freqBtnText, isSel ? styles.freqBtnTextSelected : null]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Minutes Before Slider / Chips */}
+            <Text style={styles.modalFieldLabel}>ALERT TIMING</Text>
+            <View style={styles.minutesRow}>
+              {[1, 2, 3, 4, 5].map((m) => {
+                const isSel = reminderMinutes === m;
+                return (
+                  <Pressable
+                    key={m}
+                    onPress={() => setReminderMinutes(m)}
+                    style={[styles.minuteChip, isSel ? styles.minuteChipSelected : null]}
+                  >
+                    <Text
+                      style={[styles.minuteChipText, isSel ? styles.minuteChipTextSelected : null]}
+                    >
+                      {m} min
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Text style={styles.reminderExplainText}>
+              Alerts you {reminderMinutes} min before bus arrives at{' '}
+              <Text style={{ fontWeight: fontWeight.bold, color: TEAL_ACCENT }}>
+                {stops.find((s) => s.stop.id === selectedReminderStopId)?.stop.name || 'selected stop'}
+              </Text>
             </Text>
-          )}
+
+            {/* Active Reminder Warning / Delete option */}
+            {savedReminder ? (
+              <View style={styles.activeReminderInfo}>
+                <Text style={styles.activeReminderInfoText}>
+                  Active reminder: {savedReminder.minutesBefore}m before {savedReminder.stopName}
+                </Text>
+                <Pressable onPress={handleDeleteReminder}>
+                  <Text style={styles.deleteReminderText}>Remove</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* Action Buttons */}
+            <View style={styles.modalActionsRow}>
+              <Pressable
+                onPress={() => setReminderModalVisible(false)}
+                style={styles.modalCancelBtn}
+              >
+                <Text style={styles.modalCancelBtnText}>Cancel</Text>
+              </Pressable>
+
+              <Pressable onPress={handleSaveReminder} style={styles.modalCreateBtn}>
+                <Text style={styles.modalCreateBtnText}>Create</Text>
+              </Pressable>
+            </View>
+          </View>
         </View>
-      </ScrollView>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const useStyles = () => {
-  const { colors } = useTheme();
-  return useMemo(() => StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  header: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  backIcon: { color: colors.white, fontSize: 24, fontWeight: fontWeight.bold },
-  headerCenter: { flex: 1, marginLeft: 8 },
-  headerTitle: { fontSize: 20, fontWeight: fontWeight.bold, color: colors.white },
-  headerSubtitle: { fontSize: 12, color: 'rgba(255,255,255,0.8)', marginTop: 2 },
-  headerRight: { width: 40, alignItems: 'center', justifyContent: 'center' },
-  livePulse: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: 'rgba(239, 68, 68, 0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  livePulseDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#EF4444' },
-  tabBar: {
-    backgroundColor: colors.surfaceElevated,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSubtle,
-    flexDirection: 'row',
-  },
-  tab: { flex: 1, paddingVertical: 14, alignItems: 'center' },
-  tabActive: { borderBottomWidth: 2, borderBottomColor: colors.accent },
-  tabText: {
-    fontSize: 12,
-    fontWeight: fontWeight.bold,
-    color: colors.textMuted,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  tabTextActive: { color: colors.accent },
-  content: { padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.md },
-  helpText: { color: colors.textSecondary, lineHeight: 20, fontSize: 13 },
-  stopChoices: { gap: spacing.sm },
-  stopChip: {
-    minHeight: 48,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  stopChipSelected: { borderColor: colors.accent, backgroundColor: colors.accentBg },
-  stopChipPassed: { opacity: 0.5 },
-  stopChipText: { flex: 1, color: colors.textPrimary, fontWeight: fontWeight.bold, fontSize: 14 },
-  stopChipTextSelected: { color: colors.accent },
-  stopChipTime: { color: colors.textMuted, fontWeight: fontWeight.bold, fontSize: 13 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md },
-  timelineRow: { minHeight: 58, flexDirection: 'row', gap: spacing.sm },
-  timelineRail: { width: 28, alignItems: 'center' },
-  timelineDot: { width: 14, height: 14, borderRadius: 7, borderWidth: 3, borderColor: colors.textMuted, backgroundColor: colors.surfaceElevated, marginTop: 4 },
-  timelineDotPassed: { width: 14, height: 14, borderRadius: 7, borderWidth: 3, borderColor: colors.success, backgroundColor: colors.surfaceElevated, marginTop: 4 },
-  timelineLiveDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: colors.accent,
-    borderWidth: 2,
-    borderColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 6,
-    elevation: 6,
-  },
-  timelineLiveIcon: { fontSize: 14 },
-  timelineLine: { flex: 1, width: 3, backgroundColor: colors.border, marginVertical: 3, borderRadius: 1 },
-  timelineLinePassed: { backgroundColor: colors.success },
-  timelineContent: { flex: 1, paddingBottom: spacing.md },
-  timelineNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  timelineName: { color: colors.textPrimary, fontWeight: fontWeight.extrabold, fontSize: 14 },
-  liveNowBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: colors.accentBgStrong,
-    borderWidth: 1,
-    borderColor: colors.borderAccent,
-  },
-  liveNowText: { color: colors.accent, fontSize: 10, fontWeight: fontWeight.extrabold, letterSpacing: 0.5 },
-  timelineTimes: { flexDirection: 'row', gap: spacing.lg, marginTop: 4 },
-  timelineTime: { color: colors.textMuted, fontSize: 13, fontFamily: 'monospace' },
-  timelineTimePassed: { color: colors.success, fontWeight: fontWeight.medium },
-  tripStatusRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  tripStatusLabel: { color: colors.textSecondary, fontSize: 14, fontWeight: fontWeight.bold },
-  rosterToggle: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: radius.md,
-    paddingVertical: 14,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  rosterTogglePressed: { backgroundColor: colors.accentBg },
-  rosterToggleText: { color: colors.accent, fontWeight: fontWeight.bold, fontSize: 15 },
-  rosterToggleChevron: { color: colors.accent, fontSize: 14 },
-  rosterStop: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.md, gap: spacing.sm },
-  rosterStopHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  rosterStopName: { color: colors.textPrimary, fontWeight: fontWeight.extrabold, fontSize: 14 },
-  rosterStopTime: { color: colors.textMuted, fontWeight: fontWeight.bold, fontSize: 13 },
-  passengerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-  passengerName: { color: colors.textPrimary, fontSize: 14, fontWeight: fontWeight.bold },
-  passengerInfoCol: { flex: 1, gap: 2 },
-  passengerMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  passengerRollNo: { color: colors.accent, fontSize: 12, fontWeight: fontWeight.bold, fontFamily: 'monospace' },
-  passengerClass: { color: colors.textSecondary, fontSize: 11, fontWeight: fontWeight.medium },
-  facultyMetaText: { color: colors.textSecondary, fontSize: 11, fontWeight: fontWeight.medium, fontStyle: 'italic' },
-  rosterDriverBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: 'rgba(37, 99, 235, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.25)',
-    borderRadius: radius.sm,
-    padding: spacing.sm,
-    marginTop: 6,
-    marginBottom: spacing.xs,
-  },
-  rosterDriverIcon: { fontSize: 20 },
-  rosterDriverLabel: { color: colors.textMuted, fontSize: 10, fontWeight: fontWeight.bold, letterSpacing: 0.5 },
-  rosterDriverName: { color: colors.textPrimary, fontSize: 13, fontWeight: fontWeight.bold },
-  footerDock: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-    paddingVertical: 12,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: spacing.md,
-  },
-  footerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  footerLiveDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent },
-  footerBusLabel: { color: colors.textPrimary, fontWeight: fontWeight.bold, fontSize: 14 },
-  footerEta: { color: colors.textSecondary, fontSize: 12, fontWeight: fontWeight.medium },
-  eventOverrideBanner: {
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.35)',
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: 6,
-  },
-  eventOverrideHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  eventOverrideIcon: {
-    fontSize: 22,
-  },
-  eventOverrideTitle: {
-    color: '#F59E0B',
-    fontSize: 15,
-    fontWeight: fontWeight.extrabold,
-  },
-  eventOverrideSub: {
-    color: 'rgba(245, 158, 11, 0.85)',
-    fontSize: 12,
-    fontWeight: fontWeight.medium,
-  },
-  eventOverrideNote: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  directionBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-  },
-  directionBannerInbound: {
-    backgroundColor: 'rgba(37, 99, 235, 0.1)',
-    borderColor: 'rgba(59, 130, 246, 0.3)',
-  },
-  directionBannerReturn: {
-    backgroundColor: 'rgba(168, 85, 247, 0.12)',
-    borderColor: 'rgba(168, 85, 247, 0.35)',
-  },
-  directionIcon: {
-    fontSize: 24,
-  },
-  directionTitle: {
-    color: colors.textPrimary,
-    fontSize: 14,
-    fontWeight: fontWeight.extrabold,
-  },
-  directionSub: {
-    color: colors.textSecondary,
-    fontSize: 12,
-    marginTop: 2,
-    lineHeight: 16,
-  },
-}), [colors]);
+  const { colors, isDark } = useTheme();
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flex: 1, backgroundColor: colors.background },
+        /* Top Navbar */
+        header: {
+          backgroundColor: TEAL_ACCENT,
+          paddingHorizontal: spacing.md,
+          paddingVertical: 12,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        backBtn: {
+          width: 36,
+          height: 36,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        backIcon: { color: '#FFFFFF', fontSize: 24, fontWeight: fontWeight.bold },
+        headerCenter: { flex: 1, marginLeft: 8 },
+        headerTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: fontWeight.bold },
+        headerSubtitle: { color: 'rgba(255, 255, 255, 0.85)', fontSize: 12 },
+        headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+        navActionBtn: {
+          width: 38,
+          height: 38,
+          borderRadius: 19,
+          backgroundColor: 'rgba(255, 255, 255, 0.2)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative',
+        },
+        navActionBtnActive: { backgroundColor: '#FFFFFF' },
+        navActionIcon: { fontSize: 18, color: '#FFFFFF' },
+        bellBadge: {
+          position: 'absolute',
+          top: 6,
+          right: 6,
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          backgroundColor: '#EF4444',
+        },
+
+        /* Tabs */
+        tabBar: {
+          flexDirection: 'row',
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          borderBottomWidth: 1,
+          borderBottomColor: colors.borderSubtle,
+        },
+        tabItem: {
+          flex: 1,
+          paddingVertical: 14,
+          alignItems: 'center',
+          borderBottomWidth: 3,
+          borderBottomColor: 'transparent',
+        },
+        tabItemActive: { borderBottomColor: TEAL_ACCENT },
+        tabItemText: {
+          fontSize: 13,
+          fontWeight: fontWeight.bold,
+          color: colors.textMuted,
+          letterSpacing: 0.5,
+        },
+        tabItemTextActive: { color: TEAL_ACCENT },
+
+        /* Direction Bar */
+        directionBar: {
+          flexDirection: 'row',
+          paddingHorizontal: spacing.md,
+          paddingVertical: 8,
+          gap: 10,
+          backgroundColor: isDark ? colors.surface : '#F3F4F6',
+        },
+        directionPill: {
+          flex: 1,
+          paddingVertical: 8,
+          borderRadius: radius.full,
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          alignItems: 'center',
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+        },
+        directionPillActive: {
+          backgroundColor: TEAL_ACCENT,
+          borderColor: TEAL_ACCENT,
+        },
+        directionPillText: {
+          fontSize: 12,
+          fontWeight: fontWeight.semibold,
+          color: colors.textSecondary,
+        },
+        directionPillTextActive: { color: '#FFFFFF', fontWeight: fontWeight.bold },
+
+        /* Full Route Container */
+        fullRouteContainer: { flex: 1, position: 'relative' },
+        mapContainer: { flex: 1 },
+        floatingRefreshBtn: {
+          position: 'absolute',
+          top: 14,
+          right: 14,
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: '#FFFFFF',
+          alignItems: 'center',
+          justifyContent: 'center',
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.25,
+          shadowRadius: 4,
+          elevation: 6,
+        },
+        floatingRefreshIcon: { fontSize: 22, color: TEAL_ACCENT, fontWeight: fontWeight.bold },
+
+        /* Map Markers */
+        stopMarkerDot: {
+          width: 14,
+          height: 14,
+          borderRadius: 7,
+          backgroundColor: '#FFFFFF',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 2,
+          borderColor: TEAL_ACCENT,
+        },
+        stopMarkerInner: {
+          width: 6,
+          height: 6,
+          borderRadius: 3,
+          backgroundColor: TEAL_ACCENT,
+        },
+        busMarkerHalo: {
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          backgroundColor: 'rgba(0, 191, 165, 0.25)',
+          borderWidth: 2,
+          borderColor: TEAL_ACCENT,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        busMarkerEmoji: { fontSize: 20 },
+
+        /* Bottom Sheet */
+        bottomSheet: {
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          borderTopLeftRadius: radius.xl,
+          borderTopRightRadius: radius.xl,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: -3 },
+          shadowOpacity: 0.15,
+          shadowRadius: 8,
+          elevation: 12,
+          overflow: 'hidden',
+        },
+        sheetHandleArea: {
+          alignItems: 'center',
+          paddingVertical: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.borderSubtle,
+        },
+        sheetHandleBar: {
+          width: 44,
+          height: 4,
+          borderRadius: 2,
+          backgroundColor: colors.textMuted,
+          marginBottom: 6,
+        },
+        sheetHeaderRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          width: '100%',
+          paddingHorizontal: 20,
+        },
+        sheetHeaderText: {
+          fontSize: 13,
+          fontWeight: fontWeight.bold,
+          color: colors.textSecondary,
+        },
+        sheetStopsCount: {
+          fontSize: 12,
+          fontWeight: fontWeight.bold,
+          color: TEAL_ACCENT,
+        },
+
+        /* Timeline List */
+        timelineList: { paddingHorizontal: 16, paddingVertical: 12 },
+        timelineRow: {
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          minHeight: 64,
+        },
+        timelineRowPressed: { backgroundColor: 'rgba(0, 191, 165, 0.08)' },
+        timelineNodeColumn: {
+          width: 28,
+          alignItems: 'center',
+        },
+        timelineCircle: {
+          width: 14,
+          height: 14,
+          borderRadius: 7,
+          borderWidth: 2,
+          backgroundColor: '#FFFFFF',
+          zIndex: 2,
+        },
+        timelineCirclePassed: { borderColor: '#9CA3AF', backgroundColor: '#E5E7EB' },
+        timelineCircleActive: { borderColor: '#10B981', backgroundColor: '#10B981' },
+        timelineCircleUpcoming: { borderColor: TEAL_ACCENT, backgroundColor: '#FFFFFF' },
+        timelineLine: {
+          width: 2,
+          flex: 1,
+          marginVertical: 2,
+        },
+        timelineLinePassed: { backgroundColor: '#D1D5DB' },
+        timelineLineUpcoming: { backgroundColor: TEAL_ACCENT },
+        timelineDetails: { flex: 1, paddingLeft: 10, paddingBottom: 16 },
+        stopNameText: {
+          fontSize: 14,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+          letterSpacing: 0.2,
+        },
+        timingRow: { flexDirection: 'row', gap: 16, marginTop: 4 },
+        arrivalText: { fontSize: 13, color: TEAL_ACCENT, fontWeight: fontWeight.semibold },
+        departureText: { fontSize: 13, color: colors.textSecondary, fontWeight: fontWeight.medium },
+        statusCol: {
+          alignItems: 'flex-end',
+          paddingBottom: 16,
+        },
+        statusBusLeft: { fontSize: 12, color: '#EF4444', fontWeight: fontWeight.bold },
+        statusAtStop: { fontSize: 12, color: '#10B981', fontWeight: fontWeight.bold },
+        statusScheduled: { fontSize: 12, color: TEAL_ACCENT, fontWeight: fontWeight.medium },
+
+        /* Bus Info Content */
+        busInfoContent: { padding: spacing.md, gap: spacing.md },
+        infoCard: {
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          borderRadius: radius.lg,
+          padding: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+        },
+        infoCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+        busIconBox: {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: 'rgba(0, 191, 165, 0.15)',
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        infoRouteTitle: { fontSize: 18, fontWeight: fontWeight.bold, color: colors.textPrimary },
+        infoRouteSub: { fontSize: 13, color: colors.textSecondary },
+        infoDivider: { height: 1, backgroundColor: colors.borderSubtle, marginVertical: 12 },
+        infoGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+        infoGridItem: { flex: 1 },
+        infoGridLabel: { fontSize: 11, fontWeight: fontWeight.bold, color: colors.textMuted },
+        infoGridValue: {
+          fontSize: 14,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+          marginTop: 2,
+        },
+        cardSectionLabel: {
+          fontSize: 12,
+          fontWeight: fontWeight.bold,
+          color: TEAL_ACCENT,
+          letterSpacing: 0.5,
+          marginBottom: 8,
+        },
+        areaCoveredText: { fontSize: 14, color: colors.textPrimary, lineHeight: 20 },
+        inchargeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
+        phoneIconBox: {
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        inchargeName: { fontSize: 14, fontWeight: fontWeight.bold, color: colors.textPrimary },
+        inchargeRole: { fontSize: 12, color: colors.textSecondary },
+        callBadge: {
+          paddingHorizontal: 12,
+          paddingVertical: 4,
+          borderRadius: 4,
+          backgroundColor: TEAL_ACCENT,
+          color: '#FFFFFF',
+          fontSize: 12,
+          fontWeight: fontWeight.bold,
+        },
+
+        /* Remind Me Modal */
+        modalBackdrop: {
+          flex: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 20,
+        },
+        modalCard: {
+          width: '100%',
+          maxWidth: 380,
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          borderRadius: radius.xl,
+          padding: 20,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 10,
+          elevation: 16,
+        },
+        modalHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 16,
+        },
+        modalTitle: { fontSize: 18, fontWeight: fontWeight.bold, color: colors.textPrimary },
+        modalCloseText: { fontSize: 18, color: colors.textMuted, fontWeight: fontWeight.bold },
+        modalFieldLabel: {
+          fontSize: 11,
+          fontWeight: fontWeight.bold,
+          color: colors.textMuted,
+          letterSpacing: 0.5,
+          marginBottom: 6,
+          marginTop: 8,
+        },
+        stopPickerBox: {
+          maxHeight: 120,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+          marginBottom: 8,
+        },
+        stopPickerOption: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.borderSubtle,
+        },
+        stopPickerOptionSelected: { backgroundColor: 'rgba(0, 191, 165, 0.12)' },
+        stopPickerOptionText: { fontSize: 13, color: colors.textPrimary },
+        stopPickerOptionTextSelected: { color: TEAL_ACCENT, fontWeight: fontWeight.bold },
+        checkIcon: { color: TEAL_ACCENT, fontSize: 14, fontWeight: fontWeight.bold },
+        freqRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+        freqBtn: {
+          flex: 1,
+          paddingVertical: 8,
+          borderRadius: radius.sm,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.surface,
+          alignItems: 'center',
+        },
+        freqBtnSelected: {
+          borderColor: TEAL_ACCENT,
+          backgroundColor: TEAL_ACCENT,
+        },
+        freqBtnText: { fontSize: 12, fontWeight: fontWeight.semibold, color: colors.textSecondary },
+        freqBtnTextSelected: { color: '#FFFFFF', fontWeight: fontWeight.bold },
+        minutesRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+        minuteChip: {
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: radius.sm,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.surface,
+        },
+        minuteChipSelected: {
+          borderColor: TEAL_ACCENT,
+          backgroundColor: TEAL_ACCENT,
+        },
+        minuteChipText: { fontSize: 12, fontWeight: fontWeight.bold, color: colors.textPrimary },
+        minuteChipTextSelected: { color: '#FFFFFF' },
+        reminderExplainText: {
+          fontSize: 12,
+          color: colors.textSecondary,
+          textAlign: 'center',
+          marginVertical: 10,
+        },
+        activeReminderInfo: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: 8,
+          borderRadius: 4,
+          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          marginBottom: 10,
+        },
+        activeReminderInfoText: { fontSize: 11, color: '#EF4444', flex: 1 },
+        deleteReminderText: { fontSize: 11, color: '#EF4444', fontWeight: fontWeight.bold },
+        modalActionsRow: { flexDirection: 'row', gap: 12, marginTop: 8 },
+        modalCancelBtn: {
+          flex: 1,
+          paddingVertical: 12,
+          borderRadius: radius.sm,
+          borderWidth: 1,
+          borderColor: colors.border,
+          alignItems: 'center',
+        },
+        modalCancelBtnText: { fontSize: 14, fontWeight: fontWeight.bold, color: colors.textMuted },
+        modalCreateBtn: {
+          flex: 1,
+          paddingVertical: 12,
+          borderRadius: radius.sm,
+          backgroundColor: TEAL_ACCENT,
+          alignItems: 'center',
+        },
+        modalCreateBtnText: { fontSize: 14, fontWeight: fontWeight.bold, color: '#FFFFFF' },
+      }),
+    [colors, isDark]
+  );
 };

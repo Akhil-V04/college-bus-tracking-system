@@ -224,12 +224,13 @@ router.get('/routes/:routeNo', async (req, res) => {
       },
     });
 
-    // 2. Fetch baseline published schedule
-    const baseSchedule = await prisma.scheduleVersion.findFirst({
+    // 2. Fetch baseline published schedules
+    const reqDirection = String(req.query.direction || '').trim().toUpperCase();
+
+    const allPublished = await prisma.scheduleVersion.findMany({
       where: {
         routeServiceId: route.id,
         status: 'PUBLISHED',
-        direction: { not: 'EVENT_OVERRIDE' },
       },
       orderBy: { publishedAt: 'desc' },
       select: {
@@ -237,6 +238,8 @@ router.get('/routes/:routeNo', async (req, res) => {
         name: true,
         direction: true,
         version: true,
+        effectiveFrom: true,
+        effectiveTo: true,
         geometryPolyline: true,
         geometryFormat: true,
         geometryDistanceMeters: true,
@@ -254,6 +257,24 @@ router.get('/routes/:routeNo', async (req, res) => {
         },
       },
     });
+
+    const availableDirections = [
+      ...new Set(allPublished.map((s) => s.direction).filter((d) => d !== 'EVENT_OVERRIDE')),
+    ];
+
+    let baseSchedule = null;
+    if (reqDirection && ['MORNING', 'EVENING'].includes(reqDirection)) {
+      baseSchedule = allPublished.find((s) => s.direction === reqDirection) || null;
+    }
+
+    if (!baseSchedule) {
+      // Prioritize MORNING by default so morning arrival timings are shown
+      baseSchedule =
+        allPublished.find((s) => s.direction === 'MORNING') ||
+        allPublished.find((s) => s.direction !== 'EVENT_OVERRIDE') ||
+        allPublished[0] ||
+        null;
+    }
 
     let effectiveSchedule = activeOverride || baseSchedule || null;
     const isEventOverride = Boolean(activeOverride);
@@ -332,6 +353,7 @@ router.get('/routes/:routeNo', async (req, res) => {
         : null,
       assignedPassengerCount,
       activeTrip,
+      availableDirections,
       roster: roster ? { name: roster.name, academicYear: roster.academicYear } : null,
     });
   } catch (error) {
