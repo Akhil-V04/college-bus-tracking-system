@@ -99,12 +99,13 @@ router.get('/route/:routeServiceId', async (req, res) => {
       });
     }
 
-    // 2. Otherwise return standard published regular schedule
-    const schedule = await prisma.scheduleVersion.findFirst({
+    // 2. Return standard published regular schedule matching requested direction if provided
+    const requestedDirection = req.query.direction ? String(req.query.direction).trim().toUpperCase() : null;
+    let schedule = await prisma.scheduleVersion.findFirst({
       where: {
         routeServiceId,
         status: 'PUBLISHED',
-        direction: { not: 'EVENT_OVERRIDE' },
+        ...(requestedDirection ? { direction: requestedDirection } : { direction: { not: 'EVENT_OVERRIDE' } }),
       },
       orderBy: { publishedAt: 'desc' },
       select: {
@@ -131,6 +132,63 @@ router.get('/route/:routeServiceId', async (req, res) => {
         },
       },
     });
+
+    // If requested direction is EVENING and no published evening schedule exists yet,
+    // automatically generate the reversed evening schedule from the published morning timetable:
+    if (!schedule && requestedDirection === 'EVENING') {
+      const publishedMorning = await prisma.scheduleVersion.findFirst({
+        where: { routeServiceId, direction: 'MORNING', status: 'PUBLISHED' },
+        orderBy: { publishedAt: 'desc' },
+        include: {
+          stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+        },
+      });
+
+      if (publishedMorning && publishedMorning.stops.length > 1) {
+        const morningStops = publishedMorning.stops;
+        const vbitIndex = morningStops.findIndex((s) => (s.stop.name || '').toUpperCase().includes('VBIT'));
+        const vbitStop = vbitIndex >= 0 ? morningStops[vbitIndex].stop : { id: null, name: 'VBIT College', latitude: 17.4705, longitude: 78.7255 };
+        const intermediateStops = morningStops.filter((_, idx) => idx !== vbitIndex);
+
+        const forwardList = [...intermediateStops.map(s => ({ ...s.stop, scheduledTime: s.scheduledTime })), { ...vbitStop, scheduledTime: morningStops[vbitIndex]?.scheduledTime || '09:25' }];
+        const morningDeltas = [0];
+        for (let i = 1; i < forwardList.length; i++) {
+          const [h1, m1] = (forwardList[i - 1].scheduledTime || '08:00').split(':').map(Number);
+          const [h2, m2] = (forwardList[i].scheduledTime || '08:05').split(':').map(Number);
+          const diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+          morningDeltas.push(Math.max(2, diff));
+        }
+
+        const reversedList = [vbitStop, ...intermediateStops.map(s => s.stop).reverse()];
+        const eveningDeltas = [0];
+        for (let i = forwardList.length - 1; i >= 1; i--) {
+          eveningDeltas.push(morningDeltas[i]);
+        }
+
+        let curMin = 16 * 60 + 30; // 16:30 VBIT departure
+        const reversedStops = [];
+        for (let i = 0; i < reversedList.length; i++) {
+          curMin += eveningDeltas[i];
+          const h = Math.floor(curMin / 60);
+          const m = curMin % 60;
+          reversedStops.push({
+            id: null,
+            sequenceOrder: i + 1,
+            scheduledTime: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+            stop: reversedList[i],
+          });
+        }
+
+        return res.json({
+          id: null,
+          name: `${publishedMorning.name || 'Route'} (Evening)`,
+          direction: 'EVENING',
+          version: 1,
+          stops: reversedStops,
+        });
+      }
+    }
+
     if (!schedule) return res.status(404).json({ error: 'No published schedule for this route' });
     return res.json(schedule);
   } catch (error) {
@@ -386,7 +444,73 @@ router.get('/route/:routeServiceId/detail', async (req, res) => {
   });
   if (published) return res.json(published);
 
-  // 2. If no published schedule exists, return a draft schedule for this direction
+  // 2. If direction is EVENING and no published evening schedule exists:
+  // If a published MORNING schedule exists with stops, automatically generate the reversed Evening route:
+  // First stop is VBIT College (at 16:30 departure), followed by drops in reverse order ending at the first pickup stop.
+  if (direction === 'EVENING') {
+    const publishedMorning = await prisma.scheduleVersion.findFirst({
+      where: { routeServiceId, direction: 'MORNING', status: 'PUBLISHED' },
+      orderBy: { publishedAt: 'desc' },
+      include: {
+        routeService: true,
+        stops: { orderBy: { sequenceOrder: 'asc' }, include: { stop: true } },
+      },
+    });
+
+    if (publishedMorning && publishedMorning.stops.length > 1) {
+      const morningStops = publishedMorning.stops;
+      const vbitIndex = morningStops.findIndex((s) => (s.stop.name || '').toUpperCase().includes('VBIT'));
+      const vbitStop = vbitIndex >= 0 ? morningStops[vbitIndex].stop : { id: null, name: 'VBIT College', latitude: 17.4705, longitude: 78.7255 };
+      const intermediateStops = morningStops.filter((_, idx) => idx !== vbitIndex);
+
+      const forwardList = [...intermediateStops.map(s => ({ ...s.stop, scheduledTime: s.scheduledTime })), { ...vbitStop, scheduledTime: morningStops[vbitIndex]?.scheduledTime || '09:25' }];
+      const morningDeltas = [0];
+      for (let i = 1; i < forwardList.length; i++) {
+        const [h1, m1] = (forwardList[i - 1].scheduledTime || '08:00').split(':').map(Number);
+        const [h2, m2] = (forwardList[i].scheduledTime || '08:05').split(':').map(Number);
+        const diff = (h2 * 60 + m2) - (h1 * 60 + m1);
+        morningDeltas.push(Math.max(2, diff));
+      }
+
+      const reversedList = [vbitStop, ...intermediateStops.map(s => s.stop).reverse()];
+      const eveningDeltas = [0];
+      for (let i = forwardList.length - 1; i >= 1; i--) {
+        eveningDeltas.push(morningDeltas[i]);
+      }
+
+      let curMin = 16 * 60 + 30; // 16:30
+      const reversedStops = [];
+      for (let i = 0; i < reversedList.length; i++) {
+        curMin += eveningDeltas[i];
+        const h = Math.floor(curMin / 60);
+        const m = curMin % 60;
+        reversedStops.push({
+          id: null,
+          sequenceOrder: i + 1,
+          scheduledTime: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+          stop: reversedList[i],
+        });
+      }
+
+      // Check if an existing draft exists to reuse id
+      const existingEveningDraft = await prisma.scheduleVersion.findFirst({
+        where: { routeServiceId, direction: 'EVENING', status: 'DRAFT' },
+      });
+
+      return res.json({
+        id: existingEveningDraft?.id || null,
+        routeServiceId,
+        name: `Route ${publishedMorning.routeService?.routeNo || ''} Evening Schedule`,
+        direction: 'EVENING',
+        status: 'DRAFT',
+        routeService: publishedMorning.routeService,
+        stops: reversedStops,
+        isAutoReversed: true,
+      });
+    }
+  }
+
+  // 3. If no published schedule exists, return a draft schedule for this direction
   const draft = await prisma.scheduleVersion.findFirst({
     where: { routeServiceId, direction, status: 'DRAFT' },
     orderBy: { version: 'desc' },
@@ -397,7 +521,7 @@ router.get('/route/:routeServiceId/detail', async (req, res) => {
   });
   if (draft) return res.json(draft);
 
-  // 3. If neither exists for this direction, check if any published schedule exists for the route
+  // 4. If neither exists for this direction, check if any published schedule exists for the route
   const anyPublished = await prisma.scheduleVersion.findFirst({
     where: { routeServiceId, status: 'PUBLISHED' },
     orderBy: { publishedAt: 'desc' },

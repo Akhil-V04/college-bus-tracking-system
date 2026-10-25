@@ -20,7 +20,96 @@ const VBIT_ENDPOINT = {
   isEndpoint: true,
 };
 
-// Google Maps custom pin generator
+// Time helper utilities
+function timeToMins(tStr) {
+  if (!tStr) return 0;
+  const match = String(tStr).match(/(\d{1,2}):(\d{2})/);
+  if (!match) return 0;
+  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+}
+
+function minsToTime(totalM) {
+  const h = Math.floor(totalM / 60) % 24;
+  const m = totalM % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// Generate reversed evening stops from a published morning schedule:
+// Stop 1 is VBIT College (16:30 departure), followed by drops in reverse order ending at the starting pickup stop
+function generateEveningStops(morningStops) {
+  if (!Array.isArray(morningStops) || morningStops.length < 2) return [];
+
+  const vbitIdx = morningStops.findIndex((s) => (s.name || s.stop?.name || '').toUpperCase().includes('VBIT'));
+  const vbitStop = vbitIdx >= 0 ? morningStops[vbitIdx] : {
+    name: 'VBIT College',
+    latitude: 17.4705,
+    longitude: 78.7255,
+    scheduledTime: '16:30',
+    isEndpoint: true,
+  };
+  const intermediateStops = morningStops.filter((_, idx) => idx !== vbitIdx);
+
+  // In morning, order is: Intermediate 1 -> Intermediate 2 -> ... -> Intermediate N -> VBIT
+  const forwardList = [
+    ...intermediateStops.map((s) => ({
+      ...s,
+      stopId: s.stopId || s.stop?.id || s.id,
+      name: s.name || s.stop?.name,
+      latitude: Number(s.latitude || s.stop?.latitude),
+      longitude: Number(s.longitude || s.stop?.longitude),
+      scheduledTime: s.scheduledTime || '08:00',
+    })),
+    {
+      ...vbitStop,
+      stopId: vbitStop.stopId || vbitStop.stop?.id || vbitStop.id,
+      name: 'VBIT College',
+      latitude: Number(vbitStop.latitude || vbitStop.stop?.latitude || 17.4705),
+      longitude: Number(vbitStop.longitude || vbitStop.stop?.longitude || 78.7255),
+      scheduledTime: vbitStop.scheduledTime || '09:25',
+    },
+  ];
+
+  // Calculate forward travel deltas (each at least 2 minutes)
+  const forwardDeltas = [0];
+  for (let i = 1; i < forwardList.length; i++) {
+    const diff = timeToMins(forwardList[i].scheduledTime) - timeToMins(forwardList[i - 1].scheduledTime);
+    forwardDeltas.push(Math.max(2, diff));
+  }
+
+  // Reverse travel deltas for evening: VBIT -> Last Pickup -> Second-to-last -> ... -> First Pickup
+  const eveningDeltas = [0];
+  for (let i = forwardList.length - 1; i >= 1; i--) {
+    eveningDeltas.push(forwardDeltas[i]);
+  }
+
+  // In evening: Stop 1 is VBIT College departure at 16:30, followed by intermediate stops in reverse order
+  const rawReversedList = [
+    { ...vbitStop, name: 'VBIT College', isEndpoint: true },
+    ...intermediateStops.slice().reverse().map((s) => ({ ...s, isEndpoint: false })),
+  ];
+
+  let currentMin = 16 * 60 + 30; // 16:30 departure from VBIT College
+  const reversedStops = [];
+
+  for (let i = 0; i < rawReversedList.length; i++) {
+    currentMin += eveningDeltas[i];
+    const s = rawReversedList[i];
+    reversedStops.push({
+      tempId: 'evening-rev-' + i + '-' + Date.now(),
+      id: null,
+      stopId: s.stopId || s.stop?.id || s.id,
+      name: s.name || s.stop?.name || `Stop ${i + 1}`,
+      latitude: Number(s.latitude || s.stop?.latitude),
+      longitude: Number(s.longitude || s.stop?.longitude),
+      scheduledTime: minsToTime(currentMin),
+      isEndpoint: i === 0, // VBIT is departure endpoint
+      confirmed: true,
+    });
+  }
+
+  return reversedStops;
+}
+
 function createMapPin(text, color = '#ea580c', isEnd = false, isConfirmed = false) {
   return L.divIcon({
     className: '',
@@ -230,15 +319,75 @@ export default function StopsScreen() {
     setRouteLoading(true);
     setMessage(null);
     try {
+      const currentRoute = routes.find((r) => String(r.id) === String(routeId));
+      const routeSchedules = (schedulesList || []).filter((s) => Number(s.routeServiceId) === Number(routeId));
+      const pubMorning = routeSchedules.find((s) => s.direction === 'MORNING' && s.status === 'PUBLISHED');
+      const pubEvening = routeSchedules.find((s) => s.direction === 'EVENING' && s.status === 'PUBLISHED');
+      const draftEvening = routeSchedules.find((s) => s.direction === 'EVENING' && s.status === 'DRAFT');
+
+      // ─── Special Automated Handling for Evening (From College) Route ───
+      if (dir === 'EVENING') {
+        // Condition 1: An Evening schedule is already published with >= 2 stops
+        if (pubEvening && (pubEvening._count?.stops >= 2 || pubEvening.stops?.length >= 2)) {
+          try {
+            const { data } = await api.get(`/schedules/${pubEvening.id}`);
+            if (data?.stops && data.stops.length > 1) {
+              setScheduleInfo(data);
+              const mapped = data.stops.map((s, idx) => ({
+                id: s.id,
+                stopId: s.stop.id,
+                name: s.stop.name,
+                latitude: Number(s.stop.latitude),
+                longitude: Number(s.stop.longitude),
+                scheduledTime: s.scheduledTime,
+                isEndpoint: idx === 0,
+                confirmed: true,
+              }));
+              setRouteStops(mapped);
+              return;
+            }
+          } catch (_pubEvErr) {
+            // fallback
+          }
+        }
+
+        // Condition 2: No published evening route exists yet, but Morning IS published!
+        // Automatically reverse the published morning stops:
+        // Stop 1: VBIT College (16:30 departure)
+        // Stop 2: Near to the last stop in morning (Nagaram)
+        // ...
+        // Stop N: Morning pickup origin (Lalapet)
+        if (pubMorning) {
+          try {
+            const { data: morningData } = await api.get(`/schedules/${pubMorning.id}`);
+            if (morningData?.stops && morningData.stops.length > 1) {
+              const reversed = generateEveningStops(morningData.stops);
+              setRouteStops(reversed);
+              setScheduleInfo({
+                id: draftEvening?.id || null,
+                routeServiceId: Number(routeId),
+                name: `Route ${currentRoute?.routeNo || ''} Evening Schedule`,
+                direction: 'EVENING',
+                status: 'DRAFT',
+                isAutoReversed: true,
+              });
+              setMessage({
+                type: 'info',
+                text: `🌅 Loaded all ${reversed.length} stops from published Morning route in reverse order! VBIT College is departure stop #1 at 16:30. Click '🚀 Publish Live' to activate for students.`,
+              });
+              return;
+            }
+          } catch (_revErr) {
+            // Fall back below
+          }
+        }
+      }
+
+      // ─── Morning or Fallback Schedule Loading ───
       let schedule = null;
       let targetScheduleId = schedId;
 
-      // When no specific scheduleId is provided in URL, pick the best schedule:
-      // Priority 1: Published schedule for this route & direction
-      // Priority 2: Draft schedule for this route & direction
-      // Priority 3: Any published schedule for this route
-      if (!targetScheduleId && schedulesList && schedulesList.length > 0) {
-        const routeSchedules = schedulesList.filter((s) => Number(s.routeServiceId) === Number(routeId));
+      if (!targetScheduleId && routeSchedules.length > 0) {
         const pubForDir = routeSchedules.find((s) => s.direction === dir && s.status === 'PUBLISHED');
         if (pubForDir) {
           targetScheduleId = pubForDir.id;
@@ -264,62 +413,117 @@ export default function StopsScreen() {
         }
       }
 
-      // If still not resolved via schedule list, check public route schedule (always returns published timetable)
+      // Check route detail endpoint if needed
       if (!schedule) {
         try {
-          const { data } = await api.get(`/schedules/route/${routeId}`);
-          if (data && data.stops && data.stops.length > 1) {
-            schedule = { ...data, status: 'PUBLISHED' };
-          }
+          const { data } = await api.get(`/schedules/route/${routeId}/detail`, {
+            params: { direction: dir },
+          });
+          schedule = data;
         } catch (_pubErr) {
-          // Fall back to detail endpoint below
+          // Fall back below
         }
       }
 
-      // Final fallback to detail endpoint
-      if (!schedule) {
-        const { data } = await api.get(`/schedules/route/${routeId}/detail`, {
-          params: { direction: dir },
-        });
-        schedule = data;
-      }
       setScheduleInfo(schedule);
 
-      if (schedule.stops && schedule.stops.length > 0) {
-        // Map existing stops
+      if (schedule?.stops && schedule.stops.length > 0) {
         const mapped = schedule.stops.map((s, idx) => ({
           id: s.id,
-          stopId: s.stop.id,
-          name: s.stop.name,
-          latitude: Number(s.stop.latitude),
-          longitude: Number(s.stop.longitude),
+          stopId: s.stop?.id || s.stopId,
+          name: s.stop?.name || s.name,
+          latitude: Number(s.stop?.latitude || s.latitude),
+          longitude: Number(s.stop?.longitude || s.longitude),
           scheduledTime: s.scheduledTime,
-          isEndpoint: (s.stop.name || '').toUpperCase().includes('VBIT') || idx === schedule.stops.length - 1,
-          confirmed: true, // Existing saved stops start as confirmed/locked
+          isEndpoint: dir === 'EVENING' ? idx === 0 : ((s.stop?.name || s.name || '').toUpperCase().includes('VBIT') || idx === schedule.stops.length - 1),
+          confirmed: true,
         }));
 
-        // Ensure VBIT is present as the ending stop
-        const hasVbit = mapped.some((s) => s.isEndpoint || s.name.toUpperCase().includes('VBIT'));
-        if (!hasVbit) {
-          mapped.push({ ...VBIT_ENDPOINT });
+        if (dir === 'EVENING') {
+          const vbitIdx = mapped.findIndex((s) => (s.name || '').toUpperCase().includes('VBIT'));
+          if (vbitIdx > 0) {
+            const [vbit] = mapped.splice(vbitIdx, 1);
+            mapped.unshift({ ...vbit, isEndpoint: true, scheduledTime: vbit.scheduledTime || '16:30' });
+          } else if (vbitIdx === -1) {
+            mapped.unshift({ ...VBIT_ENDPOINT, scheduledTime: '16:30', isEndpoint: true });
+          }
+        } else {
+          const hasVbit = mapped.some((s) => s.isEndpoint || s.name.toUpperCase().includes('VBIT'));
+          if (!hasVbit) {
+            mapped.push({ ...VBIT_ENDPOINT });
+          }
         }
         setRouteStops(mapped);
       } else {
-        // Brand new route schedule: start with VBIT College as final stop
-        setRouteStops([{ ...VBIT_ENDPOINT }]);
+        if (dir === 'EVENING') {
+          setRouteStops([{ ...VBIT_ENDPOINT, scheduledTime: '16:30', isEndpoint: true }]);
+        } else {
+          setRouteStops([{ ...VBIT_ENDPOINT }]);
+        }
       }
     } catch (error) {
       if (error.response?.status === 404) {
-        // No schedule created yet for this route -> initialize with VBIT College
         setScheduleInfo(null);
-        setRouteStops([{ ...VBIT_ENDPOINT }]);
+        setRouteStops([{ ...VBIT_ENDPOINT, scheduledTime: dir === 'EVENING' ? '16:30' : '09:30', isEndpoint: true }]);
       } else {
         setMessage({ type: 'error', text: errorMessage(error, 'Could not load route schedule.') });
       }
     } finally {
       setRouteLoading(false);
     }
-  }, [allSchedules]);
+  }, [allSchedules, routes]);
+
+  // Explicitly sync / reverse evening timetable from published morning schedule
+  const syncEveningFromMorning = useCallback(async (routeId) => {
+    if (!routeId) return;
+    setRouteLoading(true);
+    setMessage(null);
+    try {
+      const currentRoute = routes.find((r) => String(r.id) === String(routeId));
+      const routeSchedules = (allSchedules || []).filter((s) => Number(s.routeServiceId) === Number(routeId));
+      let pubMorning = routeSchedules.find((s) => s.direction === 'MORNING' && s.status === 'PUBLISHED');
+      let morningStops = [];
+
+      if (pubMorning) {
+        const { data } = await api.get(`/schedules/${pubMorning.id}`);
+        morningStops = data?.stops || [];
+      } else {
+        const { data } = await api.get(`/schedules/route/${routeId}`);
+        if (data?.stops && data.stops.length > 1) {
+          morningStops = data.stops;
+        }
+      }
+
+      if (!morningStops || morningStops.length < 2) {
+        setMessage({
+          type: 'warning',
+          text: `Route ${currentRoute?.routeNo || ''} does not have a published Morning schedule to reverse from. Please publish the Morning route first.`,
+        });
+        return;
+      }
+
+      const reversed = generateEveningStops(morningStops);
+      setRouteStops(reversed);
+      const draftEvening = routeSchedules.find((s) => s.direction === 'EVENING' && s.status === 'DRAFT');
+      setScheduleInfo({
+        id: draftEvening?.id || null,
+        routeServiceId: Number(routeId),
+        name: `Route ${currentRoute?.routeNo || ''} Evening Schedule`,
+        direction: 'EVENING',
+        status: 'DRAFT',
+        isAutoReversed: true,
+      });
+
+      setMessage({
+        type: 'success',
+        text: `🔄 Successfully reversed all ${reversed.length} stops from published Morning route! VBIT College is departure stop #1 at 16:30. Click '🚀 Publish Live' to activate this evening route.`,
+      });
+    } catch (err) {
+      setMessage({ type: 'error', text: errorMessage(err, 'Failed to reverse morning stops.') });
+    } finally {
+      setRouteLoading(false);
+    }
+  }, [allSchedules, routes]);
 
   useEffect(() => {
     if (selectedRouteId) {
@@ -384,7 +588,7 @@ export default function StopsScreen() {
     return null;
   }
 
-  // 3. Click map to add stops in order (before VBIT College)
+  // 3. Click map to add stops in order
   function handleMapClick(latlng) {
     if (Date.now() < ignoreMapClickUntilRef.current) {
       return;
@@ -399,6 +603,24 @@ export default function StopsScreen() {
     const newLng = Number(latlng.lng.toFixed(5));
 
     setRouteStops((prev) => {
+      if (direction === 'EVENING') {
+        const lastStop = prev[prev.length - 1];
+        let defaultTime = '16:45';
+        if (lastStop?.scheduledTime) {
+          const totalM = timeToMins(lastStop.scheduledTime) + 8;
+          defaultTime = minsToTime(totalM);
+        }
+        const newStop = {
+          tempId: 'new-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          name: `Drop-off Stop ${prev.length + 1}`,
+          latitude: newLat,
+          longitude: newLng,
+          scheduledTime: defaultTime,
+          isEndpoint: false,
+        };
+        return [...prev, newStop];
+      }
+
       // Find where VBIT endpoint is
       const vbitIndex = prev.findIndex((s) => s.isEndpoint || s.name.toUpperCase().includes('VBIT'));
       const intermediateCount = vbitIndex >= 0 ? vbitIndex : prev.length;
@@ -420,14 +642,12 @@ export default function StopsScreen() {
           const match = lastIntermediate.scheduledTime.match(/(\d{1,2}):(\d{2})/);
           if (match) {
             const totalM = parseInt(match[1], 10) * 60 + parseInt(match[2], 10) + 10;
-            defaultTime = `${String(Math.floor(totalM / 60)).padStart(2, '0')}:${String(totalM % 60).padStart(2, '0')}`;
+            defaultTime = minsToTime(totalM);
           }
         } else {
           const startMinutes = 7 * 60 + 30;
           const totalMinutes = startMinutes + (nextOrder - 1) * 15;
-          const hours = Math.floor(totalMinutes / 60);
-          const mins = totalMinutes % 60;
-          defaultTime = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+          defaultTime = minsToTime(totalMinutes);
         }
       }
 
@@ -452,6 +672,35 @@ export default function StopsScreen() {
 
   // 3b. Add a specific preset stop from the route document
   function addPresetStop(preset) {
+    if (direction === 'EVENING') {
+      const lastStop = routeStops[routeStops.length - 1];
+      let scheduledTime = '16:45';
+      if (lastStop?.scheduledTime) {
+        scheduledTime = minsToTime(timeToMins(lastStop.scheduledTime) + 8);
+      }
+      let baseLat = 17.4350;
+      let baseLng = 78.5300;
+      if (routeStops.length > 0 && lastStop) {
+        baseLat = Number((lastStop.latitude + 0.006).toFixed(5));
+        baseLng = Number((lastStop.longitude + 0.012).toFixed(5));
+      }
+      const name = preset?.name || `Stop ${routeStops.length + 1}`;
+      const newStop = {
+        tempId: 'preset-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        name,
+        latitude: baseLat,
+        longitude: baseLng,
+        scheduledTime,
+        isEndpoint: false,
+      };
+      setRouteStops((prev) => [...prev, newStop]);
+      setMessage({
+        type: 'info',
+        text: `Added "${name}" to Evening route! Drag its marker to the exact street/junction location.`,
+      });
+      return;
+    }
+
     const vbitIndex = routeStops.findIndex((s) => s.isEndpoint || s.name.toUpperCase().includes('VBIT'));
     const intermediateStops = routeStops.filter((s) => !s.isEndpoint && !s.name.toUpperCase().includes('VBIT'));
     const nextIdx = intermediateStops.length;
@@ -495,7 +744,6 @@ export default function StopsScreen() {
     });
   }
 
-
   // 4. Update stop name or arrival time
   function updateStop(index, field, value) {
     setRouteStops((prev) => {
@@ -506,10 +754,15 @@ export default function StopsScreen() {
   }
 
   // 5. Reorder stops (move up or down)
-  function moveStop(index, direction) {
-    const targetIndex = index + direction;
+  function moveStop(index, delta) {
+    const targetIndex = index + delta;
     if (targetIndex < 0 || targetIndex >= routeStops.length) return;
-    if (routeStops[index].isEndpoint || routeStops[targetIndex].isEndpoint) return; // Do not move past VBIT
+
+    if (direction === 'EVENING') {
+      if (index === 0 || targetIndex === 0) return; // VBIT departure is fixed at index 0
+    } else {
+      if (routeStops[index].isEndpoint || routeStops[targetIndex].isEndpoint) return; // Do not move past VBIT destination
+    }
 
     setRouteStops((prev) => {
       const copy = [...prev];
@@ -522,8 +775,17 @@ export default function StopsScreen() {
 
   // 6. Remove an intermediate stop
   function removeStop(index) {
-    if (routeStops[index].isEndpoint) {
-      setMessage({ type: 'warning', text: 'VBIT College is the fixed destination endpoint and cannot be removed.' });
+    const isProtected = direction === 'EVENING'
+      ? index === 0
+      : (routeStops[index].isEndpoint || (routeStops[index].name || '').toUpperCase().includes('VBIT'));
+
+    if (isProtected) {
+      setMessage({
+        type: 'warning',
+        text: direction === 'EVENING'
+          ? 'VBIT College is the departure starting point and cannot be removed.'
+          : 'VBIT College is the fixed destination endpoint and cannot be removed.',
+      });
       return;
     }
     ignoreMapClickUntilRef.current = Date.now() + 600;
@@ -557,14 +819,31 @@ export default function StopsScreen() {
   // 7. Add an existing master stop into the route sequence
   function addExistingMasterStop(masterStop) {
     if (!selectedRouteId) return;
+
+    if (direction === 'EVENING') {
+      const lastStop = routeStops[routeStops.length - 1];
+      let defaultTime = '17:00';
+      if (lastStop?.scheduledTime) {
+        defaultTime = minsToTime(timeToMins(lastStop.scheduledTime) + 10);
+      }
+      const newStop = {
+        stopId: masterStop.id,
+        name: masterStop.name,
+        latitude: Number(masterStop.latitude),
+        longitude: Number(masterStop.longitude),
+        scheduledTime: defaultTime,
+        isEndpoint: false,
+      };
+      setRouteStops((prev) => [...prev, newStop]);
+      return;
+    }
+
     const vbitIndex = routeStops.findIndex((s) => s.isEndpoint || s.name.toUpperCase().includes('VBIT'));
     const nextOrder = (vbitIndex >= 0 ? vbitIndex : routeStops.length) + 1;
 
     const startMinutes = 7 * 60 + 30;
     const totalMinutes = startMinutes + (nextOrder - 1) * 15;
-    const hours = Math.floor(totalMinutes / 60);
-    const mins = totalMinutes % 60;
-    const defaultTime = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+    const defaultTime = minsToTime(totalMinutes);
 
     const newStop = {
       stopId: masterStop.id,
@@ -622,7 +901,7 @@ export default function StopsScreen() {
       });
 
       const payload = {
-        name: `${selectedRoute?.routeNo || 'Route'} Timetable`,
+        name: `${selectedRoute?.routeNo || 'Route'} ${direction === 'EVENING' ? 'Evening Schedule' : 'Morning Timetable'}`,
         direction,
         stops: sanitizedStops,
         publish,
@@ -634,8 +913,8 @@ export default function StopsScreen() {
       setMessage({
         type: 'success',
         text: publish
-          ? `Route ${selectedRoute?.routeNo} published live! Passengers can now track this route and its stops.`
-          : `Route ${selectedRoute?.routeNo} stops and timetable saved successfully. You can now select the next route from the dropdown.`,
+          ? `Route ${selectedRoute?.routeNo} (${direction === 'EVENING' ? 'Evening' : 'Morning'}) published live! Passengers can now track this route and its stops.`
+          : `Route ${selectedRoute?.routeNo} (${direction === 'EVENING' ? 'Evening' : 'Morning'}) stops and timetable saved successfully.`,
       });
 
       // Reload route details and refreshed schedules
@@ -829,6 +1108,32 @@ export default function StopsScreen() {
           </select>
         </div>
 
+        {direction === 'EVENING' && selectedRoute && (
+          <div style={{ alignSelf: 'flex-end', marginBottom: 2 }}>
+            <button
+              type="button"
+              className="button button-ghost"
+              onClick={() => syncEveningFromMorning(selectedRouteId)}
+              style={{
+                padding: '9px 12px',
+                fontSize: 12,
+                fontWeight: 700,
+                color: '#38BDF8',
+                borderColor: 'rgba(56, 189, 248, 0.45)',
+                background: 'rgba(56, 189, 248, 0.12)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                borderRadius: 9,
+                cursor: 'pointer',
+              }}
+              title="Reverse and sync stops from the published Morning timetable"
+            >
+              <span>🔄 Reverse from Morning</span>
+            </button>
+          </div>
+        )}
+
         {selectedRoute && (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -872,22 +1177,45 @@ export default function StopsScreen() {
                   marginTop: 6,
                   padding: '12px 16px',
                   borderRadius: 10,
-                  background: 'rgba(234, 88, 12, 0.08)',
-                  border: '1px solid rgba(234, 88, 12, 0.3)',
+                  background: direction === 'EVENING' ? 'rgba(56, 189, 248, 0.08)' : 'rgba(234, 88, 12, 0.08)',
+                  border: direction === 'EVENING' ? '1px solid rgba(56, 189, 248, 0.3)' : '1px solid rgba(234, 88, 12, 0.3)',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: 10,
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                  <div style={{ fontWeight: 750, color: '#EA580C', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span>📋 Route {selectedRoute.routeNo} Scheduled Stops from Document ({routePresetStops.length} stops):</span>
+                  <div style={{ fontWeight: 750, color: direction === 'EVENING' ? '#38BDF8' : '#EA580C', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>
+                      {direction === 'EVENING'
+                        ? `🌆 Route ${selectedRoute.routeNo} Evening Route (VBIT College departure at 16:30 → ${routeStops.length} stops in reverse order):`
+                        : `📋 Route ${selectedRoute.routeNo} Scheduled Stops from Document (${routePresetStops.length} stops):`}
+                    </span>
                   </div>
+                  {direction === 'EVENING' && (
+                    <button
+                      type="button"
+                      onClick={() => syncEveningFromMorning(selectedRouteId)}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: 'rgba(56, 189, 248, 0.2)',
+                        color: '#38BDF8',
+                        border: '1px solid rgba(56, 189, 248, 0.4)',
+                      }}
+                      title="Reload and re-reverse from published Morning timetable"
+                    >
+                      🔄 Re-sync from Morning
+                    </button>
+                  )}
                 </div>
 
                 {/* Clickable stop chips */}
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {routePresetStops.map((preset, pIdx) => {
+                  {(direction === 'EVENING' ? routePresetStops.slice().reverse() : routePresetStops).map((preset, pIdx) => {
                     const pBase = (preset.name || '').toLowerCase().replace(/\s*[\(\[-]?\s*\d+\s*[\)\]]?\s*$/, '').trim();
                     const alreadyAdded = routeStops.some((s) => {
                       if (s.isEndpoint || (s.name || '').toUpperCase().includes('VBIT')) return false;
@@ -913,12 +1241,12 @@ export default function StopsScreen() {
                           border: alreadyAdded ? '1px solid rgba(34, 197, 94, 0.5)' : '1px solid var(--line)',
                           transition: 'all 0.15s ease',
                         }}
-                        title={alreadyAdded ? `Stop "${preset.name}" is already in the route (click to add another)` : `Click to add ${preset.name} (${preset.scheduledTime})`}
+                        title={alreadyAdded ? `Stop "${preset.name}" is already in the route (click to add another)` : `Click to add ${preset.name}`}
                       >
                         <span style={{ fontWeight: 800 }}>{alreadyAdded ? '✓' : '＋'}</span>
                         <span>{preset.name}</span>
                         {preset.scheduledTime && (
-                          <span style={{ fontSize: 10.5, opacity: 0.75 }}>({preset.scheduledTime})</span>
+                          <span style={{ fontSize: 10.5, opacity: 0.75 }}>({direction === 'EVENING' ? 'drop' : preset.scheduledTime})</span>
                         )}
                       </button>
                     );
@@ -1051,7 +1379,9 @@ export default function StopsScreen() {
                 </div>
               </div>
               <p style={{ margin: '6px 0 0', color: 'var(--muted)', fontSize: 12, lineHeight: 1.5 }}>
-                Click on the map to add pickup stops in sequence. The first stop is where the bus begins; <strong>VBIT College</strong> is automatically the final destination.
+                {direction === 'EVENING'
+                  ? <>Evening route departs from <strong>VBIT College (16:30)</strong> in reverse order of the published morning route, dropping off passengers along the way to the final destination.</>
+                  : <>Click on the map to add pickup stops in sequence. The first stop is where the bus begins; <strong>VBIT College</strong> is automatically the final destination.</>}
               </p>
             </div>
 
@@ -1059,53 +1389,103 @@ export default function StopsScreen() {
               <LoadingState label="Loading stops for route…" />
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 'calc(100vh - 360px)', overflowY: 'auto', paddingRight: 4 }}>
-                {/* Empty State Callout when route has 0 pickup stops */}
-                {routeStops.length === 1 && selectedRoute && (
+                {/* Empty State Callout when route has 0 or 1 stops */}
+                {routeStops.length <= 1 && selectedRoute && (
                   <div
                     style={{
                       padding: 16,
                       borderRadius: 12,
-                      background: 'rgba(234, 88, 12, 0.08)',
-                      border: '1.5px dashed rgba(234, 88, 12, 0.45)',
+                      background: direction === 'EVENING' ? 'rgba(56, 189, 248, 0.08)' : 'rgba(234, 88, 12, 0.08)',
+                      border: direction === 'EVENING' ? '1.5px dashed rgba(56, 189, 248, 0.45)' : '1.5px dashed rgba(234, 88, 12, 0.45)',
                       display: 'flex',
                       flexDirection: 'column',
                       gap: 12,
                       textAlign: 'center',
                     }}
                   >
-                    <div style={{ fontSize: 13, fontWeight: 750, color: '#EA580C' }}>
-                      📍 No pickup stops marked yet for Route {selectedRoute.routeNo}
+                    <div style={{ fontSize: 13, fontWeight: 750, color: direction === 'EVENING' ? '#38BDF8' : '#EA580C' }}>
+                      {direction === 'EVENING'
+                        ? `🌆 No evening drop-off stops marked yet for Route ${selectedRoute.routeNo}`
+                        : `📍 No pickup stops marked yet for Route ${selectedRoute.routeNo}`}
                     </div>
                     <p style={{ margin: 0, fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5 }}>
-                      Select stops from the dropdown below, click the chips above, or click on the map to place pins.
+                      {direction === 'EVENING'
+                        ? 'Click below to reverse the published Morning timetable automatically:'
+                        : 'Select stops from the dropdown below, click the chips above, or click on the map to place pins.'}
                     </p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {direction === 'EVENING' ? (
                       <button
                         type="button"
                         className="button button-primary"
-                        onClick={() => addPresetStop(routePresetStops[0])}
+                        onClick={() => syncEveningFromMorning(selectedRouteId)}
                         style={{ justifyContent: 'center', padding: '9px 14px', fontSize: 12, fontWeight: 700 }}
                       >
-                        ➕ Add First Stop ({routePresetStops[0]?.name || 'Stop 1'})
+                        🔄 Auto-Reverse from Published Morning Route
                       </button>
-                    </div>
-                    <span style={{ fontSize: 11, color: 'var(--muted)' }}>
-                      💡 Or simply click anywhere on the Hyderabad map to place your first stop pin!
-                    </span>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button
+                          type="button"
+                          className="button button-primary"
+                          onClick={() => addPresetStop(routePresetStops[0])}
+                          style={{ justifyContent: 'center', padding: '9px 14px', fontSize: 12, fontWeight: 700 }}
+                        >
+                          ➕ Add First Stop ({routePresetStops[0]?.name || 'Stop 1'})
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {routeStops.map((stop, idx) => {
-                  const isFirst = idx === 0 && !stop.isEndpoint;
-                  const isEnd = stop.isEndpoint || (stop.name || '').toUpperCase().includes('VBIT');
+                  const isEvening = direction === 'EVENING';
+                  const isVbit = (stop.name || '').toUpperCase().includes('VBIT');
+                  const isDeparture = isEvening ? idx === 0 : false;
+                  const isFinalDrop = isEvening ? (idx === routeStops.length - 1 && routeStops.length > 1) : false;
+                  const isMorningEnd = !isEvening && (stop.isEndpoint || isVbit || idx === routeStops.length - 1);
+                  const isMorningStart = !isEvening && idx === 0 && !isMorningEnd;
+                  const isFixed = isEvening ? idx === 0 : isMorningEnd;
+
+                  let badgeIcon = String(idx + 1);
+                  let badgeBg = 'var(--surface-hover)';
+                  let badgeColor = 'var(--ink)';
+                  let stopLabel = `Stop ${idx + 1}`;
+
+                  if (isEvening) {
+                    if (isDeparture) {
+                      badgeIcon = '🎓';
+                      badgeBg = '#16A34A';
+                      badgeColor = '#ffffff';
+                      stopLabel = 'Departure: VBIT College (16:30)';
+                    } else if (isFinalDrop) {
+                      badgeIcon = '🏁';
+                      badgeBg = '#EA580C';
+                      badgeColor = '#ffffff';
+                      stopLabel = `${idx + 1} (Final Drop-off Destination)`;
+                    } else {
+                      stopLabel = `Drop-off Stop ${idx + 1}`;
+                    }
+                  } else {
+                    if (isMorningEnd) {
+                      badgeIcon = '🎓';
+                      badgeBg = '#EA580C';
+                      badgeColor = '#ffffff';
+                      stopLabel = 'Final Destination (VBIT College)';
+                    } else if (isMorningStart) {
+                      badgeBg = '#16A34A';
+                      badgeColor = '#ffffff';
+                      stopLabel = '1 (Starting Pickup)';
+                    }
+                  }
+
                   return (
                     <article
                       key={stop.tempId || stop.id || `stop-${idx}`}
                       style={{
                         padding: 14,
                         borderRadius: 12,
-                        background: isEnd ? 'rgba(234, 88, 12, 0.08)' : 'var(--canvas)',
-                        border: isEnd ? '1px solid rgba(234, 88, 12, 0.35)' : '1px solid var(--line)',
+                        background: isFixed ? 'rgba(234, 88, 12, 0.08)' : 'var(--canvas)',
+                        border: isFixed ? '1px solid rgba(234, 88, 12, 0.35)' : '1px solid var(--line)',
                         display: 'grid',
                         gap: 10,
                       }}
@@ -1117,8 +1497,8 @@ export default function StopsScreen() {
                               width: 26,
                               height: 26,
                               borderRadius: '50%',
-                              background: isEnd ? '#EA580C' : isFirst ? '#16A34A' : 'var(--surface-hover)',
-                              color: isEnd || isFirst ? '#ffffff' : 'var(--ink)',
+                              background: badgeBg,
+                              color: badgeColor,
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -1127,15 +1507,13 @@ export default function StopsScreen() {
                               boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
                             }}
                           >
-                            {isEnd ? '🎓' : idx + 1}
+                            {badgeIcon}
                           </span>
-                          <strong>
-                            {isEnd ? 'Final Destination' : isFirst ? '1 (Starting Pickup)' : `Stop ${idx + 1}`}
-                          </strong>
+                          <strong>{stopLabel}</strong>
                         </div>
 
                         {/* Lock / Confirm Toggle & Reorder / Delete Actions */}
-                        {!isEnd && (
+                        {!isFixed ? (
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <button
                               type="button"
@@ -1161,7 +1539,7 @@ export default function StopsScreen() {
                             <button
                               type="button"
                               className="button button-ghost"
-                              disabled={idx === 0}
+                              disabled={isEvening ? idx <= 1 : idx === 0}
                               onClick={() => moveStop(idx, -1)}
                               style={{ padding: '2px 6px', fontSize: 10 }}
                               title="Move Stop Up"
@@ -1171,7 +1549,7 @@ export default function StopsScreen() {
                             <button
                               type="button"
                               className="button button-ghost"
-                              disabled={idx === routeStops.length - 2}
+                              disabled={isEvening ? idx === routeStops.length - 1 : idx === routeStops.length - 2}
                               onClick={() => moveStop(idx, 1)}
                               style={{ padding: '2px 6px', fontSize: 10 }}
                               title="Move Stop Down"
@@ -1188,17 +1566,16 @@ export default function StopsScreen() {
                               ✕
                             </button>
                           </div>
-                        )}
-                        {isEnd && (
+                        ) : (
                           <span style={{ fontSize: 10, color: 'var(--teal)', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                            🔒 Fixed Endpoint
+                            {isEvening ? '🎓 Fixed Departure Point' : '🔒 Fixed Destination'}
                           </span>
                         )}
                       </div>
 
                       {/* Stop Name & Scheduled Time Inputs with Route Preset Selector */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {!isEnd && routePresetStops.length > 0 && (
+                        {!isFixed && !isEvening && routePresetStops.length > 0 && (
                           <div>
                             <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--teal)', fontWeight: 750, marginBottom: 3 }}>
                               <span>📍 Select Stop Name from Route List:</span>
@@ -1248,20 +1625,20 @@ export default function StopsScreen() {
                         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10 }}>
                           <div>
                             <label style={{ display: 'block', fontSize: 10, color: 'var(--muted)', fontWeight: 700, marginBottom: 3 }}>
-                              Stop Name {isEnd ? '' : '(Editable, e.g. Lalapet 2)'}
+                              Stop Name {isFixed ? '' : '(Editable)'}
                             </label>
                             <input
                               type="text"
                               value={stop.name}
-                              disabled={isEnd}
+                              disabled={isFixed}
                               onChange={(e) => updateStop(idx, 'name', e.target.value)}
-                              placeholder="e.g. Lalapet, Lalapet 2..."
+                              placeholder="e.g. Lalapet, Nagaram..."
                               style={{
                                 width: '100%',
                                 padding: '8px 10px',
                                 borderRadius: 8,
                                 border: '1px solid var(--line)',
-                                background: isEnd ? 'transparent' : 'var(--surface)',
+                                background: isFixed ? 'transparent' : 'var(--surface)',
                                 color: 'var(--ink)',
                                 fontSize: 12,
                                 fontWeight: 600,
@@ -1271,7 +1648,7 @@ export default function StopsScreen() {
                           </div>
                           <div>
                             <label style={{ display: 'block', fontSize: 10, color: 'var(--muted)', fontWeight: 700, marginBottom: 3 }}>
-                              Scheduled Arrival
+                              Scheduled {isDeparture ? 'Departure' : 'Arrival'}
                             </label>
                             <input
                               type="time"
@@ -1295,7 +1672,11 @@ export default function StopsScreen() {
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--muted)' }}>
                         <span>GPS: {Number(stop.latitude).toFixed(4)}, {Number(stop.longitude).toFixed(4)}</span>
-                        <span>{isEnd ? 'Terminates at College' : 'Passenger Boarding'}</span>
+                        <span>
+                          {isEvening
+                            ? (isDeparture ? 'Departs from College' : isFinalDrop ? 'Final City Drop-off' : 'Passenger Drop-off')
+                            : (isMorningEnd ? 'Terminates at College' : 'Passenger Boarding')}
+                        </span>
                       </div>
                     </article>
                   );
@@ -1369,15 +1750,21 @@ export default function StopsScreen() {
                   type="button"
                   className="button button-ghost"
                   onClick={() => {
-                    if (confirm(`Reset stops for Route ${selectedRoute.routeNo} back to VBIT College destination only?`)) {
-                      setRouteStops([{ ...VBIT_ENDPOINT }]);
-                      setMessage({ type: 'info', text: `Stops cleared for Route ${selectedRoute.routeNo}. Click on the map to start placing stops.` });
+                    if (direction === 'EVENING') {
+                      if (confirm(`Reset Evening stops for Route ${selectedRoute.routeNo} from the published Morning route?`)) {
+                        syncEveningFromMorning(selectedRouteId);
+                      }
+                    } else {
+                      if (confirm(`Reset stops for Route ${selectedRoute.routeNo} back to VBIT College destination only?`)) {
+                        setRouteStops([{ ...VBIT_ENDPOINT }]);
+                        setMessage({ type: 'info', text: `Stops cleared for Route ${selectedRoute.routeNo}. Click on the map to start placing stops.` });
+                      }
                     }
                   }}
                   style={{ fontSize: 11, padding: '8px 6px' }}
-                  title="Clear placed stops and start fresh for this route"
+                  title={direction === 'EVENING' ? 'Reset and re-sync from Morning route' : 'Clear placed stops and start fresh for this route'}
                 >
-                  🔄 Reset
+                  {direction === 'EVENING' ? '🔄 Re-sync Morning' : '🔄 Reset'}
                 </button>
                 <button
                   type="button"
@@ -1429,12 +1816,12 @@ export default function StopsScreen() {
                   textOverflow: 'ellipsis',
                 }}
               >
-                <span style={{ color: '#EA580C', flexShrink: 0 }}>●</span>
+                <span style={{ color: direction === 'EVENING' ? '#38BDF8' : '#EA580C', flexShrink: 0 }}>●</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  Route {selectedRoute.routeNo} — {selectedRoute.name}
+                  Route {selectedRoute.routeNo} — {selectedRoute.name} ({direction === 'EVENING' ? 'Evening' : 'Morning'})
                 </span>
                 <span style={{ color: 'rgba(255,255,255,0.6)', fontWeight: 500, flexShrink: 0 }}>
-                  ({routeStops.length} stops ending at VBIT)
+                  ({routeStops.length} stops {direction === 'EVENING' ? 'departing from VBIT' : 'ending at VBIT'})
                 </span>
                 {roadDistanceMeters && (
                   <span style={{ color: '#FDBA74', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
@@ -1609,17 +1996,39 @@ export default function StopsScreen() {
 
               {/* ─── PINS FOR EACH STOP IN SEQUENCE ─── */}
               {routeStops.map((stop, idx) => {
-                const isFirst = idx === 0 && !stop.isEndpoint;
-                const isEnd = stop.isEndpoint || (stop.name || '').toUpperCase().includes('VBIT');
-                const pinColor = isEnd ? '#EA580C' : isFirst ? '#16A34A' : '#0284C7';
-                const pinText = isEnd ? '🎓' : String(idx + 1);
+                const isEvening = direction === 'EVENING';
+                const isVbit = (stop.name || '').toUpperCase().includes('VBIT');
+                const isDeparture = isEvening ? idx === 0 : false;
+                const isFinalDrop = isEvening ? (idx === routeStops.length - 1 && routeStops.length > 1) : false;
+                const isMorningEnd = !isEvening && (stop.isEndpoint || isVbit || idx === routeStops.length - 1);
+                const isFixed = isEvening ? idx === 0 : isMorningEnd;
+
+                let pinColor = '#0284C7';
+                let pinText = String(idx + 1);
+
+                if (isEvening) {
+                  if (isDeparture) {
+                    pinColor = '#16A34A';
+                    pinText = '🎓';
+                  } else if (isFinalDrop) {
+                    pinColor = '#EA580C';
+                    pinText = '🏁';
+                  }
+                } else {
+                  if (isMorningEnd) {
+                    pinColor = '#EA580C';
+                    pinText = '🎓';
+                  } else if (idx === 0) {
+                    pinColor = '#16A34A';
+                  }
+                }
 
                 return (
                   <Marker
                     key={stop.tempId || stop.id || `marker-${idx}`}
                     position={[stop.latitude, stop.longitude]}
-                    icon={createMapPin(pinText, pinColor, isEnd, Boolean(stop.confirmed))}
-                    draggable={!isEnd && !stop.confirmed}
+                    icon={createMapPin(pinText, pinColor, isFixed, Boolean(stop.confirmed))}
+                    draggable={!isFixed && !stop.confirmed}
                     eventHandlers={{
                       dragend: (e) => {
                         const latlng = e.target.getLatLng();
@@ -1646,12 +2055,14 @@ export default function StopsScreen() {
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                           <span style={{ fontSize: 13, fontWeight: 800, color: pinColor }}>
-                            {isEnd ? '🎓 Final Destination' : isFirst ? '🏁 Starting Stop' : `Stop ${idx + 1}`}
+                            {isEvening
+                              ? (isDeparture ? '🎓 Departure: VBIT College (16:30)' : isFinalDrop ? '🏁 Final Drop-off Destination' : `Drop-off Stop ${idx + 1}`)
+                              : (isMorningEnd ? '🎓 Final Destination' : idx === 0 ? '🏁 Starting Stop' : `Stop ${idx + 1}`)}
                           </span>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, marginBottom: 4 }}>
                           <strong style={{ fontSize: 13 }}>{stop.name}</strong>
-                          {!isEnd && (
+                          {!isFixed && (
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1681,7 +2092,7 @@ export default function StopsScreen() {
                           Scheduled: <strong>{stop.scheduledTime}</strong>
                         </div>
 
-                        {!isEnd && routePresetStops.length > 0 && (
+                        {!isFixed && !isEvening && routePresetStops.length > 0 && (
                           <div style={{ marginBottom: 8 }}>
                             <select
                               value=""
@@ -1718,7 +2129,7 @@ export default function StopsScreen() {
                           </div>
                         )}
 
-                        {!isEnd && (
+                        {!isFixed && (
                           <button
                             type="button"
                             onClick={(e) => {
