@@ -26,6 +26,8 @@ export default function RostersScreen() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [passengerForm, setPassengerForm] = useState(emptyPassenger);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [detailNotice, setDetailNotice] = useState(null);
   const [exportingId, setExportingId] = useState(null);
 
   // Excel / CSV Import states
@@ -130,29 +132,41 @@ export default function RostersScreen() {
   }
 
   async function validateRoster() {
+    if (!detail) return;
+    setDetailNotice({ type: 'info', text: 'Validating roster against route capacities and class advisors...' });
     try {
-      const { data } = await api.post(`/rosters/${detail.roster.id}/validate`);
-      const warningText = data.warnings.map((item) => item.message).join(' ');
-      const errorText = data.errors.map((item) => item.message).join(' ');
-      if (!data.valid) setMessage({ type: 'error', text: errorText || 'Roster validation failed.' });
-      else if (warningText) setMessage({ type: 'warning', text: `Roster is valid, with warnings: ${warningText}` });
-      else setMessage({ type: 'success', text: 'Roster is valid and ready to publish.' });
+      const { data } = await api.post(`/rosters/${detail.roster.id}/validate`, {}, { timeout: 60000 });
+      const warningText = data.warnings?.map((item) => item.message).join(' ');
+      const errorText = data.errors?.map((item) => item.message).join(' ');
+      if (!data.valid) {
+        setDetailNotice({ type: 'error', text: errorText || 'Roster validation failed.' });
+      } else if (warningText) {
+        setDetailNotice({ type: 'warning', text: `Roster is valid! Non-blocking warnings: ${warningText}` });
+      } else {
+        setDetailNotice({ type: 'success', text: 'Roster is verified and ready to publish.' });
+      }
     } catch (error) {
-      setMessage({ type: 'error', text: errorMessage(error, 'Roster validation could not run.') });
+      setDetailNotice({ type: 'error', text: errorMessage(error, 'Roster validation could not run.') });
     }
   }
 
   async function publishRoster() {
     if (!window.confirm('Publish this roster? The current passenger list will be archived and all passenger views will switch to this version.')) return;
+    setPublishing(true);
+    setDetailNotice(null);
     try {
-      const { data } = await api.post(`/rosters/${detail.roster.id}/publish`);
+      const { data } = await api.post(`/rosters/${detail.roster.id}/publish`, { confirmed: true }, { timeout: 180000 });
       const warnings = data.warnings?.map((item) => item.message).join(' ');
       setDetail(null);
       setMessage({ type: warnings ? 'warning' : 'success', text: warnings ? `Roster published with warnings: ${warnings}` : 'Roster published successfully.' });
       await load();
     } catch (error) {
       const details = error.response?.data?.errors?.map((item) => item.message).join(' ');
-      setMessage({ type: 'error', text: details || errorMessage(error, 'Roster could not be published.') });
+      const msg = details || errorMessage(error, 'Roster could not be published.');
+      setDetailNotice({ type: 'error', text: msg });
+      setMessage({ type: 'error', text: msg });
+    } finally {
+      setPublishing(false);
     }
   }
 
@@ -456,6 +470,11 @@ export default function RostersScreen() {
             <LoadingState label="Loading roster passengers…" />
           ) : detail && (
             <div className="modal-body">
+              {detailNotice && (
+                <div style={{ marginBottom: 14 }}>
+                  <Notice message={detailNotice} onDismiss={() => setDetailNotice(null)} />
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
                 <StatusBadge value={detail.roster.status} />
                 <div className="row-actions" style={{ flexWrap: 'wrap', gap: 8 }}>
@@ -474,8 +493,8 @@ export default function RostersScreen() {
                     Validate
                   </button>
                   {detail.roster.status === 'DRAFT' && (
-                    <button className="button button-primary" onClick={publishRoster}>
-                      Publish
+                    <button className="button button-primary" onClick={publishRoster} disabled={publishing}>
+                      {publishing ? 'Publishing…' : 'Publish'}
                     </button>
                   )}
                   {detail.roster.status !== 'PUBLISHED' && (

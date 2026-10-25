@@ -159,17 +159,21 @@ async function validateRoster(rosterId) {
     }
   }
 
+  const advisors = await prisma.classAdvisor.findMany({
+    select: { department: true, year: true, section: true },
+  });
+  const advisorKeys = new Set(
+    advisors.map((item) => `${item.department.toUpperCase()}|${item.year}|${item.section.toUpperCase()}`)
+  );
+
   for (const key of classKeys) {
     const [department, year, section] = key.split('|');
-    const advisor = await prisma.classAdvisor.findFirst({
-      where: {
-        department,
-        year: Number(year),
-        section: { in: [section, 'ALL', '*'] },
-      },
-      select: { id: true },
-    });
-    if (!advisor) {
+    const hasAdvisor =
+      advisorKeys.has(`${department.toUpperCase()}|${year}|${section.toUpperCase()}`) ||
+      advisorKeys.has(`${department.toUpperCase()}|${year}|ALL`) ||
+      advisorKeys.has(`${department.toUpperCase()}|${year}|*`);
+
+    if (!hasAdvisor) {
       warnings.push({
         code: 'MISSING_ADVISOR',
         message: `No advisor is configured for ${department} Year ${year} Section ${section}`,
@@ -754,7 +758,7 @@ router.post('/:id/publish', async (req, res) => {
   const { roster, errors, warnings } = await validateRoster(id);
   if (!roster) return res.status(404).json({ error: 'Roster not found' });
   if (roster.status !== 'DRAFT') return res.status(409).json({ error: 'Only a draft roster can be published' });
-  if (req.body?.confirmed !== true) {
+  if (req.body?.confirmed !== true && req.body?.confirmed !== 'true' && req.query?.confirmed !== 'true') {
     return res.status(400).json({ error: 'confirmed must be true to replace the published roster' });
   }
   if (errors.length) return res.status(400).json({ error: 'Roster validation failed', errors, warnings });
