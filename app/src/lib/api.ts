@@ -1,25 +1,40 @@
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-let fallbackUrl = 'http://192.168.29.215:4000';
+// Auto-detect host IP from Expo's Metro bundler URI (e.g. "10.96.63.205:8081")
+const metroHostUri =
+  Constants.expoConfig?.hostUri ||
+  (Constants as any).manifest2?.extra?.expoClient?.hostUri ||
+  (Constants as any).manifest?.debuggerHost;
+
+const detectedHostIp = metroHostUri ? metroHostUri.split(':')[0] : null;
+
+let fallbackUrl = detectedHostIp
+  ? `http://${detectedHostIp}:4000`
+  : 'http://10.96.63.205:4000';
+
 if (Platform.OS === 'web') {
   fallbackUrl = 'http://localhost:4000';
-} else if (Platform.OS === 'android') {
-  fallbackUrl = 'http://192.168.29.215:4000'; // Change to 10.0.2.2 if using Android Emulator
 }
 
-// Use env var if present, otherwise smartly fallback based on platform
+// If EXPO_PUBLIC_API_URL is set and not pointing to localhost on physical devices, use it
 let configuredUrl = (process.env.EXPO_PUBLIC_API_URL || fallbackUrl).replace(/\/$/, '');
 
-// Overwrite env var on web to force localhost if they are testing on PC
+// On real device, if env still has an outdated IP but Metro is connected to a different IP, prioritize Metro host
+if (Platform.OS !== 'web' && detectedHostIp && !configuredUrl.includes(detectedHostIp)) {
+  configuredUrl = `http://${detectedHostIp}:4000/api/v1`;
+}
+
 if (Platform.OS === 'web') {
   configuredUrl = 'http://localhost:4000';
 }
+
 export const API_URL = configuredUrl.endsWith('/api/v1') ? configuredUrl : configuredUrl + '/api/v1';
 export const API_ORIGIN = API_URL.replace(/\/api\/v1$/, '');
 
 console.log('--- API CONFIGURATION DEBUG ---');
 console.log('Platform:', Platform.OS);
-console.log('EXPO_PUBLIC_API_URL from env:', process.env.EXPO_PUBLIC_API_URL);
+console.log('Detected Metro Host IP:', detectedHostIp);
 console.log('Final API_URL:', API_URL);
 console.log('-------------------------------');
 

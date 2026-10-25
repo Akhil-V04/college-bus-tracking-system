@@ -25,8 +25,22 @@ export default function RoleSelectionScreen() {
     }
   };
 
+  const { isDark, toggleTheme } = useTheme();
+
   return (
     <SafeAreaView style={styles.container}>
+      {/* Top Bar with Theme Toggle */}
+      <View style={styles.topBar}>
+        <View />
+        <Pressable
+          onPress={toggleTheme}
+          style={({ pressed }) => [styles.themeBtn, pressed && { opacity: 0.7 }]}
+          accessibilityLabel="Toggle Theme"
+        >
+          <Text style={styles.themeBtnText}>{isDark ? '☀️ Light Mode' : '🌙 Dark Mode'}</Text>
+        </Pressable>
+      </View>
+
       <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
         {/* Branding */}
         <View style={styles.branding}>
@@ -123,6 +137,25 @@ const useStyles = () => {
     flex: 1,
     backgroundColor: colors.background,
     justifyContent: 'space-between',
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+  },
+  themeBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  themeBtnText: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: fontWeight.semibold,
   },
   content: {
     flex: 1,

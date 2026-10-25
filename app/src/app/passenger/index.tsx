@@ -287,7 +287,8 @@ function AssistantOverlay({ visible, onClose }: { visible: boolean; onClose: () 
 
 /* ─── Main Dashboard ─── */
 export default function PassengerDashboard() {
-    const styles = useStyles();
+  const styles = useStyles();
+  const { isDark, toggleTheme } = useTheme();
   const [assistantOpen, setAssistantOpen] = useState(false);
 
   const routes = useQuery({
@@ -327,9 +328,18 @@ export default function PassengerDashboard() {
           </View>
           <Text style={styles.headerTitle}>Campus Transit</Text>
         </View>
-        <Pressable onPress={() => router.push('/passenger/notifications')} style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1, padding: 8 }]}>
-          <AppIcon name="notifications" size={24} />
-        </Pressable>
+        <View style={styles.headerRightActions}>
+          <Pressable
+            onPress={toggleTheme}
+            style={({ pressed }) => [styles.themeBtn, pressed && { opacity: 0.7 }]}
+            accessibilityLabel="Toggle Light or Dark Theme"
+          >
+            <Text style={styles.themeBtnIcon}>{isDark ? '☀️' : '🌙'}</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push('/passenger/notifications')} style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1, padding: 8 }]}>
+            <AppIcon name="notifications" size={24} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
@@ -461,6 +471,17 @@ const useStyles = () => {
     justifyContent: 'space-between',
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerRightActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  themeBtn: {
+    padding: 7,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  themeBtnIcon: { fontSize: 16 },
   headerBackBtn: {
     paddingVertical: 4,
     paddingHorizontal: 6,

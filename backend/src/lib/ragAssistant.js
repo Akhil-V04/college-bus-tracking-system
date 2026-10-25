@@ -27,6 +27,10 @@ Be concise, helpful, and polite.`;
  */
 const PREBUILT_ANSWERS = [
   {
+    keywords: /^(hi|hello|hey|good\s*(morning|afternoon|evening)|namaste|hola|sup|yo)(\s*!*|\s+there|\s+assistant|\s+bot)?$/i,
+    answer: 'Hello! I am your VBIT Transport Assistant. I can help you with bus route numbers, stop locations, arrival timings, driver details, or transport guidelines. What would you like to know today?'
+  },
+  {
     keywords: /(break\s*down|broken|accident|emergency)/i,
     answer: 'In case of a bus breakdown, remain seated calmly and wait for the driver\'s instructions. The driver will report the incident via the driver console and a replacement bus will be arranged. You can also report the issue via the "Report Issue" button.'
   },
@@ -49,22 +53,23 @@ const PREBUILT_ANSWERS = [
  */
 async function generateAnswer(question, sessionId = 'anonymous') {
   try {
-    // 0. Fast-path check for common questions
-    const matched = PREBUILT_ANSWERS.find((p) => p.keywords.test(question));
+    // 0. Fast-path check for greetings and common questions
+    const matched = PREBUILT_ANSWERS.find((p) => p.keywords.test(question.trim()));
     if (matched) {
-      await prisma.assistantConversation.create({
-        data: { sessionId, role: 'USER', content: question, sourceChunkIds: [] }
-      });
-      await prisma.assistantConversation.create({
-        data: { sessionId, role: 'ASSISTANT', content: matched.answer, sourceChunkIds: [] }
-      });
+      try {
+        await prisma.assistantConversation.create({
+          data: { sessionId, role: 'USER', content: question, sourceChunkIds: [] }
+        });
+        await prisma.assistantConversation.create({
+          data: { sessionId, role: 'ASSISTANT', content: matched.answer, sourceChunkIds: [] }
+        });
+      } catch (logErr) {
+        console.warn('Failed to log conversation to database:', logErr.message);
+      }
       return { answer: matched.answer, sources: ['Pre-built Knowledge'] };
     }
 
-    // 1. Embed the user's question
-    const queryEmbedding = await generateEmbedding(question);
-
-    // 2. Retrieve document chunks
+    // 1. Retrieve document chunks
     const activeChunks = await prisma.knowledgeChunk.findMany({
       where: {
         document: { active: true }
@@ -75,18 +80,24 @@ async function generateAnswer(question, sessionId = 'anonymous') {
       }
     });
 
-    // Map to format for vectorStore
-    const items = activeChunks
-      .filter((c) => c.embedding && c.embedding.embeddingArray)
-      .map((c) => ({
-        id: c.id,
-        embeddingArray: c.embedding.embeddingArray
-      }));
+    // 2. Try to embed the user's question, but do NOT fail if embedding is unavailable
+    let vectorMatches = [];
+    try {
+      const queryEmbedding = await generateEmbedding(question);
+      if (Array.isArray(queryEmbedding) && queryEmbedding.length > 0) {
+        const items = activeChunks
+          .filter((c) => c.embedding && c.embedding.embeddingArray)
+          .map((c) => ({
+            id: c.id,
+            embeddingArray: c.embedding.embeddingArray
+          }));
+        vectorMatches = findSimilar(queryEmbedding, items, SIMILARITY_THRESHOLD);
+      }
+    } catch (embErr) {
+      console.warn('Embedding service unavailable, using keyword retrieval:', embErr.message);
+    }
 
-    // 3. Find top similar chunks using vector similarity
-    const vectorMatches = findSimilar(queryEmbedding, items, SIMILARITY_THRESHOLD);
-
-    // 3b. Hybrid keyword & entity matching
+    // 3. Hybrid keyword & entity matching
     const qLower = question.toLowerCase();
     const routeMatch = qLower.match(/route\s*(\d+|demo)/i);
     const targetRouteNumber = routeMatch ? routeMatch[1] : null;
@@ -99,7 +110,7 @@ async function generateAnswer(question, sessionId = 'anonymous') {
     const searchWords = qLower
       .replace(/[^\w\s]/g, ' ')
       .split(/\s+/)
-      .filter((w) => w.length > 3 && !stopWords.has(w));
+      .filter((w) => w.length > 2 && !stopWords.has(w));
 
     const candidateScores = new Map();
     for (const match of vectorMatches) {
@@ -113,26 +124,26 @@ async function generateAnswer(question, sessionId = 'anonymous') {
       // Exact route match boost
       if (targetRouteNumber) {
         if (targetRouteNumber.toLowerCase() === 'demo' && cLower.includes('demo route')) {
-          boost += 0.35;
+          boost += 0.50;
         } else if (
           cLower.includes(`### route ${targetRouteNumber}`) ||
           cLower.includes(`route ${targetRouteNumber} `) ||
           cLower.includes(`route ${targetRouteNumber}\n`) ||
           cLower.includes(`route ${targetRouteNumber}:`)
         ) {
-          boost += 0.35;
+          boost += 0.50;
         }
       }
 
       // Keyword match boost (e.g. stop name like 'malkajgiri', 'uppal', etc.)
       for (const word of searchWords) {
         if (cLower.includes(word)) {
-          boost += 0.15;
+          boost += 0.20;
         }
       }
 
       if (boost > 0) {
-        const prev = candidateScores.get(chunk.id) || 0.5;
+        const prev = candidateScores.get(chunk.id) || 0.4;
         candidateScores.set(chunk.id, prev + boost);
       }
     }
@@ -156,29 +167,43 @@ async function generateAnswer(question, sessionId = 'anonymous') {
       }
     }
 
-    // 4. Generate Answer using LLM
-    const prompt = `Context Information:\n${contextText || '(No relevant documents found)'}\n\nUser Question: ${question}\n\nAnswer:`;
+    // If no specific documents matched, include summary of routes
+    if (!contextText && activeChunks.length > 0) {
+      const defaultChunks = activeChunks.slice(0, 3);
+      for (const c of defaultChunks) {
+        contextText += `[Source: ${c.document.title}]\n${c.content}\n\n`;
+        sourceChunkIds.push(c.id);
+        sourceDocs.add(c.document.title);
+      }
+    }
+
+    // 4. Generate Answer using LLM (Groq)
+    const prompt = `Context Information:\n${contextText || '(No specific documents matched, use general college transport policy)'}\n\nUser Question: ${question}\n\nAnswer:`;
 
     const answer = await generateText(prompt, SYSTEM_INSTRUCTION);
 
     // 5. Save conversation
-    await prisma.assistantConversation.create({
-      data: {
-        sessionId,
-        role: 'USER',
-        content: question,
-        sourceChunkIds: []
-      }
-    });
+    try {
+      await prisma.assistantConversation.create({
+        data: {
+          sessionId,
+          role: 'USER',
+          content: question,
+          sourceChunkIds: []
+        }
+      });
 
-    await prisma.assistantConversation.create({
-      data: {
-        sessionId,
-        role: 'ASSISTANT',
-        content: answer,
-        sourceChunkIds
-      }
-    });
+      await prisma.assistantConversation.create({
+        data: {
+          sessionId,
+          role: 'ASSISTANT',
+          content: answer,
+          sourceChunkIds
+        }
+      });
+    } catch (saveErr) {
+      console.warn('Failed to save conversation:', saveErr.message);
+    }
 
     return {
       answer,
@@ -186,11 +211,13 @@ async function generateAnswer(question, sessionId = 'anonymous') {
     };
   } catch (error) {
     console.error('RAG Error:', error);
-    throw new Error('Failed to generate response from Transport Assistant.');
+    return {
+      answer: "I am having trouble retrieving documents right now. You can check the Available Routes on your dashboard for schedules, or contact the Transport In-Charge: Mr. P. Venu Gopal (7993453629).",
+      sources: ['VBIT Transport Helpdesk']
+    };
   }
 }
 
 module.exports = {
   generateAnswer
 };
-
