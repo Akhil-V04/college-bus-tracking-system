@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-import { darkColors, lightColors, ThemeColors } from '@/constants/theme';
+import { darkColors, lightColors } from '@/constants/theme';
 
 type ThemeType = 'light' | 'dark';
 
@@ -16,26 +16,26 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<ThemeType>('dark');
-  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    AsyncStorage.getItem('app-theme').then((savedTheme) => {
-      if (savedTheme === 'light' || savedTheme === 'dark') {
-        setTheme(savedTheme);
-      }
-      setIsLoaded(true);
-    });
+    AsyncStorage.getItem('app-theme')
+      .then((savedTheme) => {
+        if (savedTheme === 'light' || savedTheme === 'dark') {
+          setTheme(savedTheme);
+        }
+      })
+      .catch(() => {
+        // Fallback silently to dark theme
+      });
   }, []);
 
   const toggleTheme = () => {
     setTheme((prev) => {
       const newTheme = prev === 'dark' ? 'light' : 'dark';
-      AsyncStorage.setItem('app-theme', newTheme);
+      AsyncStorage.setItem('app-theme', newTheme).catch(() => {});
       return newTheme;
     });
   };
-
-  if (!isLoaded) return null; // Avoid flicker
 
   const value: ThemeContextValue = {
     theme,
