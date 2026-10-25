@@ -116,21 +116,17 @@ async function validateRoster(rosterId) {
 
   const countsByRoute = new Map();
   const classKeys = new Set();
+  const unpublishedRoutes = new Set();
+  const stopsNotOnSchedule = new Map();
+
   for (const passenger of roster.passengers) {
     countsByRoute.set(passenger.routeServiceId, (countsByRoute.get(passenger.routeServiceId) || 0) + 1);
     const allowedStops = stopsByRoute.get(passenger.routeServiceId);
     if (!allowedStops) {
-      warnings.push({
-        code: 'NO_PUBLISHED_SCHEDULE',
-        passengerId: passenger.id,
-        message: `Route ${passenger.routeService.routeNo} has no published schedule`,
-      });
+      unpublishedRoutes.add(passenger.routeService.routeNo);
     } else if (!allowedStops.has(passenger.boardingStopId)) {
-      warnings.push({
-        code: 'STOP_NOT_ON_SCHEDULE',
-        passengerId: passenger.id,
-        message: `${passenger.boardingStop?.name || 'Boarding stop'} is not on route ${passenger.routeService.routeNo}'s timetable schedule`,
-      });
+      const rNo = passenger.routeService.routeNo;
+      stopsNotOnSchedule.set(rNo, (stopsNotOnSchedule.get(rNo) || 0) + 1);
     }
 
     if (passenger.passengerType === 'STUDENT') {
@@ -142,6 +138,22 @@ async function validateRoster(rosterId) {
     } else if (!passenger.facultyId) {
       errors.push({ code: 'INCOMPLETE_FACULTY', passengerId: passenger.id, message: `${passenger.name} has no faculty ID` });
     }
+  }
+
+  if (unpublishedRoutes.size > 0) {
+    const sorted = [...unpublishedRoutes].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const sample = sorted.length > 6 ? `${sorted.slice(0, 6).join(', ')}… (${sorted.length} routes total)` : sorted.join(', ');
+    warnings.push({
+      code: 'NO_PUBLISHED_SCHEDULE',
+      message: `${unpublishedRoutes.size} route(s) have no published schedule yet (${sample}). Passengers are registered with database boarding points.`,
+    });
+  }
+
+  for (const [routeNo, count] of stopsNotOnSchedule.entries()) {
+    warnings.push({
+      code: 'STOP_NOT_ON_SCHEDULE',
+      message: `Route ${routeNo} has ${count} passenger(s) boarding at stops outside its published timetable.`,
+    });
   }
 
   const routes = await prisma.routeService.findMany({

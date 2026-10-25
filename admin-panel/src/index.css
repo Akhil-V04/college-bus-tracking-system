@@ -42,7 +42,7 @@ select option:checked{background-color:#EA580C !important;color:#ffffff !importa
 .button-ghost{color:var(--muted);background:var(--surface-hover);border:1px solid var(--line)}.button-ghost:hover{background:var(--surface);color:var(--navy);border-color:var(--teal)}.button-wide{width:100%}
 .button-muted{opacity:.6;color:var(--muted) !important}
 
-.notice{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:0 0 18px;padding:12px 14px;border-radius:10px;font-size:13px;line-height:1.45}.notice button{border:0;background:transparent;color:inherit;font-size:18px;line-height:1}
+.notice{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:0 0 18px;padding:12px 14px;border-radius:10px;font-size:13px;line-height:1.45;max-height:160px;overflow-y:auto;word-break:break-word}.notice button{border:0;background:transparent;color:inherit;font-size:18px;line-height:1}
 .notice-error{color:#9b1c1c;background:var(--surface)0ef;border:1px solid #ffd1cc}.notice-success{color:var(--green);background:#0e2722;border:1px solid #14B8A6}.notice-info{color:#38BDF8;background:#0c1929;border:1px solid #0f766e}.notice-warning{color:#8a4b08;background:var(--surface)7e7;border:1px solid #f5dfb5}
 
 .app-shell{min-height:100vh;display:flex}.sidebar{position:fixed;inset:0 auto 0 0;z-index:40;width:256px;height:100vh;display:flex;flex-direction:column;color:#94A3B8;background:#0E141C;border-right:1px solid var(--line)}

@@ -14,6 +14,15 @@ function csvCell(value) {
   return `"${text.replaceAll('"', '""')}"`;
 }
 
+function formatRosterWarnings(warnings) {
+  if (!warnings || !warnings.length) return '';
+  const unique = [...new Set(warnings.map((w) => typeof w === 'string' ? w : w.message).filter(Boolean))];
+  if (unique.length === 0) return '';
+  if (unique.length === 1) return unique[0];
+  if (unique.length <= 2) return unique.join(' • ');
+  return `${unique[0]} (and ${unique.length - 1} more notices)`;
+}
+
 export default function RostersScreen() {
   const [rosters, setRosters] = useState([]);
   const [routes, setRoutes] = useState([]);
@@ -136,12 +145,12 @@ export default function RostersScreen() {
     setDetailNotice({ type: 'info', text: 'Validating roster against route capacities and class advisors...' });
     try {
       const { data } = await api.post(`/rosters/${detail.roster.id}/validate`, {}, { timeout: 60000 });
-      const warningText = data.warnings?.map((item) => item.message).join(' ');
-      const errorText = data.errors?.map((item) => item.message).join(' ');
+      const warningText = formatRosterWarnings(data.warnings);
+      const errorText = formatRosterWarnings(data.errors);
       if (!data.valid) {
         setDetailNotice({ type: 'error', text: errorText || 'Roster validation failed.' });
       } else if (warningText) {
-        setDetailNotice({ type: 'warning', text: `Roster is valid! Non-blocking warnings: ${warningText}` });
+        setDetailNotice({ type: 'warning', text: `Roster is valid! ${warningText}` });
       } else {
         setDetailNotice({ type: 'success', text: 'Roster is verified and ready to publish.' });
       }
@@ -156,9 +165,12 @@ export default function RostersScreen() {
     setDetailNotice(null);
     try {
       const { data } = await api.post(`/rosters/${detail.roster.id}/publish`, { confirmed: true }, { timeout: 180000 });
-      const warnings = data.warnings?.map((item) => item.message).join(' ');
+      const noticeText = formatRosterWarnings(data.warnings);
       setDetail(null);
-      setMessage({ type: warnings ? 'warning' : 'success', text: warnings ? `Roster published with warnings: ${warnings}` : 'Roster published successfully.' });
+      setMessage({
+        type: 'success',
+        text: `Roster "${detail.roster.name}" published successfully! All passenger views are now live on this version.${noticeText ? ` (Note: ${noticeText})` : ''}`,
+      });
       await load();
     } catch (error) {
       const details = error.response?.data?.errors?.map((item) => item.message).join(' ');
