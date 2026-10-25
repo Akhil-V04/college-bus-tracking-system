@@ -294,96 +294,112 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
 
   try {
     const parsed = await parseRosterFile(req.file.buffer, req.file.originalname);
-    const imported = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT "id" FROM "TransportRoster" WHERE "id" = ${rosterId} FOR UPDATE`;
-      const { roster, context } = await loadValidationContext(tx, rosterId);
-      context.isOverwriteMode = true;
-      if (Number.isInteger(rosterVersion) && roster.version !== rosterVersion) {
-        throw new RosterExchangeError('Roster version changed; preview the file again', 409);
-      }
-      if (parsed.advisors && parsed.advisors.length > 0) {
-        for (const advisor of parsed.advisors) {
-          for (const sec of advisor.sections) {
-            context.advisorKeys.add(`${advisor.department.toUpperCase()}|${advisor.year}|${sec.toUpperCase()}`);
-          }
+
+    // 1. Load validation context using top-level prisma client (no row locks / transaction pool overhead)
+    const { roster, context } = await loadValidationContext(prisma, rosterId);
+    context.isOverwriteMode = true;
+
+    if (Number.isInteger(rosterVersion) && roster.version !== rosterVersion) {
+      throw new RosterExchangeError('Roster version changed; preview the file again', 409);
+    }
+
+    if (parsed.advisors && parsed.advisors.length > 0) {
+      for (const advisor of parsed.advisors) {
+        for (const sec of advisor.sections) {
+          context.advisorKeys.add(`${advisor.department.toUpperCase()}|${advisor.year}|${sec.toUpperCase()}`);
         }
       }
-      const results = validateRosterRows(parsed.rows, context);
-      const summary = summarizeResults(results);
-      if (summary.invalidRows > 0) {
-        throw new RosterExchangeError('Import validation failed; no rows were added', 400, {
-          summary,
-          unknownHeaders: parsed.unknownHeaders,
-          rows: results.filter((row) => !row.valid || row.warnings.length).map((row) => ({
-            rowNumber: row.rowNumber,
-            valid: row.valid,
-            errors: row.errors,
-            warnings: row.warnings,
+    }
+
+    // 2. In-memory validation
+    const results = validateRosterRows(parsed.rows, context);
+    const summary = summarizeResults(results);
+    if (summary.invalidRows > 0) {
+      throw new RosterExchangeError('Import validation failed; no rows were added', 400, {
+        summary,
+        unknownHeaders: parsed.unknownHeaders,
+        rows: results.filter((row) => !row.valid || row.warnings.length).map((row) => ({
+          rowNumber: row.rowNumber,
+          valid: row.valid,
+          errors: row.errors,
+          warnings: row.warnings,
+        })),
+      });
+    }
+
+    // 3. Batch stop resolution: collect any new stop names
+    const neededStopNames = new Set();
+    for (const result of results) {
+      if (!result.normalized) continue;
+      if (result.normalized.isNewStop || result.normalized.boardingStopId < 0) {
+        const rawName = (result.normalized.boardingStopName || result.normalized.boardingStop || '').trim();
+        if (rawName) neededStopNames.add(rawName);
+      }
+    }
+
+    const stopNameToId = new Map();
+    if (neededStopNames.size > 0) {
+      const existingStops = await prisma.stop.findMany({
+        where: { name: { in: [...neededStopNames], mode: 'insensitive' } },
+        select: { id: true, name: true },
+      });
+      for (const stop of existingStops) {
+        stopNameToId.set(normalizeLookup(stop.name), stop.id);
+      }
+
+      const missingStops = [...neededStopNames].filter((name) => !stopNameToId.has(normalizeLookup(name)));
+      if (missingStops.length > 0) {
+        // Bulk create missing stops in 1 query
+        await prisma.stop.createMany({
+          data: missingStops.map((name) => ({
+            name,
+            latitude: 17.3551,
+            longitude: 78.5833,
           })),
+          skipDuplicates: true,
         });
-      }
-
-      const neededStopNames = new Set();
-      for (const result of results) {
-        if (!result.normalized) continue;
-        if (result.normalized.isNewStop || result.normalized.boardingStopId < 0) {
-          const rawName = (result.normalized.boardingStopName || result.normalized.boardingStop || '').trim();
-          if (rawName) neededStopNames.add(rawName);
-        }
-      }
-
-      const stopNameToId = new Map();
-      if (neededStopNames.size > 0) {
-        const existingStops = await tx.stop.findMany({
-          where: { name: { in: [...neededStopNames], mode: 'insensitive' } },
+        const createdStops = await prisma.stop.findMany({
+          where: { name: { in: missingStops, mode: 'insensitive' } },
+          select: { id: true, name: true },
         });
-        for (const stop of existingStops) {
-          stopNameToId.set(normalizeLookup(stop.name), stop.id);
-        }
-        for (const name of neededStopNames) {
-          const normKey = normalizeLookup(name);
-          if (!stopNameToId.has(normKey)) {
-            const stop = await tx.stop.create({
-              data: {
-                name,
-                latitude: 17.3551,
-                longitude: 78.5833,
-              },
-            });
-            stopNameToId.set(normKey, stop.id);
-          }
+        for (const s of createdStops) {
+          stopNameToId.set(normalizeLookup(s.name), s.id);
         }
       }
+    }
 
-      for (const result of results) {
-        if (!result.normalized) continue;
-        if (result.normalized.isNewStop || result.normalized.boardingStopId < 0) {
-          const rawName = (result.normalized.boardingStopName || result.normalized.boardingStop || '').trim();
-          const normKey = normalizeLookup(rawName);
-          if (stopNameToId.has(normKey)) {
-            result.normalized.boardingStopId = stopNameToId.get(normKey);
-          }
+    for (const result of results) {
+      if (!result.normalized) continue;
+      if (result.normalized.isNewStop || result.normalized.boardingStopId < 0) {
+        const rawName = (result.normalized.boardingStopName || result.normalized.boardingStop || '').trim();
+        const normKey = normalizeLookup(rawName);
+        if (stopNameToId.has(normKey)) {
+          result.normalized.boardingStopId = stopNameToId.get(normKey);
         }
       }
+    }
 
-      if (parsed.advisors && parsed.advisors.length > 0) {
-        for (const advisor of parsed.advisors) {
-          const sectionsToApply = new Set(advisor.sections.map((s) => s.toUpperCase()));
-          if (sectionsToApply.has('ALL') || sectionsToApply.has('*')) {
-            for (const row of results) {
-              if (
-                row.normalized &&
-                row.normalized.department &&
-                row.normalized.department.toUpperCase() === advisor.department.toUpperCase() &&
-                row.normalized.year === advisor.year &&
-                row.normalized.section
-              ) {
-                sectionsToApply.add(row.normalized.section.toUpperCase());
-              }
+    // 4. Batch upsert class advisors concurrently
+    if (parsed.advisors && parsed.advisors.length > 0) {
+      const advisorOps = [];
+      for (const advisor of parsed.advisors) {
+        const sectionsToApply = new Set(advisor.sections.map((s) => s.toUpperCase()));
+        if (sectionsToApply.has('ALL') || sectionsToApply.has('*')) {
+          for (const row of results) {
+            if (
+              row.normalized &&
+              row.normalized.department &&
+              row.normalized.department.toUpperCase() === advisor.department.toUpperCase() &&
+              row.normalized.year === advisor.year &&
+              row.normalized.section
+            ) {
+              sectionsToApply.add(row.normalized.section.toUpperCase());
             }
           }
-          for (const sec of sectionsToApply) {
-            await tx.classAdvisor.upsert({
+        }
+        for (const sec of sectionsToApply) {
+          advisorOps.push(
+            prisma.classAdvisor.upsert({
               where: {
                 department_year_section: {
                   department: advisor.department,
@@ -404,21 +420,41 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
                 email: advisor.email,
                 phone: advisor.phone,
               },
-            });
-          }
+            })
+          );
         }
       }
+      if (advisorOps.length > 0) {
+        await Promise.all(advisorOps);
+      }
+    }
 
-      const data = results.map((result) => {
-        const {
-          routeNo: _routeNo,
-          boardingStop: _boardingStop,
-          boardingStopName: _boardingStopName,
-          isNewStop: _isNewStop,
-          ...passenger
-        } = result.normalized;
-        return { rosterId, ...passenger };
+    const data = results.map((result) => {
+      const {
+        routeNo: _routeNo,
+        boardingStop: _boardingStop,
+        boardingStopName: _boardingStopName,
+        isNewStop: _isNewStop,
+        ...passenger
+      } = result.normalized;
+      return { rosterId, ...passenger };
+    });
+
+    const existingRows = [...context.existingCountsByRoute.values()].reduce((total, count) => total + count, 0);
+
+    // 5. Ultra-fast, minimal atomic transaction: ONLY lock, wipe draft passengers, bulk insert, audit log
+    const imported = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "TransportRoster" WHERE "id" = ${rosterId} FOR UPDATE`;
+
+      const targetRoster = await tx.transportRoster.findUnique({
+        where: { id: rosterId },
+        select: { id: true, name: true, academicYear: true, version: true, status: true },
       });
+      if (!targetRoster) throw new RosterExchangeError('Roster not found', 404);
+      if (targetRoster.status !== 'DRAFT') throw new RosterExchangeError('Only draft rosters can import passengers', 409);
+      if (Number.isInteger(rosterVersion) && targetRoster.version !== rosterVersion) {
+        throw new RosterExchangeError('Roster version changed; preview the file again', 409);
+      }
 
       // Option A: Clean overwrite - delete previous draft passengers before inserting new rows
       await tx.rosterPassenger.deleteMany({ where: { rosterId } });
@@ -426,11 +462,11 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
       for (let offset = 0; offset < data.length; offset += 500) {
         await tx.rosterPassenger.createMany({ data: data.slice(offset, offset + 500) });
       }
-      const existingRows = [...context.existingCountsByRoute.values()].reduce((total, count) => total + count, 0);
+
       await writeAdminAudit(tx, req, {
         action: 'ROSTER_FILE_IMPORTED',
         entityType: 'TransportRoster',
-        entityId: roster.id,
+        entityId: targetRoster.id,
         beforeSummary: { passengerRows: existingRows },
         afterSummary: {
           passengerRows: data.length,
@@ -440,14 +476,16 @@ router.post('/:id/import', rosterImportRateLimiter, receiveRosterFile, async (re
           mode: 'FULL_OVERWRITE',
         },
       });
+
       return {
-        roster: { id: roster.id, name: roster.name, academicYear: roster.academicYear, version: roster.version },
+        roster: { id: targetRoster.id, name: targetRoster.name, academicYear: targetRoster.academicYear, version: targetRoster.version },
         importedRows: data.length,
         summary,
         unknownHeaders: parsed.unknownHeaders,
         warnings: results.filter((row) => row.warnings.length).map((row) => ({ rowNumber: row.rowNumber, warnings: row.warnings })),
       };
-    }, { maxWait: 30_000, timeout: 90_000 });
+    }, { maxWait: 15_000, timeout: 60_000 });
+
     return res.status(201).json(imported);
   } catch (error) {
     if (error.code === 'P2002') {

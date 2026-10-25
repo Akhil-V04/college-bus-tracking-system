@@ -282,7 +282,7 @@ export default function RostersScreen() {
       formData.append('file', file);
       const { data } = await api.post(`/rosters/${importTargetRoster.id}/import/preview`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000,
+        timeout: 180000,
       });
       setImportPreview(data);
     } catch (error) {
@@ -306,7 +306,7 @@ export default function RostersScreen() {
           'x-preview-digest': importPreview.previewDigest,
           'x-roster-version': String(importTargetRoster.version),
         },
-        timeout: 120000,
+        timeout: 180000,
       });
       setImportModalOpen(false);
       setMessage({

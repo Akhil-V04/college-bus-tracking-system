@@ -2,9 +2,11 @@ import axios from 'axios';
 
 const developmentApiUrl = `${window.location.protocol}//${window.location.hostname}:4000/api/v1`;
 
+axios.defaults.timeout = 180000;
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || developmentApiUrl,
-  timeout: 60000,
+  timeout: 180000,
   withCredentials: true,
   headers: { 'X-Requested-With': 'college-bus-admin' },
 });
