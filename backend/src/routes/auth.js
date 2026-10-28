@@ -78,8 +78,31 @@ router.post('/login', loginRateLimiter, async (req, res) => {
         expiresAt: session.expiresAt,
       });
     }
+    const rawIdentifier = String(identifier).trim();
+    const cleanId = rawIdentifier.toUpperCase();
+    const routeNum = cleanId.replace(/^DRV/i, '');
+    const padded2 = routeNum.padStart(2, '0');
+    const padded3 = routeNum.padStart(3, '0');
 
-    const driver = await prisma.driver.findUnique({ where: { driverCode: String(identifier).trim() } });
+    const isDemoQuery = cleanId === 'DEMO' || cleanId === 'DRVDEMO';
+
+    // Flexible identifier lookup:
+    // Supports DEMO, DRV01, drv01, route number (e.g. "01" or "1"), and legacy formats
+    const driver = await prisma.driver.findFirst({
+      where: {
+        OR: [
+          { driverCode: rawIdentifier },
+          { driverCode: cleanId },
+          ...(isDemoQuery ? [{ driverCode: 'DEMO' }, { driverCode: 'DRVDEMO' }] : []),
+          { driverCode: `DRV${padded2}` },
+          { driverCode: `DRV${padded3}` },
+          { driverCode: { equals: cleanId, mode: 'insensitive' } },
+          { assignedRoute: { routeNo: padded2 } },
+          { assignedRoute: { routeNo: rawIdentifier } },
+          { assignedRoute: { routeNo: cleanId } },
+        ],
+      },
+    });
     const valid = driver && driver.status === 'ACTIVE' && (await bcrypt.compare(password, driver.passwordHash));
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 

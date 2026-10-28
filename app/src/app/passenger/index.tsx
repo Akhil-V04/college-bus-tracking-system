@@ -431,6 +431,7 @@ export default function PassengerDashboard() {
         <View style={styles.footerBrand}>
           <Text style={styles.footerPowered}>Powered by</Text>
           <Text style={styles.footerBrandName}>CAMPUS<Text style={styles.footerBrandAccent}>Transit</Text></Text>
+          <Text style={styles.footerDev}>Developed by Akhil Vadeeboina</Text>
         </View>
       </ScrollView>
 
@@ -648,6 +649,7 @@ const useStyles = () => {
   footerPowered: { color: colors.textMuted, fontSize: 13 },
   footerBrandName: { color: colors.accentLight, fontSize: 16, fontWeight: fontWeight.black, letterSpacing: 2 },
   footerBrandAccent: { color: colors.accent, fontWeight: fontWeight.bold },
+  footerDev: { color: colors.textMuted, fontSize: 11, marginTop: 4, fontWeight: fontWeight.bold },
   fabShadow: {
     position: 'absolute',
     bottom: 28,

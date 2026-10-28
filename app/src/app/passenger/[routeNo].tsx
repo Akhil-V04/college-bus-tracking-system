@@ -9,6 +9,7 @@ import {
   FlatList,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -33,7 +34,7 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_COLLAPSED_HEIGHT = 280;
 const SHEET_EXPANDED_HEIGHT = Math.round(SCREEN_HEIGHT * 0.72);
 
-const TEAL_ACCENT = '#00BFA5';
+const ORANGE_ACCENT = '#EA580C';
 
 type TabType = 'FULL ROUTE' | 'BUS INFO';
 type ReminderFrequency = 'TODAY' | 'DAILY' | 'WEEK';
@@ -58,9 +59,69 @@ export default function RouteDetailsScreen() {
   const [selectedDirection, setSelectedDirection] = useState<'MORNING' | 'EVENING'>('MORNING');
   const [busUpdate, setBusUpdate] = useState<BusUpdate | null>(null);
 
-  // Bottom Sheet expansion state
+  // Bottom Sheet expansion state (supports both tapping & dragging/pulling)
   const [sheetExpanded, setSheetExpanded] = useState(false);
   const sheetHeightAnim = useRef(new Animated.Value(SHEET_COLLAPSED_HEIGHT)).current;
+  const currentHeightRef = useRef<number>(SHEET_COLLAPSED_HEIGHT);
+
+  // PanResponder to allow pulling/dragging bottom sheet up and down
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dy) > 5;
+      },
+      onPanResponderGrant: () => {
+        sheetHeightAnim.stopAnimation((val) => {
+          currentHeightRef.current = val;
+        });
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const newHeight = currentHeightRef.current - gestureState.dy;
+        const clamped = Math.max(
+          SHEET_COLLAPSED_HEIGHT - 20,
+          Math.min(SHEET_EXPANDED_HEIGHT + 20, newHeight)
+        );
+        sheetHeightAnim.setValue(clamped);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        const currentHeight = currentHeightRef.current - gestureState.dy;
+        const threshold = (SHEET_COLLAPSED_HEIGHT + SHEET_EXPANDED_HEIGHT) / 2;
+        let shouldExpand = false;
+        if (gestureState.vy < -0.3) {
+          shouldExpand = true;
+        } else if (gestureState.vy > 0.3) {
+          shouldExpand = false;
+        } else {
+          shouldExpand = currentHeight > threshold;
+        }
+
+        const targetHeight = shouldExpand ? SHEET_EXPANDED_HEIGHT : SHEET_COLLAPSED_HEIGHT;
+        setSheetExpanded(shouldExpand);
+        currentHeightRef.current = targetHeight;
+        Animated.spring(sheetHeightAnim, {
+          toValue: targetHeight,
+          friction: 8,
+          tension: 40,
+          useNativeDriver: false,
+        }).start();
+      },
+    })
+  ).current;
+
+  // Toggle bottom sheet between collapsed and expanded on tap
+  const toggleSheet = () => {
+    const shouldExpand = !sheetExpanded;
+    const toValue = shouldExpand ? SHEET_EXPANDED_HEIGHT : SHEET_COLLAPSED_HEIGHT;
+    currentHeightRef.current = toValue;
+    Animated.spring(sheetHeightAnim, {
+      toValue,
+      friction: 8,
+      tension: 40,
+      useNativeDriver: false,
+    }).start();
+    setSheetExpanded(shouldExpand);
+  };
 
   // Remind Me Modal state
   const [reminderModalVisible, setReminderModalVisible] = useState(false);
@@ -70,18 +131,6 @@ export default function RouteDetailsScreen() {
   const [savedReminder, setSavedReminder] = useState<SavedReminder | null>(null);
 
   const mapRef = useRef<MapView>(null);
-
-  // Toggle bottom sheet between collapsed and expanded
-  const toggleSheet = () => {
-    const toValue = sheetExpanded ? SHEET_COLLAPSED_HEIGHT : SHEET_EXPANDED_HEIGHT;
-    Animated.spring(sheetHeightAnim, {
-      toValue,
-      friction: 8,
-      tension: 40,
-      useNativeDriver: false,
-    }).start();
-    setSheetExpanded(!sheetExpanded);
-  };
 
   // Fetch route details with direction (defaults to MORNING in backend)
   const route = useQuery({
@@ -214,10 +263,15 @@ export default function RouteDetailsScreen() {
   const handleShare = async () => {
     if (!route.data) return;
     try {
-      const stopList = stops.map((s) => `• ${s.stop.name} (${s.scheduledTime})`).join('\n');
+      const stopList = stops.slice(0, 10).map((s) => `• ${s.stop.name} (${s.scheduledTime})`).join('\n') +
+        (stops.length > 10 ? `\n...and ${stops.length - 10} more stops` : '');
+      const downloadUrl = `http://10.96.63.205:4000/download?route=${encodeURIComponent(route.data.routeNo)}`;
+      const deepLink = `college-bus://passenger/${encodeURIComponent(route.data.routeNo)}`;
+
       await Share.share({
         title: `VBIT College Bus Route ${route.data.routeNo}`,
-        message: `VBIT College Bus - Route ${route.data.routeNo} (${route.data.name})\nSchedule:\n${stopList}\n\nTrack live on CampusTransit App.`,
+        message: `🚌 VBIT College Bus — Route ${route.data.routeNo} (${route.data.name})\n\n⏰ Schedule:\n${stopList}\n\n📲 Open in App:\n${deepLink}\n\n🌐 Don't have the app yet? Download directly to your mobile here:\n${downloadUrl}`,
+        url: downloadUrl,
       });
     } catch {
       // ignore
@@ -336,7 +390,7 @@ export default function RouteDetailsScreen() {
             hitSlop={8}
             accessibilityLabel="Set Bus Reminder"
           >
-            <Text style={styles.navActionIcon}>🔔</Text>
+            <AppIcon name="notifications" size={20} colorScheme={savedReminder ? 'light' : 'dark'} />
             {savedReminder ? <View style={styles.bellBadge} /> : null}
           </Pressable>
         </View>
@@ -417,7 +471,7 @@ export default function RouteDetailsScreen() {
               {polylineCoordinates.length > 0 ? (
                 <Polyline
                   coordinates={polylineCoordinates}
-                  strokeColor={TEAL_ACCENT}
+                  strokeColor={colors.accent || ORANGE_ACCENT}
                   strokeWidth={4}
                 />
               ) : null}
@@ -464,15 +518,17 @@ export default function RouteDetailsScreen() {
           {/* Bottom Expandable Timeline Sheet */}
           <Animated.View style={[styles.bottomSheet, { height: sheetHeightAnim }]}>
             {/* Sheet Drag / Pull Handle */}
-            <Pressable onPress={toggleSheet} style={styles.sheetHandleArea}>
-              <View style={styles.sheetHandleBar} />
-              <View style={styles.sheetHeaderRow}>
-                <Text style={styles.sheetHeaderText}>
-                  {sheetExpanded ? '↓ Tap to collapse view' : '↑ Pull Up to view more'}
-                </Text>
-                <Text style={styles.sheetStopsCount}>{stops.length} Stops</Text>
-              </View>
-            </Pressable>
+            <View {...panResponder.panHandlers}>
+              <Pressable onPress={toggleSheet} style={styles.sheetHandleArea}>
+                <View style={styles.sheetHandleBar} />
+                <View style={styles.sheetHeaderRow}>
+                  <Text style={styles.sheetHeaderText}>
+                    {sheetExpanded ? '↓ Tap or drag down to collapse' : '↑ Tap or pull up to view more'}
+                  </Text>
+                  <Text style={styles.sheetStopsCount}>{stops.length} Stops</Text>
+                </View>
+              </Pressable>
+            </View>
 
             {/* Stop Timeline List */}
             <FlatList
@@ -637,7 +693,10 @@ export default function RouteDetailsScreen() {
           <View style={styles.modalCard}>
             {/* Modal Title */}
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>🔔 Remind Me</Text>
+              <View style={styles.modalTitleRow}>
+                <AppIcon name="notifications" size={22} colorScheme={isDark ? 'dark' : 'light'} />
+                <Text style={styles.modalTitle}>Remind Me</Text>
+              </View>
               <Pressable onPress={() => setReminderModalVisible(false)} hitSlop={10}>
                 <Text style={styles.modalCloseText}>✕</Text>
               </Pressable>
@@ -718,7 +777,7 @@ export default function RouteDetailsScreen() {
 
             <Text style={styles.reminderExplainText}>
               Alerts you {reminderMinutes} min before bus arrives at{' '}
-              <Text style={{ fontWeight: fontWeight.bold, color: TEAL_ACCENT }}>
+              <Text style={{ fontWeight: fontWeight.bold, color: colors.accent || ORANGE_ACCENT }}>
                 {stops.find((s) => s.stop.id === selectedReminderStopId)?.stop.name || 'selected stop'}
               </Text>
             </Text>
@@ -757,13 +816,14 @@ export default function RouteDetailsScreen() {
 
 const useStyles = () => {
   const { colors, isDark } = useTheme();
+  const accentColor = colors.accent || ORANGE_ACCENT;
   return useMemo(
     () =>
       StyleSheet.create({
         container: { flex: 1, backgroundColor: colors.background },
         /* Top Navbar */
         header: {
-          backgroundColor: TEAL_ACCENT,
+          backgroundColor: accentColor,
           paddingHorizontal: spacing.md,
           paddingVertical: 12,
           flexDirection: 'row',
@@ -816,14 +876,14 @@ const useStyles = () => {
           borderBottomWidth: 3,
           borderBottomColor: 'transparent',
         },
-        tabItemActive: { borderBottomColor: TEAL_ACCENT },
+        tabItemActive: { borderBottomColor: accentColor },
         tabItemText: {
           fontSize: 13,
           fontWeight: fontWeight.bold,
           color: colors.textMuted,
           letterSpacing: 0.5,
         },
-        tabItemTextActive: { color: TEAL_ACCENT },
+        tabItemTextActive: { color: accentColor },
 
         /* Direction Bar */
         directionBar: {
@@ -843,8 +903,8 @@ const useStyles = () => {
           borderColor: colors.borderSubtle,
         },
         directionPillActive: {
-          backgroundColor: TEAL_ACCENT,
-          borderColor: TEAL_ACCENT,
+          backgroundColor: accentColor,
+          borderColor: accentColor,
         },
         directionPillText: {
           fontSize: 12,
@@ -872,7 +932,7 @@ const useStyles = () => {
           shadowRadius: 4,
           elevation: 6,
         },
-        floatingRefreshIcon: { fontSize: 22, color: TEAL_ACCENT, fontWeight: fontWeight.bold },
+        floatingRefreshIcon: { fontSize: 22, color: accentColor, fontWeight: fontWeight.bold },
 
         /* Map Markers */
         stopMarkerDot: {
@@ -883,21 +943,21 @@ const useStyles = () => {
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: 2,
-          borderColor: TEAL_ACCENT,
+          borderColor: accentColor,
         },
         stopMarkerInner: {
           width: 6,
           height: 6,
           borderRadius: 3,
-          backgroundColor: TEAL_ACCENT,
+          backgroundColor: accentColor,
         },
         busMarkerHalo: {
           width: 40,
           height: 40,
           borderRadius: 20,
-          backgroundColor: 'rgba(0, 191, 165, 0.25)',
+          backgroundColor: 'rgba(234, 88, 12, 0.25)',
           borderWidth: 2,
-          borderColor: TEAL_ACCENT,
+          borderColor: accentColor,
           alignItems: 'center',
           justifyContent: 'center',
         },
@@ -947,7 +1007,7 @@ const useStyles = () => {
         sheetStopsCount: {
           fontSize: 12,
           fontWeight: fontWeight.bold,
-          color: TEAL_ACCENT,
+          color: accentColor,
         },
 
         /* Timeline List */
@@ -957,7 +1017,7 @@ const useStyles = () => {
           alignItems: 'flex-start',
           minHeight: 64,
         },
-        timelineRowPressed: { backgroundColor: 'rgba(0, 191, 165, 0.08)' },
+        timelineRowPressed: { backgroundColor: 'rgba(234, 88, 12, 0.08)' },
         timelineNodeColumn: {
           width: 28,
           alignItems: 'center',
@@ -972,14 +1032,14 @@ const useStyles = () => {
         },
         timelineCirclePassed: { borderColor: '#9CA3AF', backgroundColor: '#E5E7EB' },
         timelineCircleActive: { borderColor: '#10B981', backgroundColor: '#10B981' },
-        timelineCircleUpcoming: { borderColor: TEAL_ACCENT, backgroundColor: '#FFFFFF' },
+        timelineCircleUpcoming: { borderColor: accentColor, backgroundColor: '#FFFFFF' },
         timelineLine: {
           width: 2,
           flex: 1,
           marginVertical: 2,
         },
         timelineLinePassed: { backgroundColor: '#D1D5DB' },
-        timelineLineUpcoming: { backgroundColor: TEAL_ACCENT },
+        timelineLineUpcoming: { backgroundColor: accentColor },
         timelineDetails: { flex: 1, paddingLeft: 10, paddingBottom: 16 },
         stopNameText: {
           fontSize: 14,
@@ -988,7 +1048,7 @@ const useStyles = () => {
           letterSpacing: 0.2,
         },
         timingRow: { flexDirection: 'row', gap: 16, marginTop: 4 },
-        arrivalText: { fontSize: 13, color: TEAL_ACCENT, fontWeight: fontWeight.semibold },
+        arrivalText: { fontSize: 13, color: accentColor, fontWeight: fontWeight.semibold },
         departureText: { fontSize: 13, color: colors.textSecondary, fontWeight: fontWeight.medium },
         statusCol: {
           alignItems: 'flex-end',
@@ -996,7 +1056,7 @@ const useStyles = () => {
         },
         statusBusLeft: { fontSize: 12, color: '#EF4444', fontWeight: fontWeight.bold },
         statusAtStop: { fontSize: 12, color: '#10B981', fontWeight: fontWeight.bold },
-        statusScheduled: { fontSize: 12, color: TEAL_ACCENT, fontWeight: fontWeight.medium },
+        statusScheduled: { fontSize: 12, color: accentColor, fontWeight: fontWeight.medium },
 
         /* Bus Info Content */
         busInfoContent: { padding: spacing.md, gap: spacing.md },
@@ -1012,7 +1072,7 @@ const useStyles = () => {
           width: 44,
           height: 44,
           borderRadius: 22,
-          backgroundColor: 'rgba(0, 191, 165, 0.15)',
+          backgroundColor: 'rgba(234, 88, 12, 0.15)',
           alignItems: 'center',
           justifyContent: 'center',
         },
@@ -1031,7 +1091,7 @@ const useStyles = () => {
         cardSectionLabel: {
           fontSize: 12,
           fontWeight: fontWeight.bold,
-          color: TEAL_ACCENT,
+          color: accentColor,
           letterSpacing: 0.5,
           marginBottom: 8,
         },
@@ -1051,7 +1111,7 @@ const useStyles = () => {
           paddingHorizontal: 12,
           paddingVertical: 4,
           borderRadius: 4,
-          backgroundColor: TEAL_ACCENT,
+          backgroundColor: accentColor,
           color: '#FFFFFF',
           fontSize: 12,
           fontWeight: fontWeight.bold,
@@ -1083,6 +1143,11 @@ const useStyles = () => {
           justifyContent: 'space-between',
           marginBottom: 16,
         },
+        modalTitleRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        },
         modalTitle: { fontSize: 18, fontWeight: fontWeight.bold, color: colors.textPrimary },
         modalCloseText: { fontSize: 18, color: colors.textMuted, fontWeight: fontWeight.bold },
         modalFieldLabel: {
@@ -1109,10 +1174,10 @@ const useStyles = () => {
           borderBottomWidth: 1,
           borderBottomColor: colors.borderSubtle,
         },
-        stopPickerOptionSelected: { backgroundColor: 'rgba(0, 191, 165, 0.12)' },
+        stopPickerOptionSelected: { backgroundColor: 'rgba(234, 88, 12, 0.12)' },
         stopPickerOptionText: { fontSize: 13, color: colors.textPrimary },
-        stopPickerOptionTextSelected: { color: TEAL_ACCENT, fontWeight: fontWeight.bold },
-        checkIcon: { color: TEAL_ACCENT, fontSize: 14, fontWeight: fontWeight.bold },
+        stopPickerOptionTextSelected: { color: accentColor, fontWeight: fontWeight.bold },
+        checkIcon: { color: accentColor, fontSize: 14, fontWeight: fontWeight.bold },
         freqRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
         freqBtn: {
           flex: 1,
@@ -1124,8 +1189,8 @@ const useStyles = () => {
           alignItems: 'center',
         },
         freqBtnSelected: {
-          borderColor: TEAL_ACCENT,
-          backgroundColor: TEAL_ACCENT,
+          borderColor: accentColor,
+          backgroundColor: accentColor,
         },
         freqBtnText: { fontSize: 12, fontWeight: fontWeight.semibold, color: colors.textSecondary },
         freqBtnTextSelected: { color: '#FFFFFF', fontWeight: fontWeight.bold },
@@ -1139,8 +1204,8 @@ const useStyles = () => {
           backgroundColor: colors.surface,
         },
         minuteChipSelected: {
-          borderColor: TEAL_ACCENT,
-          backgroundColor: TEAL_ACCENT,
+          borderColor: accentColor,
+          backgroundColor: accentColor,
         },
         minuteChipText: { fontSize: 12, fontWeight: fontWeight.bold, color: colors.textPrimary },
         minuteChipTextSelected: { color: '#FFFFFF' },
@@ -1175,7 +1240,7 @@ const useStyles = () => {
           flex: 1,
           paddingVertical: 12,
           borderRadius: radius.sm,
-          backgroundColor: TEAL_ACCENT,
+          backgroundColor: accentColor,
           alignItems: 'center',
         },
         modalCreateBtnText: { fontSize: 14, fontWeight: fontWeight.bold, color: '#FFFFFF' },

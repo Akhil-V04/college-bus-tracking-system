@@ -232,7 +232,11 @@ export default function ReportIssueScreen() {
         ? `[${selectedOptions.join(', ')}] ${description.trim()}`
         : description.trim();
         
-      const addInfo = [routeNumber ? `Route: ${routeNumber}` : '', location ? `Location: ${location}` : ''].filter(Boolean).join(' | ');
+      const includeLocation = selectedCategory !== 'APP_ISSUE' && selectedCategory !== 'BUS_CONDITION';
+      const addInfo = [
+        routeNumber ? `Route: ${routeNumber}` : '',
+        (includeLocation && location.trim()) ? `Location: ${location.trim()}` : ''
+      ].filter(Boolean).join(' | ');
 
       const fingerprintHash = simpleHash(
         selectedCategory + fullDescription.toLowerCase().slice(0, 50) + new Date().toDateString()
@@ -243,6 +247,8 @@ export default function ReportIssueScreen() {
         body: JSON.stringify({
           category: selectedCategory,
           description: fullDescription,
+          routeNumber: routeNumber.trim(),
+          routeNo: routeNumber.trim(),
           additionalInfo: addInfo || null,
           fingerprintHash,
         }),
@@ -395,7 +401,9 @@ export default function ReportIssueScreen() {
                     maxLength={50}
                   />
                   
-                  <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>Location</Text>
+                  {selectedCategory !== 'BUS_CONDITION' && (
+                    <>
+                      <Text style={[styles.fieldLabel, { marginTop: spacing.md }]}>Location</Text>
                   <TextInput
                     style={styles.textInput}
                     placeholder="Where did this happen?"
@@ -404,6 +412,8 @@ export default function ReportIssueScreen() {
                     onChangeText={setLocation}
                     maxLength={100}
                   />
+                    </>
+                  )}
                 </>
               )}
 

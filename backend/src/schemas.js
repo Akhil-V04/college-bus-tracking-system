@@ -22,7 +22,7 @@ const driverCreateSchema = z.object({
   name: z.string().trim().min(1).max(150),
   phone: z.string().trim().min(5).max(30),
   licenseNo: z.string().trim().min(1).max(100),
-  password: z.string().min(8).max(200),
+  password: z.string().min(4).max(200),
 });
 
 const driverUpdateSchema = driverCreateSchema.partial();

@@ -5,7 +5,7 @@ const bcrypt = require('bcrypt');
 const prisma = require('../src/lib/prisma');
 
 const MD_PATH = path.resolve(__dirname, '../../docs/VBIT_College_Transport_RAG_Knowledge_Base.md');
-const DEFAULT_PASSWORD = 'Driver@123';
+const DEFAULT_PASSWORD = '1234';
 
 function normalizeText(text) {
   return text.replace(/\u00A0/g, ' ').replace(/\r\n/g, '\n');
@@ -82,7 +82,7 @@ function parseMarkdownRoutes(content) {
       ? 'Demo Route - Demo Start to VBIT Campus'
       : `Route ${routeNum} - ${firstStop} to VBIT Campus`;
 
-    const driverCode = isDemo ? 'DRVDEMO' : `DRV${routeNum.padStart(3, '0')}`;
+    const driverCode = isDemo ? 'DEMO' : `DRV${routeNum.padStart(2, '0')}`;
 
     routes.push({
       routeNum,

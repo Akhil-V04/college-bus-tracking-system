@@ -64,6 +64,9 @@ export default function Login() {
         <p className="login-footnote">
           Passengers never sign in here. Driver access is handled in the driver application.
         </p>
+        <div style={{ marginTop: '20px', paddingTop: '14px', borderTop: '1px solid var(--line)', textAlign: 'center', fontSize: '12px', color: 'var(--muted)' }}>
+          Developed by <strong style={{ color: '#EA580C', fontWeight: 700 }}>Akhil Vadeeboina</strong>
+        </div>
       </main>
     </div>
   );

@@ -126,14 +126,28 @@ router.get('/stops/nearest', async (req, res) => {
   }
   try {
     const stops = await prisma.stop.findMany({
-      where: { scheduleStops: { some: { scheduleVersion: { status: 'PUBLISHED' } } } },
+      where: {
+        scheduleStops: {
+          some: {
+            scheduleVersion: {
+              status: 'PUBLISHED',
+              direction: { in: ['MORNING', 'TO_COLLEGE'] },
+            },
+          },
+        },
+      },
       select: {
         id: true,
         name: true,
         latitude: true,
         longitude: true,
         scheduleStops: {
-          where: { scheduleVersion: { status: 'PUBLISHED' } },
+          where: {
+            scheduleVersion: {
+              status: 'PUBLISHED',
+              direction: { in: ['MORNING', 'TO_COLLEGE'] },
+            },
+          },
           orderBy: { sequenceOrder: 'asc' },
           select: {
             scheduledTime: true,

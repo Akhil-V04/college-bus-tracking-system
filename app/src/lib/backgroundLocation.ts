@@ -4,7 +4,7 @@ import * as TaskManager from 'expo-task-manager';
 import { io } from 'socket.io-client';
 
 import { getDriverToken } from '@/lib/auth';
-import { API_ORIGIN } from '@/lib/api';
+import { getApiOrigin } from '@/lib/api';
 
 export const DRIVER_LOCATION_TASK = 'college-bus-driver-background-location';
 const QUEUE_KEY = 'college-bus-driver-location-queue-v1';
@@ -64,7 +64,7 @@ export async function flushDriverLocationQueue(): Promise<{ sent: number; queued
   const queue = await readQueue();
   if (!token || queue.samples.length === 0) return { sent: 0, queued: queue.samples.length, dropped: queue.dropped };
 
-  const socket = io(API_ORIGIN, {
+  const socket = io(getApiOrigin(), {
     autoConnect: false,
     transports: ['websocket'],
     auth: { token },

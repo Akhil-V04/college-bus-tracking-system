@@ -77,7 +77,7 @@ export default function DriverLoginScreen() {
               setIdentifier(text);
               if (login.isError) login.reset();
             }}
-            placeholder="For example DRV-001"
+            placeholder="e.g. DRV01 (or route number 01)"
           />
           <Field
             label="Password"
@@ -87,7 +87,7 @@ export default function DriverLoginScreen() {
               setPassword(text);
               if (login.isError) login.reset();
             }}
-            placeholder="Your driver password"
+            placeholder="Password (default: 1234)"
             onSubmitEditing={submit}
           />
           {login.isError && (
@@ -107,7 +107,7 @@ export default function DriverLoginScreen() {
         </Card>
 
         <Text style={styles.helpText}>
-          Driver phone numbers and passwords are stored securely. They are never visible in passenger mode.
+          Driver accounts correspond to route numbers (e.g. DRV01 for Route 01). Passwords are set to 1234.
         </Text>
       </View>
 

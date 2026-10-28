@@ -2,6 +2,8 @@ require('dotenv').config();
 
 const express = require('express');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { requestLogger, securityHeaders } = require('./middleware/security');
@@ -110,6 +112,28 @@ mountApi(app);
 const apiV1 = express.Router();
 mountApi(apiV1);
 app.use('/api/v1', apiV1);
+// Single-page mobile app download landing website
+const publicDir = path.join(__dirname, 'public');
+app.use('/public', express.static(publicDir));
+app.get('/download', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(publicDir, 'download.html'));
+});
+app.get('/download/apk', (_req, res) => {
+  const apkPath = path.join(publicDir, 'campus-transit.apk');
+  if (fs.existsSync(apkPath)) {
+    return res.download(apkPath, 'campus-transit.apk');
+  }
+  return res.redirect('/download?status=build_ready');
+});
+app.get('/', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.sendFile(path.join(publicDir, 'download.html'));
+});
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((error, _req, res, _next) => {

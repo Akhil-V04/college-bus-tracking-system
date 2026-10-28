@@ -154,6 +154,13 @@ export default function Layout() {
           </div>
         </header>
         <main className="page-content"><Outlet /></main>
+        <footer className="admin-footer">
+          <p>© 2026 Vignana Bharathi Institute of Technology (VBIT) Transport Administration</p>
+          <div className="admin-footer-dev">
+            <span className="admin-footer-pulse" aria-hidden="true" />
+            <span>Developed by <strong>Akhil Vadeeboina</strong></span>
+          </div>
+        </footer>
       </div>
     </div>
   );

@@ -205,7 +205,7 @@ export default function SearchScreen() {
       {/* Results Header */}
       <View style={styles.listHeader}>
         <Text style={styles.listHeaderText}>
-          {isStopMode ? 'Nearby Bus Stops' : 'Available College Routes'}
+          {isStopMode ? 'Nearby Bus Stops (Morning Pickups)' : 'Available College Routes'}
         </Text>
         {isStopMode ? (
           nearestStopsQuery.data ? (
@@ -265,7 +265,7 @@ export default function SearchScreen() {
                 </View>
               </View>
 
-              <Text style={styles.passingRoutesLabel}>ROUTES PASSING THIS STOP:</Text>
+              <Text style={styles.passingRoutesLabel}>MORNING PICKUP ROUTES:</Text>
               <View style={styles.routesChipsRow}>
                 {item.routes.map((r, idx) => (
                   <Pressable
