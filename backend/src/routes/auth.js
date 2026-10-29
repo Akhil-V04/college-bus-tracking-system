@@ -85,6 +85,7 @@ router.post('/login', loginRateLimiter, async (req, res) => {
       );
       res.setHeader('Set-Cookie', serializeAdminCookie(token, AUTH_POLICY.adminSessionMinutes * 60));
       return privateResponse(res).json({
+        token,
         role: 'admin',
         id: ADMIN_IDENTIFIER,
         expiresAt: session.expiresAt,

@@ -4,13 +4,21 @@ import api from './api';
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    const token = localStorage.getItem('collegeBusAdminToken') || localStorage.getItem('token');
+    const savedUser = localStorage.getItem('admin_user');
+    if (token && savedUser) {
+      try { return JSON.parse(savedUser); } catch (_e) { return null; }
+    }
+    return null;
+  });
   const [checking, setChecking] = useState(true);
 
   const clearSession = useCallback(() => {
     localStorage.removeItem('collegeBusAdminToken');
     localStorage.removeItem('token');
     localStorage.removeItem('role');
+    localStorage.removeItem('admin_user');
     setUser(null);
     setChecking(false);
   }, []);
@@ -20,18 +28,39 @@ export function AuthProvider({ children }) {
   }, [clearSession]);
   const login = useCallback((session) => {
     if (session.role !== 'admin') throw new Error('Only administrators can use this panel.');
-    setUser({ id: session.id, role: session.role });
+    if (session.token) {
+      localStorage.setItem('collegeBusAdminToken', session.token);
+      localStorage.setItem('token', session.token);
+    }
+    const userData = { id: session.id, role: session.role };
+    localStorage.setItem('admin_user', JSON.stringify(userData));
+    setUser(userData);
     setChecking(false);
   }, []);
 
   useEffect(() => {
     let active = true;
+    const token = localStorage.getItem('collegeBusAdminToken') || localStorage.getItem('token');
+    if (!token) {
+      setChecking(false);
+      return;
+    }
+
     api.get('/auth/me').then(({ data }) => {
-      if (active && data.role === 'admin') setUser(data);
-    }).catch(() => { if (active) setUser(null); })
-      .finally(() => { if (active) setChecking(false); });
+      if (active && data.role === 'admin') {
+        const userData = { id: data.id, role: data.role };
+        setUser(userData);
+        localStorage.setItem('admin_user', JSON.stringify(userData));
+      }
+    }).catch((err) => {
+      if (active && err.response?.status === 401) {
+        clearSession();
+      }
+    }).finally(() => {
+      if (active) setChecking(false);
+    });
     return () => { active = false; };
-  }, []);
+  }, [clearSession]);
   useEffect(() => {
     window.addEventListener('admin-auth-expired', clearSession);
     return () => window.removeEventListener('admin-auth-expired', clearSession);

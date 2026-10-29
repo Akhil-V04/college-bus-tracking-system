@@ -16,10 +16,13 @@ function serializeAdminCookie(token, maxAgeSeconds, production = process.env.NOD
     `${ADMIN_COOKIE_NAME}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Strict',
+    production ? 'SameSite=None' : 'SameSite=Lax',
     `Max-Age=${Math.max(0, Math.floor(maxAgeSeconds))}`,
   ];
-  if (production) attributes.push('Secure');
+  if (production) {
+    attributes.push('Secure');
+    attributes.push('Partitioned');
+  }
   return attributes.join('; ');
 }
 

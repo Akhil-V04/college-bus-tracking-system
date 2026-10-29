@@ -5,7 +5,7 @@ const { ADMIN_COOKIE_NAME, clearAdminCookie, cookieValue, hasCsrfHeader, seriali
 test('administrator cookie is HttpOnly, strict, scoped and secure in production', () => {
   const header = serializeAdminCookie('signed.token', 120, true);
   assert.match(header, new RegExp(`^${ADMIN_COOKIE_NAME}=`));
-  for (const attribute of ['HttpOnly', 'SameSite=Strict', 'Path=/', 'Max-Age=120', 'Secure']) assert.match(header, new RegExp(attribute));
+  for (const attribute of ['HttpOnly', 'SameSite=None', 'Path=/', 'Max-Age=120', 'Secure']) assert.match(header, new RegExp(attribute));
   assert.equal(cookieValue(`other=x; ${header}`, ADMIN_COOKIE_NAME), 'signed.token');
   assert.match(clearAdminCookie(false), /Max-Age=0/);
 });

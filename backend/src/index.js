@@ -58,6 +58,8 @@ const corsOptions = {
     // without returning 403, allowing mobile apps that send random Origin headers to work.
     return callback(null, false);
   },
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Set-Cookie', 'X-API-Version'],
 };
 
 app.use((_req, res, next) => {

@@ -21,7 +21,7 @@ function securityHeaders() {
   return helmet({
     // This process serves JSON/WebSocket APIs rather than executable pages.
     contentSecurityPolicy: { directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] } },
-    crossOriginResourcePolicy: { policy: 'same-site' },
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
   });
 }
 
