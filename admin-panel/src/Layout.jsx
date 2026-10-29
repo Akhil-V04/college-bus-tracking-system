@@ -79,6 +79,45 @@ export default function Layout() {
     };
   }, []);
 
+  const [activeBreakdowns, setActiveBreakdowns] = useState([]);
+  const [dismissedBreakdownIds, setDismissedBreakdownIds] = useState(new Set());
+
+  // Periodic polling for active bus breakdown emergencies
+  useEffect(() => {
+    let mounted = true;
+    async function fetchBreakdowns() {
+      try {
+        const res = await api.get('/emergencies/active');
+        if (mounted && Array.isArray(res.data)) {
+          setActiveBreakdowns(res.data);
+        }
+      } catch (_e) {
+        // silent
+      }
+    }
+    fetchBreakdowns();
+    const interval = setInterval(fetchBreakdowns, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleResolveBreakdown = async (id) => {
+    try {
+      await api.patch(`/emergencies/${id}/status`, { status: 'RESOLVED' });
+      setActiveBreakdowns((prev) => prev.filter((b) => b.id !== id));
+    } catch (err) {
+      alert('Could not resolve breakdown: ' + (err?.response?.data?.error || err.message));
+    }
+  };
+
+  const handleDismissBreakdown = (id) => {
+    setDismissedBreakdownIds((prev) => new Set(prev).add(id));
+  };
+
+  const visibleBreakdowns = activeBreakdowns.filter((b) => !dismissedBreakdownIds.has(b.id));
+
   if (checking) return <div className="app-loading"><div className="spinner" /><p>Checking administrator session…</p></div>;
   if (!isLoggedIn) return <Navigate to="/login" replace />;
 
@@ -153,6 +192,98 @@ export default function Layout() {
             )}
           </div>
         </header>
+
+        {/* ─── Real-Time Bus Breakdown Emergency Alerts ─── */}
+        {visibleBreakdowns.length > 0 && (
+          <div style={{ padding: '0 24px', marginTop: 16 }}>
+            {visibleBreakdowns.map((b) => {
+              const nearestBuses = (b.assistance || [])
+                .map((a) => {
+                  const rNo = a.candidateTrip?.routeService?.routeNo;
+                  const km = a.distanceMeters != null ? (a.distanceMeters / 1000).toFixed(1) + ' km' : null;
+                  return rNo ? `Route ${rNo}${km ? ` (${km})` : ''}` : null;
+                })
+                .filter(Boolean);
+
+              return (
+                <div
+                  key={b.id}
+                  style={{
+                    backgroundColor: 'rgba(220, 38, 38, 0.12)',
+                    border: '1.5px solid #EF4444',
+                    borderRadius: 10,
+                    padding: '14px 18px',
+                    marginBottom: 12,
+                    boxShadow: '0 4px 16px rgba(239, 68, 68, 0.25)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 24, animation: 'pulse 1.5s infinite' }}>🚨</span>
+                      <div>
+                        <strong style={{ color: '#EF4444', fontSize: 16, letterSpacing: 0.5 }}>
+                          ACTIVE BUS BREAKDOWN: Route {b.routeService?.routeNo || 'Bus'} ({b.routeService?.name || 'Assigned Route'})
+                        </strong>
+                        <div style={{ fontSize: 13, color: '#fca5a5', marginTop: 2 }}>
+                          Driver in charge: <strong>{b.reporterDriver?.name || 'Driver'}</strong> (📞 <a href={`tel:${b.reporterDriver?.phone}`} style={{ color: '#FFFFFF', textDecoration: 'underline' }}>{b.reporterDriver?.phone}</a>) • Reported at {new Date(b.createdAt).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleResolveBreakdown(b.id)}
+                        className="button button-danger"
+                        style={{ padding: '6px 14px', fontSize: 13, fontWeight: 700 }}
+                      >
+                        ✓ Mark Resolved
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDismissBreakdown(b.id)}
+                        className="button button-ghost"
+                        style={{ padding: '6px 12px', fontSize: 12 }}
+                      >
+                        ✕ Dismiss
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{
+                    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                    fontSize: 13,
+                    color: '#e2e8f0',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}>
+                    <div>
+                      <strong>Incident Details:</strong> &quot;{b.description || 'Bus breakdown reported by driver - stopped on road'}&quot;
+                      {b.incidentLatitude != null && (
+                        <span style={{ marginLeft: 12, color: '#94a3b8' }}>
+                          GPS: {b.incidentLatitude.toFixed(4)}, {b.incidentLongitude.toFixed(4)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      <strong style={{ color: '#f59e0b' }}>Nearest 3 Buses Alerted:</strong>{' '}
+                      {nearestBuses.length > 0 ? nearestBuses.join(' • ') : 'None active within 50 km'}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         <main className="page-content"><Outlet /></main>
         <footer className="admin-footer">
           <p>© 2026 Vignana Bharathi Institute of Technology (VBIT) Transport Administration</p>

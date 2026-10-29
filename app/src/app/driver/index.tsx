@@ -1,30 +1,61 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  Vibration,
+  View,
+} from 'react-native';
 import { Socket } from 'socket.io-client';
 
 import {
-  AppHeader, Button, Card, EmptyState, ErrorState,
-  LabelValue, LoadingState, Notice, Pill, Screen, SectionTitle,
+  AppHeader,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  LabelValue,
+  LoadingState,
+  Notice,
+  Pill,
+  Screen,
+  SectionTitle,
 } from '@/components/ui';
-import { fontWeight, spacing } from '@/constants/theme';
+import { fontWeight, radius, spacing } from '@/constants/theme';
+import { useTheme } from '@/contexts/ThemeContext';
 import { apiRequest } from '@/lib/api';
 import { clearDriverToken, getDriverToken } from '@/lib/auth';
 import {
-  flushDriverLocationQueue, getBackgroundLocationStatus,
-  startBackgroundDriverLocation, stopBackgroundDriverLocation,
+  flushDriverLocationQueue,
+  getBackgroundLocationStatus,
+  startBackgroundDriverLocation,
+  stopBackgroundDriverLocation,
 } from '@/lib/backgroundLocation';
 import { createLiveSocket } from '@/lib/socket';
-import { DriverProfile, DriverTrip } from '@/types/api';
-import { useTheme } from "@/contexts/ThemeContext";
+import {
+  BreakdownAlertPayload,
+  DriverProfile,
+  DriverTrip,
+  NearbyBus,
+  NearbyBusesResponse,
+} from '@/types/api';
 
 type TripResponse = { trip: DriverTrip | null };
 type StartResponse = { tripId: number; resumed: boolean; routeNo: string };
 type LocationAck = { ok: boolean; stored?: boolean; error?: string; timestamp?: string };
 
 export default function DriverConsoleScreen() {
+  const { colors } = useTheme();
   const styles = useStyles();
   const queryClient = useQueryClient();
   const [token, setToken] = useState<string | null | undefined>(undefined);
@@ -36,12 +67,49 @@ export default function DriverConsoleScreen() {
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const socket = useRef<Socket | null>(null);
 
+  // Incoming Breakdown Alert (Received from other nearby driver)
+  const [incomingAlert, setIncomingAlert] = useState<BreakdownAlertPayload | null>(null);
+  const alertSocketRef = useRef<Socket | null>(null);
+
+  // Bus Breakdown Reporting State
+  const [breakdownModalOpen, setBreakdownModalOpen] = useState(false);
+  const [loadingNearby, setLoadingNearby] = useState(false);
+  const [nearbyBuses, setNearbyBuses] = useState<NearbyBus[]>([]);
+  const [breakdownReason, setBreakdownReason] = useState('Engine breakdown - stopped on road');
+  const [submittingBreakdown, setSubmittingBreakdown] = useState(false);
+  const [breakdownReported, setBreakdownReported] = useState(false);
+  const [reportedInfo, setReportedInfo] = useState<{ count: number; routeNo: string } | null>(null);
+
   useEffect(() => {
     getDriverToken().then((stored) => {
       setToken(stored);
       if (!stored) router.replace('/driver/login');
     });
   }, []);
+
+  // Dedicated socket connection to receive incoming breakdown notifications from other drivers
+  useEffect(() => {
+    if (!token) return undefined;
+    const alertSocket = createLiveSocket(token);
+    alertSocketRef.current = alertSocket;
+    alertSocket.connect();
+
+    alertSocket.on('driver:breakdown_alert', (payload: BreakdownAlertPayload) => {
+      setIncomingAlert(payload);
+      if (Platform.OS !== 'web') {
+        try {
+          Vibration.vibrate([0, 500, 200, 500]);
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    return () => {
+      alertSocket.disconnect();
+      alertSocketRef.current = null;
+    };
+  }, [token]);
 
   const profile = useQuery({
     queryKey: ['driver-profile', token],
@@ -82,7 +150,11 @@ export default function DriverConsoleScreen() {
   }, [token]);
 
   useEffect(() => {
-    if (activeTrip.isSuccess && !activeTrip.data.trip) void stopSharing(true);
+    if (activeTrip.isSuccess && !activeTrip.data.trip) {
+      void stopSharing(true);
+      setBreakdownReported(false);
+      setReportedInfo(null);
+    }
   }, [activeTrip.isSuccess, activeTrip.data?.trip, stopSharing]);
 
   useEffect(() => {
@@ -98,7 +170,11 @@ export default function DriverConsoleScreen() {
         token,
         body: JSON.stringify({ tripDirection: direction || selectedDirection }),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] }),
+    onSuccess: () => {
+      setBreakdownReported(false);
+      setReportedInfo(null);
+      queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
+    },
   });
 
   const endTrip = useMutation({
@@ -109,6 +185,8 @@ export default function DriverConsoleScreen() {
     },
     onSuccess: () => {
       setLocationMessage(null);
+      setBreakdownReported(false);
+      setReportedInfo(null);
       queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
     },
   });
@@ -190,6 +268,61 @@ export default function DriverConsoleScreen() {
       await startForegroundFallback(trip, token);
     } catch (error) {
       setLocationMessage(error instanceof Error ? error.message : 'Could not start location sharing.');
+    }
+  };
+
+  // Fetch nearby buses (max 3 only)
+  const fetchNearbyBuses = async (tripId: number) => {
+    setLoadingNearby(true);
+    try {
+      const res = await apiRequest<NearbyBusesResponse>(`/emergencies/nearby-buses?tripId=${tripId}`, {
+        token,
+      });
+      setNearbyBuses(res.nearbyBuses || []);
+    } catch {
+      setNearbyBuses([]);
+    } finally {
+      setLoadingNearby(false);
+    }
+  };
+
+  const handleOpenBreakdownModal = () => {
+    const trip = activeTrip.data?.trip;
+    if (!trip) return;
+    setBreakdownModalOpen(true);
+    void fetchNearbyBuses(trip.id);
+  };
+
+  const handleSubmitBreakdown = async () => {
+    const trip = activeTrip.data?.trip;
+    if (!trip || !token) return;
+    setSubmittingBreakdown(true);
+    try {
+      const res = await apiRequest<{ success: boolean; notifiedBuses: any[]; message: string }>(
+        '/emergencies/driver/breakdown',
+        {
+          method: 'POST',
+          token,
+          body: JSON.stringify({
+            tripId: trip.id,
+            description: breakdownReason,
+          }),
+        }
+      );
+      setBreakdownReported(true);
+      setReportedInfo({
+        count: res.notifiedBuses?.length || 0,
+        routeNo: trip.routeService.routeNo,
+      });
+      setBreakdownModalOpen(false);
+      Alert.alert(
+        '🚨 Breakdown Alert Broadcasted!',
+        `Your breakdown was reported. The ${res.notifiedBuses?.length || 0} nearest buses and Transport Admin have received immediate notification with your coordinates.`
+      );
+    } catch (err: any) {
+      Alert.alert('Could Not Report Breakdown', err?.message || 'An error occurred while reporting breakdown.');
+    } finally {
+      setSubmittingBreakdown(false);
     }
   };
 
@@ -337,6 +470,52 @@ export default function DriverConsoleScreen() {
             <Button label="Share live GPS" onPress={beginLocationSharing} size="lg" />
           )}
 
+          {/* ─── Breakdown Reporting Section ("only when trip is running & live GPS is sharing") ─── */}
+          <View style={styles.breakdownSection}>
+            {breakdownReported ? (
+              <View style={styles.breakdownAlertActiveBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontSize: 22 }}>🚨</Text>
+                  <Text style={styles.breakdownAlertActiveTitle}>
+                    BUS BREAKDOWN BROADCASTED
+                  </Text>
+                </View>
+                <Text style={styles.breakdownAlertActiveText}>
+                  Route {reportedInfo?.routeNo || trip.routeService.routeNo} is reported broken down & stopped.
+                  {reportedInfo?.count
+                    ? ` Immediate notification was sent to ${reportedInfo.count} nearest route bus(es) and Transport Admin.`
+                    : ' Transport Admin has been alerted immediately.'}
+                </Text>
+              </View>
+            ) : (
+              <>
+                {sharing ? (
+                  <View>
+                    <Text style={styles.breakdownInfoText}>
+                      Emergency breakdown? Send immediate proximity alert to the nearest 3 running buses and Transport Control:
+                    </Text>
+                    <Pressable
+                      onPress={handleOpenBreakdownModal}
+                      style={({ pressed }) => [
+                        styles.breakdownButton,
+                        pressed && { opacity: 0.8 },
+                      ]}
+                    >
+                      <Text style={{ fontSize: 18 }}>🚨</Text>
+                      <Text style={styles.breakdownButtonText}>Report Bus Breakdown</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View style={styles.breakdownDisabledBox}>
+                    <Text style={styles.breakdownDisabledText}>
+                      ℹ️ <Text style={{ fontWeight: '700', color: colors.text }}>Breakdown Alert Disabled:</Text> Start live GPS sharing above to enable breakdown reporting and automatically locate the nearest 3 buses.
+                    </Text>
+                  </View>
+                )}
+              </>
+            )}
+          </View>
+
           <Notice
             tone={queueStatus.queued ? 'warning' : 'info'}
             title={queueStatus.queued ? queueStatus.queued + ' GPS updates waiting' : 'Offline queue ready'}
@@ -349,6 +528,209 @@ export default function DriverConsoleScreen() {
       )}
 
       <Button label="Log out" variant="ghost" onPress={logout} />
+
+      {/* ─── MODAL 1: REPORT BUS BREAKDOWN (For Current Driver) ─── */}
+      <Modal visible={breakdownModalOpen} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Text style={{ fontSize: 22 }}>🚨</Text>
+                <Text style={styles.modalTitle}>Report Bus Breakdown</Text>
+              </View>
+              <Pressable onPress={() => setBreakdownModalOpen(false)} hitSlop={10}>
+                <Text style={styles.modalClose}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalSubtitle}>
+                This broadcasts an emergency breakdown notification with your exact live GPS location to the nearest 3 active route buses and the Transport Admin Panel.
+              </Text>
+
+              {/* Nearest 3 Buses Section */}
+              <Text style={styles.sectionHeader}>NEAREST RUNNING BUSES (MAX 3)</Text>
+              {loadingNearby ? (
+                <View style={styles.nearbyLoadingBox}>
+                  <ActivityIndicator color="#EA580C" />
+                  <Text style={styles.nearbyLoadingText}>Scanning active fleet for nearest 3 buses...</Text>
+                </View>
+              ) : nearbyBuses.length > 0 ? (
+                <View style={{ gap: 8, marginVertical: 8 }}>
+                  {nearbyBuses.map((bus) => (
+                    <View key={bus.tripId} style={styles.nearbyBusCard}>
+                      <View style={styles.nearbyBusHeader}>
+                        <View style={styles.routeBadge}>
+                          <Text style={styles.routeBadgeText}>Route {bus.routeNo}</Text>
+                        </View>
+                        <Text style={styles.distanceBadge}>📍 {bus.distanceKm} km away</Text>
+                      </View>
+                      <Text style={styles.nearbyRouteName}>{bus.routeName}</Text>
+                      <Text style={styles.nearbyDriverInfo}>Driver: {bus.driverName} • {bus.driverPhone}</Text>
+                    </View>
+                  ))}
+                  <Text style={styles.nearbyNote}>
+                    ✓ Only these {nearbyBuses.length} nearest driver(s) and Transport Admin will receive your breakdown alert.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.noNearbyBox}>
+                  <Text style={{ fontSize: 20 }}>📡</Text>
+                  <Text style={styles.noNearbyText}>
+                    No other active buses are currently sharing live GPS nearby. Your breakdown alert will be sent directly to the Transport Admin Panel.
+                  </Text>
+                </View>
+              )}
+
+              {/* Breakdown Reason Selector */}
+              <Text style={[styles.sectionHeader, { marginTop: 14 }]}>BREAKDOWN REASON / DESCRIPTION</Text>
+              <View style={styles.presetPillsRow}>
+                {[
+                  'Engine stopped on road',
+                  'Puncture / Flat tyre',
+                  'Mechanical / Brake issue',
+                  'Battery / Electrical failure',
+                ].map((reason) => (
+                  <Pressable
+                    key={reason}
+                    onPress={() => setBreakdownReason(reason)}
+                    style={[
+                      styles.presetPill,
+                      breakdownReason === reason && styles.presetPillActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.presetPillText,
+                        breakdownReason === reason && styles.presetPillTextActive,
+                      ]}
+                    >
+                      {reason}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <TextInput
+                value={breakdownReason}
+                onChangeText={setBreakdownReason}
+                placeholder="Add details, landmark, or notes..."
+                placeholderTextColor="#64748b"
+                style={styles.reasonInput}
+                multiline
+              />
+
+              <View style={{ marginTop: 20, gap: 10, paddingBottom: 16 }}>
+                <Pressable
+                  onPress={handleSubmitBreakdown}
+                  disabled={submittingBreakdown}
+                  style={[
+                    styles.submitBreakdownBtn,
+                    submittingBreakdown && { opacity: 0.6 },
+                  ]}
+                >
+                  {submittingBreakdown ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Text style={{ fontSize: 16 }}>🚨</Text>
+                      <Text style={styles.submitBreakdownBtnText}>
+                        Broadcast Breakdown Alert ({nearbyBuses.length || 0} Buses & Admin)
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+
+                <Pressable
+                  onPress={() => setBreakdownModalOpen(false)}
+                  style={styles.cancelBtn}
+                >
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ─── MODAL 2: INCOMING BREAKDOWN ALERT (Received from other nearby driver) ─── */}
+      <Modal visible={Boolean(incomingAlert)} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { borderColor: '#EF4444', borderWidth: 2 }]}>
+            <View style={{ alignItems: 'center', marginBottom: 12 }}>
+              <View style={{
+                width: 52,
+                height: 52,
+                borderRadius: 26,
+                backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 8,
+              }}>
+                <Text style={{ fontSize: 28 }}>🚨</Text>
+              </View>
+              <Text style={{ color: '#EF4444', fontSize: 18, fontWeight: '800', textAlign: 'center' }}>
+                NEARBY BUS BREAKDOWN ALERT!
+              </Text>
+              <Text style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', marginTop: 4 }}>
+                A campus bus has broken down and stopped near you!
+              </Text>
+            </View>
+
+            {incomingAlert && (
+              <View style={styles.alertDetailBox}>
+                <View style={styles.alertDetailRow}>
+                  <Text style={styles.alertDetailLabel}>BROKEN DOWN BUS:</Text>
+                  <Text style={styles.alertDetailValue}>Route {incomingAlert.brokenDownRouteNo} ({incomingAlert.brokenDownRouteName})</Text>
+                </View>
+                <View style={styles.alertDetailRow}>
+                  <Text style={styles.alertDetailLabel}>DISTANCE TO YOU:</Text>
+                  <Text style={[styles.alertDetailValue, { color: '#EF4444', fontWeight: '800' }]}>
+                    ~{incomingAlert.distanceKm} km away
+                  </Text>
+                </View>
+                <View style={styles.alertDetailRow}>
+                  <Text style={styles.alertDetailLabel}>DRIVER IN CHARGE:</Text>
+                  <Text style={styles.alertDetailValue}>
+                    {incomingAlert.brokenDownDriverName} ({incomingAlert.brokenDownDriverPhone})
+                  </Text>
+                </View>
+                <View style={styles.alertDetailRow}>
+                  <Text style={styles.alertDetailLabel}>DETAILS:</Text>
+                  <Text style={[styles.alertDetailValue, { fontStyle: 'italic' }]}>
+                    &quot;{incomingAlert.description}&quot;
+                  </Text>
+                </View>
+
+                <Text style={{ fontSize: 12, color: '#f59e0b', marginTop: 10, lineHeight: 17 }}>
+                  💡 Notice: If your route passes this location and you have spare capacity, please coordinate to assist stranded students.
+                </Text>
+              </View>
+            )}
+
+            <View style={{ marginTop: 16, gap: 10 }}>
+              {incomingAlert?.brokenDownDriverPhone ? (
+                <Pressable
+                  onPress={() => Linking.openURL(`tel:${incomingAlert.brokenDownDriverPhone}`)}
+                  style={styles.callDriverBtn}
+                >
+                  <Text style={{ fontSize: 16 }}>📞</Text>
+                  <Text style={styles.callDriverBtnText}>
+                    Call Driver ({incomingAlert.brokenDownDriverPhone})
+                  </Text>
+                </Pressable>
+              ) : null}
+
+              <Pressable
+                onPress={() => setIncomingAlert(null)}
+                style={styles.acknowledgeBtn}
+              >
+                <Text style={styles.acknowledgeBtnText}>Acknowledge Alert & Dismiss</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -358,5 +740,294 @@ const useStyles = () => {
   return useMemo(() => StyleSheet.create({
     help: { color: colors.textSecondary, lineHeight: 21 },
     row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
+    breakdownSection: {
+      marginTop: 14,
+      paddingTop: 14,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+    },
+    breakdownInfoText: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      marginBottom: 8,
+      lineHeight: 18,
+    },
+    breakdownButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#DC2626',
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+      borderRadius: radius.md,
+      gap: 8,
+      shadowColor: '#DC2626',
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.35,
+      shadowRadius: 6,
+      elevation: 4,
+    },
+    breakdownButtonText: {
+      color: '#FFFFFF',
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    breakdownDisabledBox: {
+      backgroundColor: 'rgba(234, 88, 12, 0.08)',
+      borderWidth: 1,
+      borderColor: 'rgba(234, 88, 12, 0.25)',
+      borderRadius: radius.md,
+      padding: 12,
+    },
+    breakdownDisabledText: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    breakdownAlertActiveBox: {
+      backgroundColor: 'rgba(239, 68, 68, 0.12)',
+      borderWidth: 1,
+      borderColor: '#EF4444',
+      borderRadius: radius.md,
+      padding: 14,
+    },
+    breakdownAlertActiveTitle: {
+      color: '#EF4444',
+      fontWeight: '800',
+      fontSize: 15,
+    },
+    breakdownAlertActiveText: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      marginTop: 4,
+      lineHeight: 18,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      justifyContent: 'flex-end',
+    },
+    modalContent: {
+      backgroundColor: colors.surfaceElevated || '#1e293b',
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      padding: 20,
+      maxHeight: '90%',
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    modalTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    modalClose: {
+      fontSize: 18,
+      color: colors.textSecondary,
+      fontWeight: '700',
+      padding: 4,
+    },
+    modalSubtitle: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      lineHeight: 18,
+      marginBottom: 14,
+    },
+    sectionHeader: {
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+      color: colors.textSecondary,
+      marginBottom: 6,
+    },
+    nearbyLoadingBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 16,
+      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+      borderRadius: radius.md,
+    },
+    nearbyLoadingText: {
+      fontSize: 13,
+      color: colors.textSecondary,
+    },
+    nearbyBusCard: {
+      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+      padding: 12,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    nearbyBusHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 4,
+    },
+    routeBadge: {
+      backgroundColor: 'rgba(234, 88, 12, 0.15)',
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: 'rgba(234, 88, 12, 0.4)',
+    },
+    routeBadgeText: {
+      color: '#EA580C',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    distanceBadge: {
+      color: '#f59e0b',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    nearbyRouteName: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: 2,
+    },
+    nearbyDriverInfo: {
+      fontSize: 11,
+      color: colors.textSecondary,
+      marginTop: 2,
+    },
+    nearbyNote: {
+      fontSize: 11,
+      color: '#10B981',
+      fontWeight: '600',
+      marginTop: 2,
+    },
+    noNearbyBox: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 14,
+      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    noNearbyText: {
+      flex: 1,
+      fontSize: 12,
+      color: colors.textSecondary,
+      lineHeight: 17,
+    },
+    presetPillsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginBottom: 8,
+    },
+    presetPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface || 'transparent',
+    },
+    presetPillActive: {
+      borderColor: '#EA580C',
+      backgroundColor: 'rgba(234, 88, 12, 0.15)',
+    },
+    presetPillText: {
+      fontSize: 11,
+      color: colors.textSecondary,
+    },
+    presetPillTextActive: {
+      color: '#EA580C',
+      fontWeight: '700',
+    },
+    reasonInput: {
+      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      padding: 10,
+      color: colors.text,
+      fontSize: 13,
+      minHeight: 56,
+      textAlignVertical: 'top',
+    },
+    submitBreakdownBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#DC2626',
+      paddingVertical: 14,
+      borderRadius: radius.md,
+      gap: 8,
+    },
+    submitBreakdownBtnText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    cancelBtn: {
+      alignItems: 'center',
+      paddingVertical: 10,
+    },
+    cancelBtnText: {
+      color: colors.textSecondary,
+      fontSize: 14,
+    },
+    alertDetailBox: {
+      backgroundColor: 'rgba(15, 23, 42, 0.85)',
+      borderRadius: radius.md,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: 'rgba(239, 68, 68, 0.3)',
+      gap: 6,
+    },
+    alertDetailRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    alertDetailLabel: {
+      fontSize: 11,
+      color: '#94a3b8',
+      fontWeight: '700',
+    },
+    alertDetailValue: {
+      fontSize: 12,
+      color: '#f8fafc',
+      fontWeight: '600',
+      maxWidth: '65%',
+      textAlign: 'right',
+    },
+    callDriverBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#10B981',
+      paddingVertical: 12,
+      borderRadius: radius.md,
+      gap: 8,
+    },
+    callDriverBtnText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    acknowledgeBtn: {
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderRadius: radius.md,
+      backgroundColor: colors.surface || '#334155',
+    },
+    acknowledgeBtnText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: '600',
+    },
   }), [colors]);
 };

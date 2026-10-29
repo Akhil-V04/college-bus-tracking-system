@@ -118,3 +118,40 @@ export type BusUpdate = {
   timestamp: string;
   eta: EtaResult;
 };
+
+export type NearbyBus = {
+  tripId: number;
+  routeId: number;
+  routeNo: string;
+  routeName: string;
+  driverId: number;
+  driverName: string;
+  driverPhone: string;
+  distanceMeters: number;
+  distanceKm: number;
+  latitude: number;
+  longitude: number;
+  lastSeenAt: string;
+};
+
+export type NearbyBusesResponse = {
+  gpsActive: boolean;
+  message?: string;
+  myLocation?: { latitude: number; longitude: number; receivedAt: string };
+  nearbyBuses: NearbyBus[];
+};
+
+export type BreakdownAlertPayload = {
+  emergencyId: string;
+  brokenDownTripId: number;
+  brokenDownRouteNo: string;
+  brokenDownRouteName: string;
+  brokenDownDriverName: string;
+  brokenDownDriverPhone: string;
+  distanceKm: number;
+  distanceMeters: number;
+  location: { latitude: number; longitude: number };
+  description: string;
+  timestamp: string;
+};
+

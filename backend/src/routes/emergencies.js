@@ -88,7 +88,7 @@ async function confirmEmergency(client, emergencyId, confirmedBy) {
     })
     .filter((item) => item && item.distanceMeters <= 50000)
     .sort((a, b) => a.distanceMeters - b.distanceMeters)
-    .slice(0, 5);
+    .slice(0, 3);
 
   return client.$transaction(async (tx) => {
     await tx.$queryRawUnsafe('SELECT "id" FROM "EmergencyReport" WHERE "id" = $1::uuid FOR UPDATE', emergencyId);
@@ -175,6 +175,320 @@ router.post('/driver', emergencyLimiter, requireAuth(['driver']), async (req, re
     }).catch(() => console.error('[emergencies/offer-push] failed'));
   }
   return res.status(201).json({ emergency: confirmed });
+});
+
+// GET /nearby-buses: Allows driver to see which route buses are near him (max 3 only)
+router.get('/nearby-buses', requireAuth(['driver']), async (req, res) => {
+  const tripId = Number(req.query.tripId);
+  if (!Number.isInteger(tripId) || tripId <= 0) {
+    return res.status(400).json({ error: 'Valid tripId is required' });
+  }
+
+  const trip = await prisma.trip.findUnique({
+    where: { id: tripId },
+    include: {
+      routeService: { select: { id: true, routeNo: true, name: true } },
+      driver: { select: { id: true, name: true, status: true, sessionVersion: true } },
+    },
+  });
+
+  if (!trip || trip.status !== 'RUNNING' || trip.driverId !== Number(req.user.id)) {
+    return res.status(403).json({ error: 'Trip is not running or belongs to another driver' });
+  }
+
+  // Get driver's latest GPS coordinate
+  const myLatest = await prisma.liveLocation.findFirst({
+    where: { tripId: trip.id },
+    orderBy: { receivedAt: 'desc' },
+  });
+
+  if (!myLatest) {
+    return res.json({
+      gpsActive: false,
+      message: 'Live GPS location is not available yet. Please share live GPS first.',
+      nearbyBuses: [],
+    });
+  }
+
+  // Find other active RUNNING trips
+  const otherTrips = await prisma.trip.findMany({
+    where: {
+      status: 'RUNNING',
+      id: { not: trip.id },
+      driver: { status: 'ACTIVE' },
+    },
+    select: {
+      id: true,
+      driverId: true,
+      routeService: { select: { id: true, routeNo: true, name: true } },
+      driver: { select: { id: true, name: true, phone: true } },
+      liveLocations: {
+        orderBy: { receivedAt: 'desc' },
+        take: 1,
+        select: { latitude: true, longitude: true, receivedAt: true },
+      },
+    },
+  });
+
+  const nearby = otherTrips
+    .map((other) => {
+      const point = other.liveLocations[0];
+      if (!point) return null;
+      const dist = haversineDistance(myLatest.latitude, myLatest.longitude, point.latitude, point.longitude);
+      return {
+        tripId: other.id,
+        routeId: other.routeService.id,
+        routeNo: other.routeService.routeNo,
+        routeName: other.routeService.name,
+        driverId: other.driverId,
+        driverName: other.driver.name,
+        driverPhone: other.driver.phone,
+        distanceMeters: Math.round(dist),
+        distanceKm: Number((dist / 1000).toFixed(1)),
+        latitude: point.latitude,
+        longitude: point.longitude,
+        lastSeenAt: point.receivedAt,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.distanceMeters - b.distanceMeters)
+    .slice(0, 3); // MAX 3 ONLY!
+
+  return res.json({
+    gpsActive: true,
+    myLocation: {
+      latitude: myLatest.latitude,
+      longitude: myLatest.longitude,
+      receivedAt: myLatest.receivedAt,
+    },
+    nearbyBuses: nearby,
+  });
+});
+
+// POST /driver/breakdown: Reports breakdown and sends alert to ONLY the max 3 nearest drivers and the admin panel
+router.post('/driver/breakdown', requireAuth(['driver']), async (req, res) => {
+  const tripId = Number(req.body?.tripId);
+  const description = req.body?.description
+    ? String(req.body.description).trim().slice(0, 500)
+    : 'Bus breakdown reported by driver - stopped on route';
+
+  if (!Number.isInteger(tripId) || tripId <= 0) {
+    return res.status(400).json({ error: 'Valid tripId is required' });
+  }
+
+  const trip = await prisma.trip.findUnique({
+    where: { id: tripId },
+    include: {
+      routeService: { select: { id: true, routeNo: true, name: true } },
+      driver: { select: { id: true, name: true, phone: true, status: true, sessionVersion: true } },
+    },
+  });
+
+  if (!trip || trip.status !== 'RUNNING' || trip.driverId !== Number(req.user.id)) {
+    return res.status(403).json({ error: 'Only the current active driver can report breakdown for this running trip' });
+  }
+
+  if (trip.driver.status !== 'ACTIVE' || trip.driver.sessionVersion !== req.user.sessionVersion) {
+    return res.status(401).json({ error: 'Driver session has been revoked' });
+  }
+
+  // Live GPS must be sharing
+  const latestLocation = await prisma.liveLocation.findFirst({
+    where: { tripId: trip.id },
+    orderBy: { receivedAt: 'desc' },
+  });
+
+  if (!latestLocation) {
+    return res.status(409).json({
+      error: 'Cannot report bus breakdown: Live GPS is not sharing yet. Please share live GPS so nearest buses and exact location can be identified.'
+    });
+  }
+
+  const snapshot = locationSnapshot(latestLocation);
+
+  // Find other RUNNING trips with live locations
+  const candidateTrips = await prisma.trip.findMany({
+    where: {
+      status: 'RUNNING',
+      id: { not: trip.id },
+      driver: { status: 'ACTIVE' },
+    },
+    select: {
+      id: true,
+      driverId: true,
+      routeService: { select: { id: true, routeNo: true, name: true } },
+      driver: { select: { id: true, name: true, phone: true } },
+      liveLocations: {
+        orderBy: { receivedAt: 'desc' },
+        take: 1,
+        select: { latitude: true, longitude: true, receivedAt: true },
+      },
+    },
+  });
+
+  const candidatesWithDistance = candidateTrips
+    .map((other) => {
+      const point = other.liveLocations[0];
+      if (!point) return null;
+      const dist = haversineDistance(
+        snapshot.latitude || latestLocation.latitude,
+        snapshot.longitude || latestLocation.longitude,
+        point.latitude,
+        point.longitude
+      );
+      return {
+        candidateTripId: other.id,
+        candidateDriverId: other.driverId,
+        routeNo: other.routeService.routeNo,
+        routeName: other.routeService.name,
+        driverName: other.driver.name,
+        driverPhone: other.driver.phone,
+        distanceMeters: Math.round(dist),
+        distanceKm: Number((dist / 1000).toFixed(1)),
+      };
+    })
+    .filter((item) => item && item.distanceMeters <= 50000)
+    .sort((a, b) => a.distanceMeters - b.distanceMeters)
+    .slice(0, 3); // STRICTLY MAX 3 ONLY!
+
+  // Create EmergencyReport in DB
+  const created = await prisma.emergencyReport.create({
+    data: {
+      category: 'BUS_BREAKDOWN',
+      reporterType: 'DRIVER',
+      reporterDriverId: trip.driverId,
+      tripId: trip.id,
+      routeServiceId: trip.routeServiceId,
+      status: candidatesWithDistance.length > 0 ? 'ASSISTANCE_REQUESTED' : 'CONFIRMED',
+      description,
+      incidentLatitude: snapshot.latitude || latestLocation.latitude,
+      incidentLongitude: snapshot.longitude || latestLocation.longitude,
+      incidentLocationAt: snapshot.at || latestLocation.receivedAt,
+      incidentSource: snapshot.source,
+      confirmedBy: `driver:${trip.driverId}`,
+      confirmedAt: new Date(),
+    },
+  });
+
+  // Create assistance offers for only these 3 drivers
+  if (candidatesWithDistance.length > 0) {
+    await prisma.emergencyAssistance.createMany({
+      data: candidatesWithDistance.map((c) => ({
+        emergencyReportId: created.id,
+        candidateTripId: c.candidateTripId,
+        candidateDriverId: c.candidateDriverId,
+        distanceMeters: c.distanceMeters,
+        status: 'OFFERED',
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  // Also create or link an urgent Issue so admin panel AI Issue clusters records it
+  try {
+    await prisma.issue.create({
+      data: {
+        title: `Bus Breakdown: Route ${trip.routeService.routeNo} (${trip.driver.name})`,
+        summary: `Driver reported bus breakdown on Route ${trip.routeService.routeNo}. Assistance requested from ${candidatesWithDistance.length} nearby bus(es).`,
+        category: 'BUS_CONDITION',
+        priority: 'URGENT',
+        status: 'OPEN',
+        routeServiceId: trip.routeServiceId,
+        tripId: trip.id,
+      },
+    });
+  } catch (_e) {
+    // Non-blocking
+  }
+
+  const fullEmergency = await prisma.emergencyReport.findUnique({
+    where: { id: created.id },
+    include: {
+      routeService: { select: { routeNo: true, name: true } },
+      assistance: true,
+      reporterDriver: { select: { id: true, name: true, phone: true } },
+    },
+  });
+
+  const io = req.app.get('io');
+
+  // 1. Send breakdown notification to ONLY those max 3 nearest drivers!
+  for (const candidate of candidatesWithDistance) {
+    io?.to(`driver:${candidate.candidateDriverId}`).emit('driver:breakdown_alert', {
+      emergencyId: created.id,
+      brokenDownTripId: trip.id,
+      brokenDownRouteNo: trip.routeService.routeNo,
+      brokenDownRouteName: trip.routeService.name,
+      brokenDownDriverName: trip.driver.name,
+      brokenDownDriverPhone: trip.driver.phone,
+      distanceKm: candidate.distanceKm,
+      distanceMeters: candidate.distanceMeters,
+      location: {
+        latitude: snapshot.latitude || latestLocation.latitude,
+        longitude: snapshot.longitude || latestLocation.longitude,
+      },
+      description,
+      timestamp: new Date().toISOString(),
+    });
+
+    enqueueDriverPush(candidate.candidateDriverId, `emergency-breakdown:${created.id}`, {
+      type: 'BREAKDOWN_ALERT',
+      emergencyId: created.id,
+      routeNo: trip.routeService.routeNo,
+      distanceKm: candidate.distanceKm,
+    }).catch(() => undefined);
+  }
+
+  // 2. Send notification to the ADMIN PANEL!
+  io?.to('admin').emit('admin:breakdown_alert', {
+    emergencyId: created.id,
+    tripId: trip.id,
+    routeNo: trip.routeService.routeNo,
+    routeName: trip.routeService.name,
+    driverName: trip.driver.name,
+    driverPhone: trip.driver.phone,
+    location: {
+      latitude: snapshot.latitude || latestLocation.latitude,
+      longitude: snapshot.longitude || latestLocation.longitude,
+    },
+    notifiedBuses: candidatesWithDistance,
+    description,
+    timestamp: new Date().toISOString(),
+  });
+
+  // Also broadcast standard emergency:confirmed to admin and trip rooms
+  io?.to(['admin', `trip:${trip.id}`]).emit('emergency:confirmed', fullEmergency);
+
+  return res.status(201).json({
+    success: true,
+    emergency: fullEmergency,
+    notifiedBuses: candidatesWithDistance,
+    message: `Breakdown reported successfully. Alerted ${candidatesWithDistance.length} nearest bus(es) and Transport Admin.`,
+  });
+});
+
+// GET /active: Get active emergencies/breakdowns
+router.get('/active', async (_req, res) => {
+  const activeEmergencies = await prisma.emergencyReport.findMany({
+    where: {
+      status: { notIn: ['RESOLVED', 'CANCELLED', 'FALSE_REPORT'] },
+      createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+    include: {
+      routeService: { select: { routeNo: true, name: true } },
+      reporterDriver: { select: { name: true, phone: true } },
+      assistance: {
+        include: {
+          candidateDriver: { select: { name: true, phone: true } },
+          candidateTrip: { include: { routeService: { select: { routeNo: true } } } },
+        },
+      },
+    },
+  });
+
+  return res.json(activeEmergencies);
 });
 
 router.post('/:id/offers/:offerId/respond', requireAuth(['driver']), async (req, res) => {
