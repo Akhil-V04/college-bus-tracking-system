@@ -16,19 +16,20 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '@/components/map/CampusMap';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/AppIcon';
-import { EmptyState, ErrorState, LoadingState } from '@/components/ui';
+import { EmptyState, ErrorState, LoadingState, Pill } from '@/components/ui';
 import { fontWeight, radius, spacing } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { apiRequest } from '@/lib/api';
 import { decodePolyline } from '@/lib/polyline';
 import { createLiveSocket } from '@/lib/socket';
-import { BusUpdate, RouteDetail, ScheduleStop } from '@/types/api';
+import { BusUpdate, RouteDetail, RouteRoster, RouteRosterPassenger, ScheduleStop } from '@/types/api';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_COLLAPSED_HEIGHT = 280;
@@ -142,6 +143,75 @@ export default function RouteDetailsScreen() {
     enabled: Boolean(routeNo),
     refetchInterval: 30_000,
   });
+
+  // Bus Info: Roster Query & Stop Search
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [collapsedStops, setCollapsedStops] = useState<Record<number, boolean>>({});
+
+  const rosterQuery = useQuery({
+    queryKey: ['passenger-route-roster', routeNo],
+    queryFn: () =>
+      apiRequest<RouteRoster>(`/passenger/routes/${encodeURIComponent(routeNo)}/roster`),
+    enabled: Boolean(routeNo && activeTab === 'BUS INFO'),
+  });
+
+  const filteredStops = useMemo(() => {
+    if (!rosterQuery.data?.stops) return [];
+    const query = rosterSearch.trim().toLowerCase();
+    if (!query) return rosterQuery.data.stops;
+
+    return rosterQuery.data.stops
+      .map((stop) => {
+        const stopMatches = stop.stopName.toLowerCase().includes(query);
+        const matchingPassengers = stop.passengers.filter((p) => {
+          return (
+            p.name.toLowerCase().includes(query) ||
+            Boolean(p.rollNo && p.rollNo.toLowerCase().includes(query)) ||
+            Boolean(p.facultyId && p.facultyId.toLowerCase().includes(query)) ||
+            Boolean(p.department && p.department.toLowerCase().includes(query)) ||
+            Boolean(p.section && p.section.toLowerCase().includes(query))
+          );
+        });
+
+        if (stopMatches) {
+          return stop;
+        }
+        if (matchingPassengers.length > 0) {
+          return {
+            ...stop,
+            passengers: matchingPassengers,
+          };
+        }
+        return null;
+      })
+      .filter((stop): stop is NonNullable<typeof stop> => stop !== null);
+  }, [rosterQuery.data?.stops, rosterSearch]);
+
+  const totalFilteredPassengers = useMemo(() => {
+    return filteredStops.reduce((sum, s) => sum + s.passengers.length, 0);
+  }, [filteredStops]);
+
+  const isStopCollapsed = (stopId: number) => Boolean(collapsedStops[stopId]);
+  const toggleStop = (stopId: number) => {
+    setCollapsedStops((prev) => ({
+      ...prev,
+      [stopId]: !prev[stopId],
+    }));
+  };
+
+  const allCollapsed =
+    filteredStops.length > 0 && filteredStops.every((s) => collapsedStops[s.stopId]);
+  const toggleAllStops = () => {
+    if (allCollapsed) {
+      setCollapsedStops({});
+    } else {
+      const next: Record<number, boolean> = {};
+      filteredStops.forEach((s) => {
+        next[s.stopId] = true;
+      });
+      setCollapsedStops(next);
+    }
+  };
 
   const activeTripId = route.data?.activeTrip?.id || null;
 
@@ -644,6 +714,206 @@ export default function RouteDetailsScreen() {
             </View>
           </View>
 
+          {/* Passenger Roster & Boarding Stops Card */}
+          <View style={styles.infoCard}>
+            <View style={styles.infoCardHeader}>
+              <View style={[styles.busIconBox, { backgroundColor: 'rgba(59, 130, 246, 0.15)' }]}>
+                <AppIcon name="passenger" size={26} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.infoRouteTitle}>Boarding Stops & Passengers</Text>
+                <Text style={styles.infoRouteSub}>
+                  {rosterQuery.data?.roster?.name || 'Annual Transport Roster 2025-2026'}
+                </Text>
+              </View>
+              <Pill tone="info">
+                {`${rosterQuery.data?.total ?? detail.assignedPassengerCount} Boarding`}
+              </Pill>
+            </View>
+
+            <View style={styles.infoDivider} />
+
+            {/* Search Input Bar */}
+            <View style={styles.rosterSearchBox}>
+              <Text style={styles.searchIcon}>🔍</Text>
+              <TextInput
+                value={rosterSearch}
+                onChangeText={setRosterSearch}
+                placeholder="Search student, roll no, branch, stop..."
+                placeholderTextColor={colors.textMuted}
+                style={styles.rosterSearchInput}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              {rosterSearch.length > 0 && (
+                <Pressable onPress={() => setRosterSearch('')} hitSlop={8} style={styles.clearSearchBtn}>
+                  <Text style={styles.clearSearchText}>✕</Text>
+                </Pressable>
+              )}
+            </View>
+
+            {/* Controls / Summary Row */}
+            <View style={styles.rosterControlsRow}>
+              <Text style={styles.rosterCountSummary}>
+                {rosterSearch
+                  ? `Showing ${totalFilteredPassengers} matching of ${rosterQuery.data?.total ?? 0}`
+                  : `Total ${totalFilteredPassengers} passengers across ${filteredStops.length} stops`}
+              </Text>
+              {filteredStops.length > 0 && (
+                <Pressable onPress={toggleAllStops} hitSlop={6} style={styles.toggleAllBtn}>
+                  <Text style={styles.toggleAllBtnText}>
+                    {allCollapsed ? 'Expand All' : 'Collapse All'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+
+            {/* Roster Loading / Error / Stops List */}
+            {rosterQuery.isPending && (
+              <View style={{ paddingVertical: 20 }}>
+                <LoadingState label="Loading passenger roster & stops..." />
+              </View>
+            )}
+
+            {rosterQuery.isError && (
+              <View style={{ paddingVertical: 12 }}>
+                <ErrorState
+                  message={rosterQuery.error?.message || 'Failed to load passenger list'}
+                  retry={() => rosterQuery.refetch()}
+                />
+              </View>
+            )}
+
+            {!rosterQuery.isPending && !rosterQuery.isError && filteredStops.length === 0 && (
+              <View style={styles.rosterEmptyBox}>
+                <Text style={styles.rosterEmptyTitle}>
+                  {rosterSearch ? 'No matching passengers found' : 'No passengers assigned'}
+                </Text>
+                <Text style={styles.rosterEmptySub}>
+                  {rosterSearch
+                    ? `No students or stops match "${rosterSearch}".`
+                    : 'No published roster entries for this route.'}
+                </Text>
+                {rosterSearch ? (
+                  <Pressable onPress={() => setRosterSearch('')} style={styles.clearFilterBtn}>
+                    <Text style={styles.clearFilterBtnText}>Clear Search</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            )}
+
+            {!rosterQuery.isPending && !rosterQuery.isError && filteredStops.length > 0 && (
+              <View style={styles.rosterStopsList}>
+                {filteredStops.map((stop) => {
+                  const collapsed = isStopCollapsed(stop.stopId);
+                  return (
+                    <View key={stop.stopId} style={styles.rosterStopCard}>
+                      {/* Stop Accordion Header */}
+                      <Pressable
+                        onPress={() => toggleStop(stop.stopId)}
+                        style={({ pressed }) => [
+                          styles.rosterStopHeader,
+                          pressed && styles.rosterStopHeaderPressed,
+                        ]}
+                      >
+                        <View style={styles.rosterStopLeft}>
+                          <View style={styles.rosterSeqBadge}>
+                            <Text style={styles.rosterSeqText}>{stop.sequenceOrder}</Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.rosterStopTitle}>{stop.stopName}</Text>
+                            <Text style={styles.rosterStopTime}>
+                              ⏰ {stop.scheduledTime ? stop.scheduledTime : 'Scheduled pickup'}
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.rosterStopRight}>
+                          <Pill tone={stop.passengers.length > 0 ? 'accent' : 'neutral'}>
+                            {stop.passengers.length === 1
+                              ? '1 Passenger'
+                              : `${stop.passengers.length} Boarding`}
+                          </Pill>
+                          <Text style={styles.rosterChevronText}>
+                            {collapsed ? '▼' : '▲'}
+                          </Text>
+                        </View>
+                      </Pressable>
+
+                      {/* Passenger list under this stop */}
+                      {!collapsed && (
+                        <View style={styles.rosterPassengersContainer}>
+                          {stop.passengers.length === 0 ? (
+                            <Text style={styles.noPassengersStopText}>
+                              No passengers assigned for pickup at this stop.
+                            </Text>
+                          ) : (
+                            stop.passengers.map((p, idx) => (
+                              <View
+                                key={`${p.name}_${p.rollNo || p.facultyId || idx}`}
+                                style={[
+                                  styles.rosterPassengerRow,
+                                  idx < stop.passengers.length - 1 && styles.rosterPassengerBorder,
+                                ]}
+                              >
+                                <View
+                                  style={[
+                                    styles.avatarCircle,
+                                    p.passengerType === 'FACULTY'
+                                      ? styles.facultyAvatar
+                                      : styles.studentAvatar,
+                                  ]}
+                                >
+                                  <Text style={styles.avatarText}>
+                                    {p.name.trim().slice(0, 2).toUpperCase()}
+                                  </Text>
+                                </View>
+                                <View style={styles.rosterPassengerInfo}>
+                                  <View style={styles.rosterPassengerNameRow}>
+                                    <Text style={styles.rosterPassengerName}>{p.name}</Text>
+                                    <Pill tone={p.passengerType === 'FACULTY' ? 'warning' : 'info'}>
+                                      {p.passengerType}
+                                    </Pill>
+                                  </View>
+                                  {p.passengerType === 'STUDENT' ? (
+                                    <View style={styles.rosterMetaRow}>
+                                      {p.rollNo ? (
+                                        <View style={styles.rollNoBadge}>
+                                          <Text style={styles.rollNoText}>{p.rollNo}</Text>
+                                        </View>
+                                      ) : null}
+                                      {p.department ? (
+                                        <Text style={styles.rosterClassText}>
+                                          {p.department}
+                                          {p.year ? ` · Y${p.year}` : ''}
+                                          {p.section ? `-${p.section}` : ''}
+                                        </Text>
+                                      ) : null}
+                                    </View>
+                                  ) : (
+                                    <View style={styles.rosterMetaRow}>
+                                      {p.facultyId ? (
+                                        <View style={styles.rollNoBadge}>
+                                          <Text style={styles.rollNoText}>ID: {p.facultyId}</Text>
+                                        </View>
+                                      ) : null}
+                                      <Text style={styles.facultyMetaText}>
+                                        {p.department ? `${p.department} Dept` : 'College Staff'}
+                                      </Text>
+                                    </View>
+                                  )}
+                                </View>
+                              </View>
+                            ))
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+
           {/* Area Covered Card */}
           <View style={styles.infoCard}>
             <Text style={styles.cardSectionLabel}>AREA COVERED</Text>
@@ -1115,6 +1385,235 @@ const useStyles = () => {
           color: '#FFFFFF',
           fontSize: 12,
           fontWeight: fontWeight.bold,
+        },
+
+        /* Passenger Roster & Stops in Bus Info */
+        rosterSearchBox: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          backgroundColor: isDark ? colors.surface : '#F1F5F9',
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+          paddingHorizontal: 12,
+          paddingVertical: Platform.OS === 'ios' ? 10 : 6,
+          marginBottom: 10,
+        },
+        searchIcon: {
+          fontSize: 14,
+          marginRight: 8,
+        },
+        rosterSearchInput: {
+          flex: 1,
+          fontSize: 13,
+          color: colors.textPrimary,
+          padding: 0,
+        },
+        clearSearchBtn: {
+          padding: 4,
+        },
+        clearSearchText: {
+          fontSize: 12,
+          color: colors.textMuted,
+          fontWeight: fontWeight.bold,
+        },
+        rosterControlsRow: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 12,
+        },
+        rosterCountSummary: {
+          fontSize: 12,
+          fontWeight: fontWeight.semibold,
+          color: colors.textSecondary,
+        },
+        toggleAllBtn: {
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 4,
+          backgroundColor: isDark ? colors.surface : '#F1F5F9',
+        },
+        toggleAllBtnText: {
+          fontSize: 11,
+          fontWeight: fontWeight.bold,
+          color: accentColor,
+        },
+        rosterStopsList: {
+          gap: 10,
+        },
+        rosterStopCard: {
+          backgroundColor: isDark ? colors.surface : '#FAFAFA',
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+          overflow: 'hidden',
+        },
+        rosterStopHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: 12,
+        },
+        rosterStopHeaderPressed: {
+          backgroundColor: 'rgba(234, 88, 12, 0.08)',
+        },
+        rosterStopLeft: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          flex: 1,
+          marginRight: 8,
+        },
+        rosterSeqBadge: {
+          width: 24,
+          height: 24,
+          borderRadius: 12,
+          backgroundColor: accentColor,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        rosterSeqText: {
+          fontSize: 11,
+          fontWeight: fontWeight.extrabold,
+          color: '#FFFFFF',
+        },
+        rosterStopTitle: {
+          fontSize: 14,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+        },
+        rosterStopTime: {
+          fontSize: 12,
+          color: colors.textSecondary,
+          marginTop: 2,
+        },
+        rosterStopRight: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        },
+        rosterChevronText: {
+          fontSize: 12,
+          color: colors.textMuted,
+          fontWeight: fontWeight.bold,
+        },
+        rosterPassengersContainer: {
+          borderTopWidth: 1,
+          borderTopColor: colors.borderSubtle,
+          backgroundColor: isDark ? 'rgba(0, 0, 0, 0.25)' : '#FFFFFF',
+          paddingHorizontal: 12,
+          paddingVertical: 4,
+        },
+        noPassengersStopText: {
+          fontSize: 12,
+          color: colors.textMuted,
+          fontStyle: 'italic',
+          paddingVertical: 10,
+          textAlign: 'center',
+        },
+        rosterPassengerRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          paddingVertical: 10,
+        },
+        rosterPassengerBorder: {
+          borderBottomWidth: 1,
+          borderBottomColor: colors.borderSubtle,
+        },
+        avatarCircle: {
+          width: 34,
+          height: 34,
+          borderRadius: 17,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        studentAvatar: {
+          backgroundColor: 'rgba(59, 130, 246, 0.15)',
+        },
+        facultyAvatar: {
+          backgroundColor: 'rgba(245, 158, 11, 0.18)',
+        },
+        avatarText: {
+          fontSize: 12,
+          fontWeight: fontWeight.extrabold,
+          color: colors.textPrimary,
+        },
+        rosterPassengerInfo: {
+          flex: 1,
+          gap: 3,
+        },
+        rosterPassengerNameRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        },
+        rosterPassengerName: {
+          fontSize: 13,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+          flex: 1,
+        },
+        rosterMetaRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+        },
+        rollNoBadge: {
+          backgroundColor: isDark ? colors.surfaceElevated : '#E2E8F0',
+          paddingHorizontal: 6,
+          paddingVertical: 2,
+          borderRadius: 4,
+        },
+        rollNoText: {
+          fontSize: 11,
+          fontWeight: fontWeight.bold,
+          fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+          color: accentColor,
+        },
+        rosterClassText: {
+          fontSize: 11,
+          color: colors.textSecondary,
+          fontWeight: fontWeight.medium,
+        },
+        facultyMetaText: {
+          fontSize: 11,
+          color: colors.textSecondary,
+          fontWeight: fontWeight.medium,
+          fontStyle: 'italic',
+        },
+        rosterEmptyBox: {
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingVertical: 24,
+          gap: 6,
+        },
+        rosterEmptyTitle: {
+          fontSize: 14,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+        },
+        rosterEmptySub: {
+          fontSize: 12,
+          color: colors.textMuted,
+          textAlign: 'center',
+        },
+        clearFilterBtn: {
+          marginTop: 8,
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          borderRadius: radius.sm,
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        clearFilterBtnText: {
+          fontSize: 12,
+          fontWeight: fontWeight.bold,
+          color: accentColor,
         },
 
         /* Remind Me Modal */
