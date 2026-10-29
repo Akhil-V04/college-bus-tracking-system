@@ -938,6 +938,18 @@
       letter-spacing: 0.02em;
     }
 
+    .dev-email {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 700;
+      transition: all 0.2s ease;
+    }
+
+    .dev-email:hover {
+      color: #FFFFFF;
+      text-decoration: underline;
+    }
+
     @media (max-width: 640px) {
       .footer-bottom {
         flex-direction: column;
@@ -1036,9 +1048,6 @@
           <a href="/download/apk" class="btn-primary" id="downloadApkBtn" onclick="handleApkDownload(event)">
             <span>⬇️</span> Download Android App (APK)
           </a>
-          <button type="button" onclick="openInAppOrExpo()" class="btn-secondary" id="openAppBtn">
-            <span>🚀</span> Open In App / Live Web
-          </button>
         </div>
 
         <div class="direct-open-banner" id="deepLinkBanner">
@@ -1327,7 +1336,7 @@
           <p class="footer-copy">© 2026 Vignana Bharathi Institute of Technology (VBIT) Transport Department.</p>
           <div class="developer-tag">
             <span class="dev-badge-pulse"></span>
-            <span>Developed by <strong class="dev-author">Akhil Vadeeboina</strong></span>
+            <span>Developed by <strong class="dev-author">Akhil Vaddeboina</strong> • <a href="mailto:akhilvaddeboina25@gmail.com" class="dev-email">akhilvaddeboina25@gmail.com</a></span>
           </div>
         </div>
       </div>
@@ -1498,22 +1507,6 @@
       showToast('Opening Campus Transit app...', '🚀');
     }
 
-    function openInAppOrExpo() {
-      const host = window.location.hostname || 'localhost';
-      const targetRoute = sharedRoute ? sharedRoute : '';
-      const deepLink = targetRoute ? `college-bus://passenger/${encodeURIComponent(targetRoute)}` : 'college-bus://passenger';
-      
-      const start = Date.now();
-      window.location.href = deepLink;
-      
-      showToast('Attempting to launch app or Expo...', '📲');
-      setTimeout(() => {
-        if (Date.now() - start < 2000) {
-          const expoUrl = `exp://${host}:8081`;
-          window.location.href = expoUrl;
-        }
-      }, 800);
-    }
   </script>
 </body>
 </html>

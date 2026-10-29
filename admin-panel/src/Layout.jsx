@@ -289,8 +289,7 @@ export default function Layout() {
         <footer className="admin-footer">
           <p>© 2026 Vignana Bharathi Institute of Technology (VBIT) Transport Administration</p>
           <div className="admin-footer-dev">
-            <span className="admin-footer-pulse" aria-hidden="true" />
-            <span>Developed by <strong>Akhil Vadeeboina</strong></span>
+            <span>Developed by <strong>Akhil Vaddeboina</strong> • <a href="mailto:akhilvaddeboina25@gmail.com" style={{ color: '#EA580C', textDecoration: 'none', fontWeight: 600 }}>akhilvaddeboina25@gmail.com</a></span>
           </div>
         </footer>
       </div>

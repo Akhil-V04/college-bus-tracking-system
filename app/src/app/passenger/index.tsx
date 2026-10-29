@@ -431,7 +431,7 @@ export default function PassengerDashboard() {
         <View style={styles.footerBrand}>
           <Text style={styles.footerPowered}>Powered by</Text>
           <Text style={styles.footerBrandName}>CAMPUS<Text style={styles.footerBrandAccent}>Transit</Text></Text>
-          <Text style={styles.footerDev}>Developed by Akhil Vadeeboina</Text>
+          <Text style={styles.footerDev}>Developed by Akhil Vaddeboina • akhilvaddeboina25@gmail.com</Text>
         </View>
       </ScrollView>
 
