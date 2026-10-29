@@ -24,6 +24,7 @@ export const darkColors = {
   accentBgStrong: 'rgba(234, 88, 12, 0.20)',
 
   // Text
+  text: '#F8FAFC',
   textPrimary: '#F8FAFC',
   textSecondary: '#94A3B8',
   textMuted: '#64748B',
@@ -73,6 +74,7 @@ export const lightColors = {
   accentBgStrong: 'rgba(234, 88, 12, 0.15)',
 
   // Text
+  text: '#0F172A',
   textPrimary: '#0F172A',
   textSecondary: '#475569',
   textMuted: '#64748B',

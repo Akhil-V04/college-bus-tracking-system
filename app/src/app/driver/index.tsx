@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Dimensions,
   FlatList,
   Linking,
@@ -21,6 +22,7 @@ import {
   Vibration,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Socket } from 'socket.io-client';
 
 import CampusMap, { Marker, Polyline, PROVIDER_GOOGLE } from '@/components/map/CampusMap';
@@ -265,17 +267,37 @@ export default function DriverConsoleScreen() {
     };
   }, [stops, driverCurrentCoords]);
 
-  // High-frequency location watcher for real-time driver map display
+  // Continuous immediate location watcher for real-time driver map display
   useEffect(() => {
-    if (!trip || !sharing) return undefined;
+    if (!trip) return undefined;
     let subscription: Location.LocationSubscription | null = null;
     let mounted = true;
 
+    // Immediately attempt to fetch initial position
+    const fetchImmediatePos = async () => {
+      try {
+        const services = await Location.hasServicesEnabledAsync().catch(() => false);
+        if (services) {
+          const pos = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.High,
+          });
+          if (mounted && pos?.coords) {
+            setDriverCurrentCoords({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            });
+          }
+        }
+      } catch {}
+    };
+    void fetchImmediatePos();
+
+    // High-frequency watcher for smooth map marker updates (2s polling)
     Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.BestForNavigation,
-        timeInterval: 2000, // Update local map position smoothly
-        distanceInterval: 5,
+        timeInterval: 2000,
+        distanceInterval: 3,
       },
       (loc) => {
         if (!mounted) return;
@@ -295,7 +317,49 @@ export default function DriverConsoleScreen() {
       mounted = false;
       subscription?.remove();
     };
-  }, [trip, sharing]);
+  }, [trip]);
+
+  // Auto-detect when driver turns ON phone location and automatically start sharing & fetch position
+  useEffect(() => {
+    if (!trip) return undefined;
+
+    const checkAndAutoStart = async () => {
+      const servicesOn = await Location.hasServicesEnabledAsync().catch(() => false);
+      if (servicesOn) {
+        try {
+          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+          if (pos?.coords) {
+            setDriverCurrentCoords({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+            });
+          }
+        } catch {}
+
+        if (!sharing) {
+          void beginLocationSharing();
+        }
+      }
+    };
+
+    // AppState change (e.g. driver opened notification shade/quick settings, turned on GPS, and returned)
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void checkAndAutoStart();
+      }
+    });
+
+    // Active polling while trip is running and GPS is paused or coords missing
+    let pollInterval: any = null;
+    if (!sharing || !driverCurrentCoords) {
+      pollInterval = setInterval(checkAndAutoStart, 3000);
+    }
+
+    return () => {
+      appStateSub.remove();
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [trip, sharing, driverCurrentCoords]);
 
   const stopSharing = useCallback(async (clearQueue = false) => {
     locationSubscription.current?.remove();
@@ -342,16 +406,70 @@ export default function DriverConsoleScreen() {
         token,
         body: JSON.stringify({ tripDirection: direction || selectedDirection }),
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       setBreakdownReported(false);
       setReportedInfo(null);
       queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
-      // Automatically attempt background location start if already approved
+
+      // Immediately fetch current position
+      try {
+        const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        if (pos?.coords) {
+          setDriverCurrentCoords({
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          });
+        }
+      } catch {}
+
+      // Automatically start live GPS sharing
       setTimeout(() => {
         void beginLocationSharing();
-      }, 500);
+      }, 400);
+    },
+    onError: (err: any) => {
+      Alert.alert('Could Not Start Trip', err?.message || 'Failed to start trip. Please try again.');
     },
   });
+
+  const handleStartTrip = async () => {
+    if (Platform.OS !== 'web') {
+      const servicesEnabled = await Location.hasServicesEnabledAsync().catch(() => false);
+      if (!servicesEnabled) {
+        try {
+          await Location.enableNetworkProviderAsync();
+        } catch {}
+        const recheck = await Location.hasServicesEnabledAsync().catch(() => false);
+        if (!recheck) {
+          Alert.alert(
+            'Location Services Required',
+            'Please turn ON your phone GPS / Location in Android Quick Settings before starting the trip. Live location is required for passengers to track this bus.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Turn On & Retry',
+                onPress: () => {
+                  void handleStartTrip();
+                },
+              },
+            ]
+          );
+          return;
+        }
+      }
+
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Location Permission Required',
+          'Please allow location permission in phone settings to start the trip.'
+        );
+        return;
+      }
+    }
+
+    startTrip.mutate(selectedDirection);
+  };
 
   const endTrip = useMutation({
     mutationFn: async (tripId: number) => {
@@ -365,6 +483,10 @@ export default function DriverConsoleScreen() {
       setReportedInfo(null);
       setDriverCurrentCoords(null);
       queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
+      Alert.alert('Trip Ended', 'The trip has been completed successfully.');
+    },
+    onError: (err: any) => {
+      Alert.alert('Could Not End Trip', err?.message || 'Failed to complete trip. Please try again.');
     },
   });
 
@@ -410,11 +532,37 @@ export default function DriverConsoleScreen() {
     if (!currentTrip || !token || sharing) return;
     setLocationMessage(null);
 
+    // 1. Check if location services (GPS hardware switch) are enabled on device
+    if (Platform.OS !== 'web') {
+      const servicesOn = await Location.hasServicesEnabledAsync().catch(() => false);
+      if (!servicesOn) {
+        try {
+          await Location.enableNetworkProviderAsync();
+        } catch {}
+        const recheck = await Location.hasServicesEnabledAsync().catch(() => false);
+        if (!recheck) {
+          setLocationMessage('Location services are turned OFF. Please turn on phone GPS to share live location.');
+          return;
+        }
+      }
+    }
+
     const foreground = await Location.requestForegroundPermissionsAsync();
     if (foreground.status !== 'granted') {
       setLocationMessage('Location permission was denied. Open phone settings and allow precise location.');
       return;
     }
+
+    // Immediately fetch location so driver position is shown right away
+    try {
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      if (pos?.coords) {
+        setDriverCurrentCoords({
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        });
+      }
+    } catch {}
 
     if (Platform.OS !== 'web') {
       // Check if background permission is already granted or was previously approved
@@ -618,7 +766,9 @@ export default function DriverConsoleScreen() {
                   { text: 'End Trip', style: 'destructive', onPress: () => endTrip.mutate(trip.id) },
                 ]);
               }}
+              hitSlop={16}
               style={styles.hudEndTripBtn}
+              accessibilityLabel="End Current Trip"
             >
               <Text style={styles.hudEndTripText}>End Trip</Text>
             </Pressable>
@@ -732,9 +882,23 @@ export default function DriverConsoleScreen() {
                   <Text style={styles.sheetHeaderText}>
                     {sheetExpanded ? '↓ Tap or drag down to collapse' : '↑ Tap or pull up for full stop timeline'}
                   </Text>
-                  <Text style={styles.sheetStopsCount}>
-                    {currentStopIndex} / {stops.length} Reached
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <Text style={styles.sheetStopsCount}>
+                      {currentStopIndex} / {stops.length} Reached
+                    </Text>
+                    <Pressable
+                      onPress={() => {
+                        Alert.alert('End Active Trip', 'Are you sure you want to complete and end this trip?', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'End Trip', style: 'destructive', onPress: () => endTrip.mutate(trip.id) },
+                        ]);
+                      }}
+                      hitSlop={10}
+                      style={styles.sheetQuickEndTripBtn}
+                    >
+                      <Text style={styles.sheetQuickEndTripText}>End Trip</Text>
+                    </Pressable>
+                  </View>
                 </View>
               </Pressable>
             </View>
@@ -1007,7 +1171,7 @@ export default function DriverConsoleScreen() {
                   ? 'Start Return Trip from VBIT'
                   : 'Start Trip to College'
               }
-              onPress={() => startTrip.mutate(selectedDirection)}
+              onPress={handleStartTrip}
               loading={startTrip.isPending}
               disabled={!driver.assignedRoute}
               size="lg"
@@ -1224,6 +1388,7 @@ export default function DriverConsoleScreen() {
 
 const useStyles = () => {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   return useMemo(
     () =>
       StyleSheet.create({
@@ -1244,22 +1409,22 @@ const useStyles = () => {
         },
         topHudBar: {
           position: 'absolute',
-          top: Platform.OS === 'ios' ? 44 : 12,
+          top: Math.max(12, insets.top + 8),
           left: 12,
           right: 12,
           zIndex: 40,
-          backgroundColor: isDark ? 'rgba(15, 23, 42, 0.94)' : 'rgba(255, 255, 255, 0.96)',
+          backgroundColor: isDark ? 'rgba(15, 23, 42, 0.96)' : 'rgba(255, 255, 255, 0.98)',
           borderRadius: 14,
           padding: 12,
           flexDirection: 'row',
           alignItems: 'center',
           borderWidth: 1,
-          borderColor: isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)',
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.1)',
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.25,
+          shadowOpacity: 0.35,
           shadowRadius: 10,
-          elevation: 6,
+          elevation: 8,
         },
         topHudRouteNo: {
           fontSize: 16,
@@ -1268,21 +1433,28 @@ const useStyles = () => {
         },
         topHudRouteName: {
           fontSize: 12,
-          color: colors.textSecondary,
+          color: '#F1F5F9',
           marginTop: 2,
+          fontWeight: '600',
         },
         hudEndTripBtn: {
-          backgroundColor: 'rgba(239, 68, 68, 0.15)',
-          paddingHorizontal: 12,
-          paddingVertical: 8,
+          backgroundColor: '#DC2626',
+          paddingHorizontal: 14,
+          paddingVertical: 9,
           borderRadius: 8,
-          borderWidth: 1,
-          borderColor: 'rgba(239, 68, 68, 0.4)',
+          minWidth: 84,
+          alignItems: 'center',
+          justifyContent: 'center',
+          elevation: 5,
+          shadowColor: '#DC2626',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.4,
+          shadowRadius: 4,
         },
         hudEndTripText: {
-          color: '#EF4444',
-          fontWeight: '700',
-          fontSize: 12,
+          color: '#FFFFFF',
+          fontWeight: '800',
+          fontSize: 13,
         },
         mapContainer: {
           flex: 1,
@@ -1290,7 +1462,7 @@ const useStyles = () => {
         },
         mapFloatingControls: {
           position: 'absolute',
-          top: Platform.OS === 'ios' ? 120 : 86,
+          top: Math.max(90, insets.top + 78),
           right: 14,
           zIndex: 35,
           gap: 10,
@@ -1315,15 +1487,15 @@ const useStyles = () => {
         },
         mapStatusBadge: {
           position: 'absolute',
-          top: Platform.OS === 'ios' ? 120 : 86,
+          top: Math.max(90, insets.top + 78),
           left: 14,
           zIndex: 35,
-          backgroundColor: isDark ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.92)',
+          backgroundColor: isDark ? 'rgba(15, 23, 42, 0.9)' : 'rgba(255, 255, 255, 0.94)',
           paddingHorizontal: 10,
           paddingVertical: 5,
           borderRadius: 20,
           borderWidth: 1,
-          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.08)',
           flexDirection: 'row',
           alignItems: 'center',
           gap: 6,
@@ -1336,7 +1508,7 @@ const useStyles = () => {
         mapStatusBadgeText: {
           fontSize: 11,
           fontWeight: '700',
-          color: colors.text,
+          color: '#FFFFFF',
         },
         stopMarkerDot: {
           width: 22,
@@ -1424,13 +1596,24 @@ const useStyles = () => {
         },
         sheetHeaderText: {
           fontSize: 12,
-          color: colors.textSecondary,
+          color: '#F8FAFC',
           fontWeight: '600',
         },
         sheetStopsCount: {
           fontSize: 12,
           fontWeight: '700',
           color: '#EA580C',
+        },
+        sheetQuickEndTripBtn: {
+          backgroundColor: '#DC2626',
+          paddingHorizontal: 10,
+          paddingVertical: 4,
+          borderRadius: 6,
+        },
+        sheetQuickEndTripText: {
+          color: '#FFFFFF',
+          fontSize: 11,
+          fontWeight: '800',
         },
 
         // Timeline Styles
@@ -1491,9 +1674,9 @@ const useStyles = () => {
           paddingBottom: 12,
         },
         stopNameText: {
-          fontSize: 13,
-          fontWeight: '700',
-          color: colors.text,
+          fontSize: 14,
+          fontWeight: '800',
+          color: '#FFFFFF',
           letterSpacing: 0.3,
         },
         timingRow: {
@@ -1502,14 +1685,14 @@ const useStyles = () => {
           marginTop: 3,
         },
         arrivalText: {
-          fontSize: 11,
-          color: colors.textSecondary,
-          fontWeight: '500',
+          fontSize: 12,
+          color: '#CBD5E1',
+          fontWeight: '600',
         },
         departureText: {
-          fontSize: 11,
-          color: colors.textSecondary,
-          opacity: 0.8,
+          fontSize: 12,
+          color: '#94A3B8',
+          fontWeight: '500',
         },
         statusCol: {
           alignItems: 'flex-end',
@@ -1535,9 +1718,9 @@ const useStyles = () => {
         },
         statusScheduled: {
           fontSize: 10,
-          fontWeight: '600',
-          color: colors.textSecondary,
-          backgroundColor: 'rgba(100, 116, 139, 0.12)',
+          fontWeight: '700',
+          color: '#E2E8F0',
+          backgroundColor: 'rgba(100, 116, 139, 0.25)',
           paddingHorizontal: 7,
           paddingVertical: 2,
           borderRadius: 6,
