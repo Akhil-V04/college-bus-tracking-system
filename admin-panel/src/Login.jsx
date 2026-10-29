@@ -12,7 +12,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!checking && isLoggedIn) navigate('/', { replace: true });
+    if (!checking && isLoggedIn) navigate('/admin', { replace: true });
   }, [checking, isLoggedIn, navigate]);
 
   async function handleSubmit(event) {
@@ -26,7 +26,7 @@ export default function Login() {
         password,
       });
       login(data);
-      navigate('/', { replace: true });
+      navigate('/admin', { replace: true });
     } catch (requestError) {
       setError(errorMessage(requestError, 'Sign in failed.'));
     } finally {

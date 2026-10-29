@@ -4,22 +4,22 @@ import { useAuth } from './auth';
 import api from './api';
 
 const navigation = [
-  { to: '/', label: 'Overview', iconName: 'overview', fallback: '⌂', end: true },
-  { to: '/routes', label: 'Routes & capacity', iconName: 'routes', fallback: '↝' },
-  { to: '/stops', label: 'Stops & Map', iconName: 'stops', fallback: '📍' },
-  { to: '/live-tracking', label: 'Live Bus Tracking', iconName: 'routes', fallback: '🚌' },
-  { to: '/schedules', label: 'Schedules', iconName: 'schedules', fallback: '◷' },
-  { to: '/schedule-builder', label: 'Event Overrides', iconName: 'schedule-builder', fallback: '⚡' },
-  { to: '/rosters', label: 'Annual rosters', iconName: 'rosters', fallback: '▤' },
-  { to: '/drivers', label: 'Drivers', iconName: 'drivers', fallback: '◉' },
-  { to: '/class-advisors', label: 'Class advisors', iconName: 'class-advisors', fallback: '◎' },
-  { to: '/late-alerts', label: 'Late alerts', iconName: 'late-alerts', fallback: '!' },
-  { to: '/operations', label: 'Operations', iconName: 'operations', fallback: '⌁' },
-  { to: '/audit-log', label: 'Trip logs & Audit', iconName: 'audit-log', fallback: '✓' },
-  { to: '/sessions', label: 'Sessions', iconName: 'sessions', fallback: '◌' },
-  { to: '/issues', label: 'AI Issues', iconName: 'issues', fallback: '◆' },
-  { to: '/knowledge', label: 'Knowledge base', iconName: 'knowledge', fallback: '▣' },
-  { to: '/notifications', label: 'Notifications', iconName: 'notifications', fallback: '🔔' },
+  { to: '/admin', label: 'Overview', iconName: 'overview', fallback: '⌂', end: true },
+  { to: '/admin/routes', label: 'Routes & capacity', iconName: 'routes', fallback: '↝' },
+  { to: '/admin/stops', label: 'Stops & Map', iconName: 'stops', fallback: '📍' },
+  { to: '/admin/live-tracking', label: 'Live Bus Tracking', iconName: 'routes', fallback: '🚌' },
+  { to: '/admin/schedules', label: 'Schedules', iconName: 'schedules', fallback: '◷' },
+  { to: '/admin/schedule-builder', label: 'Event Overrides', iconName: 'schedule-builder', fallback: '⚡' },
+  { to: '/admin/rosters', label: 'Annual rosters', iconName: 'rosters', fallback: '▤' },
+  { to: '/admin/drivers', label: 'Drivers', iconName: 'drivers', fallback: '◉' },
+  { to: '/admin/class-advisors', label: 'Class advisors', iconName: 'class-advisors', fallback: '◎' },
+  { to: '/admin/late-alerts', label: 'Late alerts', iconName: 'late-alerts', fallback: '!' },
+  { to: '/admin/operations', label: 'Operations', iconName: 'operations', fallback: '⌁' },
+  { to: '/admin/audit-log', label: 'Trip logs & Audit', iconName: 'audit-log', fallback: '✓' },
+  { to: '/admin/sessions', label: 'Sessions', iconName: 'sessions', fallback: '◌' },
+  { to: '/admin/issues', label: 'AI Issues', iconName: 'issues', fallback: '◆' },
+  { to: '/admin/knowledge', label: 'Knowledge base', iconName: 'knowledge', fallback: '▣' },
+  { to: '/admin/notifications', label: 'Notifications', iconName: 'notifications', fallback: '🔔' },
 ];
 
 function AdminSidebarIcon({ iconName, fallback }) {
@@ -120,7 +120,7 @@ export default function Layout() {
   const visibleBreakdowns = activeBreakdowns.filter((b) => !dismissedBreakdownIds.has(b.id));
 
   if (checking) return <div className="app-loading"><div className="spinner" /><p>Checking administrator session…</p></div>;
-  if (!isLoggedIn) return <Navigate to="/login" replace />;
+  if (!isLoggedIn) return <Navigate to="/admin/login" replace />;
 
   return (
     <div className="app-shell">

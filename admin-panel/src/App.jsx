@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './auth';
 import Layout from './Layout';
 import Login from './Login';
+import HeroLandingPage from './screens/HeroLandingPage';
 import Dashboard from './screens/Dashboard';
 import RouteServicesScreen from './screens/RouteServicesScreen';
 import DriversScreen from './screens/DriversScreen';
@@ -24,8 +25,14 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<Layout />}>
+          {/* Public Root: Official App Hero & Download Website (No public admin link) */}
+          <Route path="/" element={<HeroLandingPage />} />
+
+          {/* Secret Admin Routes */}
+          <Route path="/admin/login" element={<Login />} />
+          <Route path="/login" element={<Navigate to="/admin/login" replace />} />
+
+          <Route path="/admin" element={<Layout />}>
             <Route index element={<Dashboard />} />
             <Route path="routes" element={<RouteServicesScreen />} />
             <Route path="stops" element={<StopsScreen />} />
@@ -43,6 +50,8 @@ export default function App() {
             <Route path="knowledge" element={<KnowledgeScreen />} />
             <Route path="notifications" element={<NotificationsScreen />} />
           </Route>
+
+          {/* Fallback unknown paths back to Public Hero Website */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
