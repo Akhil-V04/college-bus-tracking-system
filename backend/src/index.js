@@ -53,7 +53,7 @@ if (process.env.NODE_ENV !== 'production') {
 const corsOptions = {
   credentials: true,
   origin(origin, callback) {
-    if (!origin || configuredOrigins.has(origin)) return callback(null, true);
+    if (!origin || configuredOrigins.has(origin) || origin.endsWith('.vercel.app')) return callback(null, true);
     // Returning false prevents CORS headers from being added (blocking browsers)
     // without returning 403, allowing mobile apps that send random Origin headers to work.
     return callback(null, false);
