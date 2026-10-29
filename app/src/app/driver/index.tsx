@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import { router } from 'expo-router';
@@ -5,8 +6,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Dimensions,
+  FlatList,
   Linking,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -18,6 +23,7 @@ import {
 } from 'react-native';
 import { Socket } from 'socket.io-client';
 
+import CampusMap, { Marker, Polyline, PROVIDER_GOOGLE } from '@/components/map/CampusMap';
 import {
   AppHeader,
   Button,
@@ -41,6 +47,7 @@ import {
   startBackgroundDriverLocation,
   stopBackgroundDriverLocation,
 } from '@/lib/backgroundLocation';
+import { decodePolyline } from '@/lib/polyline';
 import { createLiveSocket } from '@/lib/socket';
 import {
   BreakdownAlertPayload,
@@ -50,12 +57,17 @@ import {
   NearbyBusesResponse,
 } from '@/types/api';
 
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const SHEET_COLLAPSED_HEIGHT = 280;
+const SHEET_EXPANDED_HEIGHT = Math.round(SCREEN_HEIGHT * 0.72);
+const ORANGE_ACCENT = '#EA580C';
+
 type TripResponse = { trip: DriverTrip | null };
 type StartResponse = { tripId: number; resumed: boolean; routeNo: string };
 type LocationAck = { ok: boolean; stored?: boolean; error?: string; timestamp?: string };
 
 export default function DriverConsoleScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useStyles();
   const queryClient = useQueryClient();
   const [token, setToken] = useState<string | null | undefined>(undefined);
@@ -66,6 +78,12 @@ export default function DriverConsoleScreen() {
   const [queueStatus, setQueueStatus] = useState({ queued: 0, dropped: 0 });
   const locationSubscription = useRef<Location.LocationSubscription | null>(null);
   const socket = useRef<Socket | null>(null);
+
+  // Exact immediate driver coordinates for live map rendering without 15s lag
+  const [driverCurrentCoords, setDriverCurrentCoords] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
 
   // Incoming Breakdown Alert (Received from other nearby driver)
   const [incomingAlert, setIncomingAlert] = useState<BreakdownAlertPayload | null>(null);
@@ -79,6 +97,49 @@ export default function DriverConsoleScreen() {
   const [submittingBreakdown, setSubmittingBreakdown] = useState(false);
   const [breakdownReported, setBreakdownReported] = useState(false);
   const [reportedInfo, setReportedInfo] = useState<{ count: number; routeNo: string } | null>(null);
+
+  // Timeline Bottom Sheet Animation & Drag Handlers
+  const mapRef = useRef<any>(null);
+  const [sheetExpanded, setSheetExpanded] = useState(false);
+  const sheetHeightAnim = useRef(new Animated.Value(SHEET_COLLAPSED_HEIGHT)).current;
+
+  const toggleSheet = () => {
+    const toValue = sheetExpanded ? SHEET_COLLAPSED_HEIGHT : SHEET_EXPANDED_HEIGHT;
+    Animated.spring(sheetHeightAnim, {
+      toValue,
+      friction: 8,
+      tension: 40,
+      useNativeDriver: false,
+    }).start();
+    setSheetExpanded(!sheetExpanded);
+  };
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dy) > 12,
+        onPanResponderRelease: (_, gesture) => {
+          if (gesture.dy < -40) {
+            Animated.spring(sheetHeightAnim, {
+              toValue: SHEET_EXPANDED_HEIGHT,
+              friction: 8,
+              tension: 40,
+              useNativeDriver: false,
+            }).start();
+            setSheetExpanded(true);
+          } else if (gesture.dy > 40) {
+            Animated.spring(sheetHeightAnim, {
+              toValue: SHEET_COLLAPSED_HEIGHT,
+              friction: 8,
+              tension: 40,
+              useNativeDriver: false,
+            }).start();
+            setSheetExpanded(false);
+          }
+        },
+      }),
+    [sheetHeightAnim]
+  );
 
   useEffect(() => {
     getDriverToken().then((stored) => {
@@ -124,6 +185,117 @@ export default function DriverConsoleScreen() {
     enabled: Boolean(token),
     refetchInterval: 20_000,
   });
+
+  const trip = activeTrip.data?.trip || null;
+  const isReturnTrip =
+    trip?.tripDirection === 'FROM_COLLEGE' ||
+    trip?.scheduleSnapshot?.direction === 'FROM_COLLEGE';
+
+  // Extract stops from trip
+  const stops = useMemo(() => {
+    if (!trip) return [];
+    if (
+      trip.scheduleSnapshot &&
+      Array.isArray(trip.scheduleSnapshot.stops) &&
+      trip.scheduleSnapshot.stops.length
+    ) {
+      return trip.scheduleSnapshot.stops.map((s: any) => ({
+        id: s.scheduleStopId || s.stopId,
+        stopId: s.stopId,
+        sequenceOrder: s.sequenceOrder,
+        scheduledTime: s.scheduledTime,
+        stop: {
+          id: s.stopId,
+          name: s.name,
+          latitude: s.latitude,
+          longitude: s.longitude,
+        },
+      }));
+    }
+    return (trip.scheduleVersion?.stops || []).map((s) => ({
+      id: s.id,
+      stopId: s.stop.id,
+      sequenceOrder: s.sequenceOrder,
+      scheduledTime: s.scheduledTime,
+      stop: s.stop,
+    }));
+  }, [trip]);
+
+  // Decode route polyline
+  const polylineCoordinates = useMemo(() => {
+    if (!trip) return [];
+    const rawPolyline =
+      trip.scheduleSnapshot?.geometryPolyline || trip.scheduleVersion?.geometryPolyline;
+    if (rawPolyline) {
+      const decoded = decodePolyline(rawPolyline);
+      if (decoded.length > 0) return decoded;
+    }
+    return stops.map((s) => ({ latitude: s.stop.latitude, longitude: s.stop.longitude }));
+  }, [trip, stops]);
+
+  // Map initial region
+  const initialRegion = useMemo(() => {
+    if (driverCurrentCoords) {
+      return {
+        latitude: driverCurrentCoords.latitude,
+        longitude: driverCurrentCoords.longitude,
+        latitudeDelta: 0.025,
+        longitudeDelta: 0.025,
+      };
+    }
+    if (stops.length === 0) {
+      return {
+        latitude: 17.4334,
+        longitude: 78.6837,
+        latitudeDelta: 0.08,
+        longitudeDelta: 0.08,
+      };
+    }
+    const lats = stops.map((s) => s.stop.latitude);
+    const lngs = stops.map((s) => s.stop.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.max(0.015, (maxLat - minLat) * 1.35),
+      longitudeDelta: Math.max(0.015, (maxLng - minLng) * 1.35),
+    };
+  }, [stops, driverCurrentCoords]);
+
+  // High-frequency location watcher for real-time driver map display
+  useEffect(() => {
+    if (!trip || !sharing) return undefined;
+    let subscription: Location.LocationSubscription | null = null;
+    let mounted = true;
+
+    Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.BestForNavigation,
+        timeInterval: 2000, // Update local map position smoothly
+        distanceInterval: 5,
+      },
+      (loc) => {
+        if (!mounted) return;
+        setDriverCurrentCoords({
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        });
+      }
+    )
+      .then((sub) => {
+        if (mounted) subscription = sub;
+        else sub.remove();
+      })
+      .catch(() => undefined);
+
+    return () => {
+      mounted = false;
+      subscription?.remove();
+    };
+  }, [trip, sharing]);
 
   const stopSharing = useCallback(async (clearQueue = false) => {
     locationSubscription.current?.remove();
@@ -174,6 +346,10 @@ export default function DriverConsoleScreen() {
       setBreakdownReported(false);
       setReportedInfo(null);
       queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
+      // Automatically attempt background location start if already approved
+      setTimeout(() => {
+        void beginLocationSharing();
+      }, 500);
     },
   });
 
@@ -187,21 +363,26 @@ export default function DriverConsoleScreen() {
       setLocationMessage(null);
       setBreakdownReported(false);
       setReportedInfo(null);
+      setDriverCurrentCoords(null);
       queryClient.invalidateQueries({ queryKey: ['driver-active-trip'] });
     },
   });
 
-  const startForegroundFallback = async (trip: DriverTrip, driverToken: string) => {
+  const startForegroundFallback = async (currentTrip: DriverTrip, driverToken: string) => {
     const liveSocket = createLiveSocket(driverToken);
     socket.current = liveSocket;
     liveSocket.connect();
     locationSubscription.current = await Location.watchPositionAsync(
       { accuracy: Location.Accuracy.BestForNavigation, timeInterval: 5_000, distanceInterval: 20 },
-      (location) =>
+      (location) => {
+        setDriverCurrentCoords({
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        });
         liveSocket.emit(
           'driver:location',
           {
-            tripId: trip.id,
+            tripId: currentTrip.id,
             latitude: location.coords.latitude,
             longitude: location.coords.longitude,
             deviceTimestamp: new Date(location.timestamp).toISOString(),
@@ -217,16 +398,18 @@ export default function DriverConsoleScreen() {
                 ? 'Last GPS update sent at ' + new Date(ack.timestamp || Date.now()).toLocaleTimeString()
                 : ack?.error || 'The server rejected this GPS update.'
             )
-        )
+        );
+      }
     );
     setTrackingMode('foreground');
     setSharing(true);
   };
 
   const beginLocationSharing = async () => {
-    const trip = activeTrip.data?.trip;
-    if (!trip || !token || sharing) return;
+    const currentTrip = activeTrip.data?.trip;
+    if (!currentTrip || !token || sharing) return;
     setLocationMessage(null);
+
     const foreground = await Location.requestForegroundPermissionsAsync();
     if (foreground.status !== 'granted') {
       setLocationMessage('Location permission was denied. Open phone settings and allow precise location.');
@@ -234,40 +417,85 @@ export default function DriverConsoleScreen() {
     }
 
     if (Platform.OS !== 'web') {
-      const proceed = await new Promise<boolean>((resolve) =>
-        Alert.alert(
-          'Allow background location',
-          'During a running trip, a persistent notification shows that this bus device is sharing location. Tracking stops when you pause or end the trip.',
-          [
-            { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-            { text: 'Continue', onPress: () => resolve(true) },
-          ],
-          { cancelable: false }
-        )
-      );
-      if (!proceed) return;
+      // Check if background permission is already granted or was previously approved
+      const bgPerm = await Location.getBackgroundPermissionsAsync();
+      const alreadyAccepted = await AsyncStorage.getItem('bg_location_prompt_accepted');
+
+      // Only show alert if NOT yet granted AND not previously accepted!
+      if (bgPerm.status !== 'granted' && alreadyAccepted !== 'true') {
+        const proceed = await new Promise<boolean>((resolve) =>
+          Alert.alert(
+            'Allow background location',
+            'During a running trip, a persistent notification shows that this bus device is sharing location. Tracking stops when you pause or end the trip.',
+            [
+              { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Continue', onPress: () => resolve(true) },
+            ],
+            { cancelable: false }
+          )
+        );
+        if (!proceed) return;
+        await AsyncStorage.setItem('bg_location_prompt_accepted', 'true');
+      }
+
       const background = await Location.requestBackgroundPermissionsAsync();
       if (background.status === 'granted') {
+        await AsyncStorage.setItem('bg_location_prompt_accepted', 'true');
         try {
-          await startBackgroundDriverLocation(trip.id);
+          await startBackgroundDriverLocation(currentTrip.id);
           const flushed = await flushDriverLocationQueue();
           setQueueStatus({ queued: flushed.queued, dropped: flushed.dropped });
           setTrackingMode('background');
           setSharing(true);
-          setLocationMessage('Background GPS is active. You may lock the phone; keep the persistent trip notification enabled.');
+          setLocationMessage('Background GPS is active.');
           return;
         } catch (error) {
           setLocationMessage(error instanceof Error ? error.message : 'Background GPS could not start. Using foreground mode.');
         }
       } else {
-        setLocationMessage('Background permission was not granted. GPS works only while this screen remains open.');
+        setLocationMessage('Background permission was not granted. GPS works only while screen is open.');
       }
     }
 
     try {
-      await startForegroundFallback(trip, token);
+      await startForegroundFallback(currentTrip, token);
     } catch (error) {
       setLocationMessage(error instanceof Error ? error.message : 'Could not start location sharing.');
+    }
+  };
+
+  // Focus map on a specific stop
+  const focusOnStop = (stopItem: { stop: { latitude: number; longitude: number } }) => {
+    mapRef.current?.animateToRegion(
+      {
+        latitude: stopItem.stop.latitude,
+        longitude: stopItem.stop.longitude,
+        latitudeDelta: 0.015,
+        longitudeDelta: 0.015,
+      },
+      600
+    );
+  };
+
+  // Center map on driver's live bus
+  const focusOnBus = () => {
+    if (driverCurrentCoords) {
+      mapRef.current?.animateToRegion(
+        {
+          latitude: driverCurrentCoords.latitude,
+          longitude: driverCurrentCoords.longitude,
+          latitudeDelta: 0.015,
+          longitudeDelta: 0.015,
+        },
+        600
+      );
+    }
+  };
+
+  // Re-center map to view entire route
+  const resetMapZoom = () => {
+    if (stops.length > 0) {
+      mapRef.current?.animateToRegion(initialRegion, 600);
     }
   };
 
@@ -287,14 +515,12 @@ export default function DriverConsoleScreen() {
   };
 
   const handleOpenBreakdownModal = () => {
-    const trip = activeTrip.data?.trip;
     if (!trip) return;
     setBreakdownModalOpen(true);
     void fetchNearbyBuses(trip.id);
   };
 
   const handleSubmitBreakdown = async () => {
-    const trip = activeTrip.data?.trip;
     if (!trip || !token) return;
     setSubmittingBreakdown(true);
     try {
@@ -334,202 +560,465 @@ export default function DriverConsoleScreen() {
     router.replace('/');
   };
 
+  const getDepartureTime = (scheduledTime: string) => {
+    if (!scheduledTime) return '--:--';
+    const parts = scheduledTime.split(':');
+    if (parts.length < 2) return scheduledTime;
+    let h = parseInt(parts[0], 10);
+    let m = parseInt(parts[1], 10) + 2;
+    if (m >= 60) {
+      h = (h + 1) % 24;
+      m = m - 60;
+    }
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
   if (token === undefined || profile.isPending) {
-    return <Screen><LoadingState label="Checking driver session..." /></Screen>;
+    return (
+      <Screen>
+        <LoadingState label="Checking driver session..." />
+      </Screen>
+    );
   }
   if (!token) return null;
   if (profile.isError) {
-    return <Screen><ErrorState message={profile.error.message} retry={() => profile.refetch()} /></Screen>;
+    return (
+      <Screen>
+        <ErrorState message={profile.error.message} retry={() => profile.refetch()} />
+      </Screen>
+    );
   }
 
   const driver = profile.data;
-  const trip = activeTrip.data?.trip || null;
-  const isReturnTrip = trip?.tripDirection === 'FROM_COLLEGE' || trip?.scheduleSnapshot?.tripDirection === 'FROM_COLLEGE';
+  const currentStopIndex = trip?.currentStopIndex || 0;
 
   return (
-    <Screen>
-      <AppHeader
-        eyebrow="Driver console"
-        title={'Hello, ' + driver.name}
-        subtitle={driver.assignedRoute ? 'Assigned to Route ' + driver.assignedRoute.routeNo : 'No route is currently assigned'}
-        action={
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <Pill tone={trip ? 'success' : 'neutral'}>{trip ? 'Trip running' : 'Off trip'}</Pill>
-          </View>
-        }
-      />
-
-      <Card>
-        <SectionTitle>Assignment</SectionTitle>
-        {driver.assignedRoute ? (
-          <>
-            <LabelValue label="Route" value={driver.assignedRoute.routeNo + ' – ' + driver.assignedRoute.name} />
-            <LabelValue label="Area" value={driver.assignedRoute.areaCovered} />
-            <LabelValue label="Capacity" value={String(driver.assignedRoute.capacity)} />
-          </>
-        ) : (
-          <EmptyState title="No route assigned" message="Ask the transport administrator to assign this driver before starting a trip." />
-        )}
-      </Card>
-
-      {activeTrip.isError && <Notice tone="danger" title="Trip status unavailable" message={activeTrip.error.message} />}
-
-      {!trip ? (
-        <Card>
-          <SectionTitle>Start Trip</SectionTitle>
-          <Text style={styles.help}>
-            Select your trip direction. Forward trips pick up students towards VBIT College. Return trips depart from VBIT and drop off students in reverse sequence with dynamic live ETAs.
-          </Text>
-
-          {/* Direction Selector */}
-          <View style={{ flexDirection: 'row', gap: 10, marginVertical: 12 }}>
-            <Pressable
-              onPress={() => setSelectedDirection('TO_COLLEGE')}
-              style={{
-                flex: 1,
-                padding: 12,
-                borderRadius: 8,
-                borderWidth: 2,
-                borderColor: selectedDirection === 'TO_COLLEGE' ? '#EA580C' : '#334155',
-                backgroundColor: selectedDirection === 'TO_COLLEGE' ? 'rgba(234, 88, 12, 0.15)' : 'transparent',
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ fontSize: 22 }}>🎓</Text>
-              <Text style={{ fontWeight: '700', color: selectedDirection === 'TO_COLLEGE' ? '#EA580C' : '#94a3b8', fontSize: 13, marginTop: 4 }}>
-                To College
-              </Text>
-              <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'center', marginTop: 2 }}>
-                City Stops &rarr; VBIT
-              </Text>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setSelectedDirection('FROM_COLLEGE')}
-              style={{
-                flex: 1,
-                padding: 12,
-                borderRadius: 8,
-                borderWidth: 2,
-                borderColor: selectedDirection === 'FROM_COLLEGE' ? '#EA580C' : '#334155',
-                backgroundColor: selectedDirection === 'FROM_COLLEGE' ? 'rgba(234, 88, 12, 0.15)' : 'transparent',
-                alignItems: 'center',
-              }}
-            >
-              <Text style={{ fontSize: 22 }}>🏠</Text>
-              <Text style={{ fontWeight: '700', color: selectedDirection === 'FROM_COLLEGE' ? '#EA580C' : '#94a3b8', fontSize: 13, marginTop: 4 }}>
-                Return from College
-              </Text>
-              <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'center', marginTop: 2 }}>
-                VBIT &rarr; Reverse Drops
-              </Text>
-            </Pressable>
-          </View>
-
-          {startTrip.isError && <Notice tone="danger" title="Could not start trip" message={startTrip.error.message} />}
-          <Button
-            label={selectedDirection === 'FROM_COLLEGE' ? 'Start Return Trip from VBIT' : 'Start Trip to College'}
-            onPress={() => startTrip.mutate(selectedDirection)}
-            loading={startTrip.isPending}
-            disabled={!driver.assignedRoute}
-            size="lg"
-          />
-        </Card>
-      ) : (
-        <Card>
-          <View style={styles.row}>
-            <SectionTitle>
-              {isReturnTrip ? 'Live Return Trip 🏠' : 'Live Trip to College 🎓'}
-            </SectionTitle>
-            <Pill tone={sharing ? 'success' : 'warning'}>
-              {sharing ? (trackingMode === 'background' ? 'Background GPS' : 'Foreground GPS') : 'GPS paused'}
-            </Pill>
-          </View>
-          <LabelValue label="Route" value={trip.routeService.routeNo + ' – ' + trip.routeService.name} />
-          <LabelValue label="Started" value={new Date(trip.startTime).toLocaleTimeString()} />
-          <LabelValue
-            label="Direction"
-            value={isReturnTrip ? 'Return from VBIT (Reverse Drops with Dynamic ETAs)' : 'Inbound to VBIT Campus'}
-          />
-          <LabelValue
-            label="Progress"
-            value={trip.currentStopIndex + ' of ' + (trip.scheduleSnapshot?.stops?.length || trip.scheduleVersion.stops.length) + ' stops reached'}
-          />
-
-          {locationMessage && (
-            <Notice
-              tone={sharing ? 'success' : 'warning'}
-              title={sharing ? 'Location service' : 'Location not sharing'}
-              message={locationMessage}
-            />
-          )}
-
-          {sharing ? (
-            <Button label="Pause GPS sharing" variant="secondary" onPress={() => { void stopSharing(); }} />
-          ) : (
-            <Button label="Share live GPS" onPress={beginLocationSharing} size="lg" />
-          )}
-
-          {/* ─── Breakdown Reporting Section ("only when trip is running & live GPS is sharing") ─── */}
-          <View style={styles.breakdownSection}>
-            {breakdownReported ? (
-              <View style={styles.breakdownAlertActiveBox}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <Text style={{ fontSize: 22 }}>🚨</Text>
-                  <Text style={styles.breakdownAlertActiveTitle}>
-                    BUS BREAKDOWN BROADCASTED
-                  </Text>
-                </View>
-                <Text style={styles.breakdownAlertActiveText}>
-                  Route {reportedInfo?.routeNo || trip.routeService.routeNo} is reported broken down & stopped.
-                  {reportedInfo?.count
-                    ? ` Immediate notification was sent to ${reportedInfo.count} nearest route bus(es) and Transport Admin.`
-                    : ' Transport Admin has been alerted immediately.'}
-                </Text>
+    <View style={styles.screenContainer}>
+      {/* ─── CASE 1: TRIP IS RUNNING -> LIVE MAP VIEW WITH DRAG-UP TIMELINE (Assignment section removed) ─── */}
+      {trip ? (
+        <View style={styles.tripActiveWrapper}>
+          {/* Top Compact Trip HUD Header */}
+          <View style={styles.topHudBar}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.topHudRouteNo}>Route {trip.routeService.routeNo}</Text>
+                <Pill tone={sharing ? 'success' : 'warning'}>
+                  {sharing ? 'Live GPS Sharing' : 'GPS Paused'}
+                </Pill>
               </View>
-            ) : (
-              <>
-                {sharing ? (
-                  <View>
-                    <Text style={styles.breakdownInfoText}>
-                      Emergency breakdown? Send immediate proximity alert to the nearest 3 running buses and Transport Control:
-                    </Text>
-                    <Pressable
-                      onPress={handleOpenBreakdownModal}
-                      style={({ pressed }) => [
-                        styles.breakdownButton,
-                        pressed && { opacity: 0.8 },
+              <Text style={styles.topHudRouteName} numberOfLines={1}>
+                {trip.routeService.name} • {isReturnTrip ? 'Return Drops 🏠' : 'Morning Inbound 🎓'}
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={() => {
+                Alert.alert('End Active Trip', 'Are you sure you want to complete and end this trip?', [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'End Trip', style: 'destructive', onPress: () => endTrip.mutate(trip.id) },
+                ]);
+              }}
+              style={styles.hudEndTripBtn}
+            >
+              <Text style={styles.hudEndTripText}>End Trip</Text>
+            </Pressable>
+          </View>
+
+          {/* Full Live Campus Map */}
+          <View style={styles.mapContainer}>
+            <CampusMap
+              ref={mapRef}
+              style={StyleSheet.absoluteFill}
+              provider={PROVIDER_GOOGLE}
+              initialRegion={initialRegion}
+            >
+              {/* Route Polyline */}
+              {polylineCoordinates.length > 0 ? (
+                <Polyline
+                  coordinates={polylineCoordinates}
+                  strokeColor={colors.accent || ORANGE_ACCENT}
+                  strokeWidth={4}
+                />
+              ) : null}
+
+              {/* Stop Markers */}
+              {stops.map((entry, idx) => {
+                const isPassed = currentStopIndex > entry.sequenceOrder;
+                const isAtStop = currentStopIndex === entry.sequenceOrder && currentStopIndex > 0;
+                return (
+                  <Marker
+                    key={`driver-stop-${entry.stop.id}-${idx}`}
+                    coordinate={{
+                      latitude: entry.stop.latitude,
+                      longitude: entry.stop.longitude,
+                    }}
+                    title={entry.stop.name}
+                    description={`Stop ${entry.sequenceOrder} • Scheduled: ${entry.scheduledTime}`}
+                    anchor={{ x: 0.5, y: 0.5 }}
+                  >
+                    <View
+                      style={[
+                        styles.stopMarkerDot,
+                        isPassed
+                          ? styles.stopMarkerPassed
+                          : isAtStop
+                          ? styles.stopMarkerActive
+                          : styles.stopMarkerUpcoming,
                       ]}
                     >
-                      <Text style={{ fontSize: 18 }}>🚨</Text>
-                      <Text style={styles.breakdownButtonText}>Report Bus Breakdown</Text>
-                    </Pressable>
+                      <View style={styles.stopMarkerInner} />
+                    </View>
+                  </Marker>
+                );
+              })}
+
+              {/* Live Driver Bus Marker (Immediate GPS with 0 lag) */}
+              {driverCurrentCoords ? (
+                <Marker
+                  coordinate={driverCurrentCoords}
+                  title="Your Bus (Live)"
+                  description={`Route ${trip.routeService.routeNo}`}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={styles.busMarkerHalo}>
+                    <Text style={styles.busMarkerEmoji}>🚌</Text>
                   </View>
-                ) : (
-                  <View style={styles.breakdownDisabledBox}>
-                    <Text style={styles.breakdownDisabledText}>
-                      ℹ️ <Text style={{ fontWeight: '700', color: colors.text }}>Breakdown Alert Disabled:</Text> Start live GPS sharing above to enable breakdown reporting and automatically locate the nearest 3 buses.
-                    </Text>
-                  </View>
-                )}
-              </>
-            )}
+                </Marker>
+              ) : null}
+            </CampusMap>
+
+            {/* Floating Map HUD Controls */}
+            <View style={styles.mapFloatingControls}>
+              <Pressable
+                onPress={focusOnBus}
+                style={[styles.floatingHudBtn, !driverCurrentCoords && { opacity: 0.5 }]}
+                hitSlop={8}
+                accessibilityLabel="Center on My Bus"
+              >
+                <Text style={styles.floatingHudIcon}>🎯</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={resetMapZoom}
+                style={styles.floatingHudBtn}
+                hitSlop={8}
+                accessibilityLabel="Fit Route"
+              >
+                <Text style={styles.floatingHudIcon}>↻</Text>
+              </Pressable>
+            </View>
+
+            {/* Live GPS Status Pill Overlay */}
+            <View style={styles.mapStatusBadge}>
+              <View
+                style={[
+                  styles.pulsingDot,
+                  { backgroundColor: sharing ? '#10B981' : '#F59E0B' },
+                ]}
+              />
+              <Text style={styles.mapStatusBadgeText}>
+                {sharing ? 'Live GPS Active (Immediate)' : 'GPS Paused'}
+              </Text>
+            </View>
           </View>
 
-          <Notice
-            tone={queueStatus.queued ? 'warning' : 'info'}
-            title={queueStatus.queued ? queueStatus.queued + ' GPS updates waiting' : 'Offline queue ready'}
-            message={'At most 200 unsent samples are retained and retried in order. ' + (queueStatus.dropped ? queueStatus.dropped + ' oldest samples were dropped.' : 'No samples have been dropped.')}
+          {/* ─── Expandable Drag-Up Timeline Bottom Sheet (Identical theme to Passenger View) ─── */}
+          <Animated.View style={[styles.bottomSheet, { height: sheetHeightAnim }]}>
+            {/* Sheet Drag Handle Area */}
+            <View {...panResponder.panHandlers}>
+              <Pressable onPress={toggleSheet} style={styles.sheetHandleArea}>
+                <View style={styles.sheetHandleBar} />
+                <View style={styles.sheetHeaderRow}>
+                  <Text style={styles.sheetHeaderText}>
+                    {sheetExpanded ? '↓ Tap or drag down to collapse' : '↑ Tap or pull up for full stop timeline'}
+                  </Text>
+                  <Text style={styles.sheetStopsCount}>
+                    {currentStopIndex} / {stops.length} Reached
+                  </Text>
+                </View>
+              </Pressable>
+            </View>
+
+            {/* Stop Timeline List */}
+            <FlatList
+              data={stops}
+              keyExtractor={(item) => String(item.id)}
+              contentContainerStyle={styles.timelineList}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item, index }) => {
+                const isPassed = currentStopIndex > item.sequenceOrder;
+                const isAtStop = currentStopIndex === item.sequenceOrder && currentStopIndex > 0;
+                const isLast = index === stops.length - 1;
+
+                return (
+                  <Pressable
+                    onPress={() => focusOnStop(item)}
+                    style={({ pressed }) => [
+                      styles.timelineRow,
+                      pressed ? styles.timelineRowPressed : null,
+                    ]}
+                  >
+                    {/* Left Column: Vertical Line & Node */}
+                    <View style={styles.timelineNodeColumn}>
+                      <View
+                        style={[
+                          styles.timelineCircle,
+                          isPassed
+                            ? styles.timelineCirclePassed
+                            : isAtStop
+                            ? styles.timelineCircleActive
+                            : styles.timelineCircleUpcoming,
+                        ]}
+                      />
+                      {!isLast ? (
+                        <View
+                          style={[
+                            styles.timelineLine,
+                            isPassed ? styles.timelineLinePassed : styles.timelineLineUpcoming,
+                          ]}
+                        />
+                      ) : null}
+                    </View>
+
+                    {/* Middle Column: Stop Name & Timings */}
+                    <View style={styles.timelineDetails}>
+                      <Text style={styles.stopNameText} numberOfLines={2}>
+                        {item.stop.name.toUpperCase()}
+                      </Text>
+
+                      <View style={styles.timingRow}>
+                        <Text style={styles.arrivalText}>
+                          {isReturnTrip ? 'Drop: ' : '→ '}
+                          {item.scheduledTime}
+                        </Text>
+                        <Text style={styles.departureText}>
+                          ↳ {getDepartureTime(item.scheduledTime)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Right Column: Status Badge */}
+                    <View style={styles.statusCol}>
+                      {isPassed ? (
+                        <Text style={styles.statusBusLeft}>Bus Left</Text>
+                      ) : isAtStop ? (
+                        <Text style={styles.statusAtStop}>At Stop</Text>
+                      ) : (
+                        <Text style={styles.statusScheduled}>On Time</Text>
+                      )}
+                    </View>
+                  </Pressable>
+                );
+              }}
+              ListFooterComponent={
+                <View style={styles.timelineFooterActions}>
+                  {/* Location Message Notice if any */}
+                  {locationMessage && (
+                    <Notice
+                      tone={sharing ? 'success' : 'warning'}
+                      title={sharing ? 'Location service' : 'Location paused'}
+                      message={locationMessage}
+                    />
+                  )}
+
+                  {/* GPS Sharing Control */}
+                  <View style={{ marginVertical: 6 }}>
+                    {sharing ? (
+                      <Button
+                        label="Pause GPS sharing"
+                        variant="secondary"
+                        onPress={() => {
+                          void stopSharing();
+                        }}
+                      />
+                    ) : (
+                      <Button label="Share live GPS" onPress={beginLocationSharing} size="lg" />
+                    )}
+                  </View>
+
+                  {/* Breakdown Reporting Section */}
+                  <View style={styles.breakdownSectionBox}>
+                    {breakdownReported ? (
+                      <View style={styles.breakdownAlertActiveBox}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Text style={{ fontSize: 22 }}>🚨</Text>
+                          <Text style={styles.breakdownAlertActiveTitle}>
+                            BUS BREAKDOWN BROADCASTED
+                          </Text>
+                        </View>
+                        <Text style={styles.breakdownAlertActiveText}>
+                          Route {reportedInfo?.routeNo || trip.routeService.routeNo} is reported broken down & stopped.
+                          {reportedInfo?.count
+                            ? ` Alert sent to ${reportedInfo.count} nearest route bus(es) and Transport Admin.`
+                            : ' Transport Admin has been alerted immediately.'}
+                        </Text>
+                      </View>
+                    ) : (
+                      <>
+                        {sharing ? (
+                          <Pressable
+                            onPress={handleOpenBreakdownModal}
+                            style={({ pressed }) => [
+                              styles.breakdownButton,
+                              pressed && { opacity: 0.8 },
+                            ]}
+                          >
+                            <Text style={{ fontSize: 18 }}>🚨</Text>
+                            <Text style={styles.breakdownButtonText}>Report Bus Breakdown</Text>
+                          </Pressable>
+                        ) : (
+                          <View style={styles.breakdownDisabledBox}>
+                            <Text style={styles.breakdownDisabledText}>
+                              ℹ️ <Text style={{ fontWeight: '700', color: colors.text }}>Breakdown Alert Disabled:</Text> Start live GPS sharing above to enable breakdown reporting and automatically locate the nearest 3 buses.
+                            </Text>
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </View>
+
+                  {/* End Trip Action */}
+                  <Button
+                    label="End trip"
+                    variant="danger"
+                    onPress={() => {
+                      Alert.alert('End Trip', 'Are you sure you want to end this trip?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'End Trip', style: 'destructive', onPress: () => endTrip.mutate(trip.id) },
+                      ]);
+                    }}
+                    loading={endTrip.isPending}
+                  />
+                </View>
+              }
+            />
+          </Animated.View>
+        </View>
+      ) : (
+        /* ─── CASE 2: OFF-TRIP (Shows Assignment Card & Start Trip Options) ─── */
+        <ScrollView style={styles.offTripScroll} contentContainerStyle={{ padding: 16, gap: 16 }}>
+          <AppHeader
+            eyebrow="Driver console"
+            title={'Hello, ' + driver.name}
+            subtitle={
+              driver.assignedRoute
+                ? 'Assigned to Route ' + driver.assignedRoute.routeNo
+                : 'No route is currently assigned'
+            }
+            action={<Pill tone="neutral">Off trip</Pill>}
           />
 
-          {endTrip.isError && <Notice tone="danger" title="Could not end trip" message={endTrip.error.message} />}
-          <Button label="End trip" variant="danger" onPress={() => endTrip.mutate(trip.id)} loading={endTrip.isPending} />
-        </Card>
+          <Card>
+            <SectionTitle>Assignment</SectionTitle>
+            {driver.assignedRoute ? (
+              <>
+                <LabelValue
+                  label="Route"
+                  value={driver.assignedRoute.routeNo + ' – ' + driver.assignedRoute.name}
+                />
+                <LabelValue label="Area" value={driver.assignedRoute.areaCovered} />
+                <LabelValue label="Capacity" value={String(driver.assignedRoute.capacity)} />
+              </>
+            ) : (
+              <EmptyState
+                title="No route assigned"
+                message="Ask the transport administrator to assign this driver before starting a trip."
+              />
+            )}
+          </Card>
+
+          {activeTrip.isError && (
+            <Notice tone="danger" title="Trip status unavailable" message={activeTrip.error.message} />
+          )}
+
+          <Card>
+            <SectionTitle>Start Trip</SectionTitle>
+            <Text style={styles.help}>
+              Select your trip direction. Forward trips pick up students towards VBIT College. Return trips depart from VBIT and drop off students in reverse sequence with dynamic live ETAs.
+            </Text>
+
+            {/* Direction Selector */}
+            <View style={{ flexDirection: 'row', gap: 10, marginVertical: 12 }}>
+              <Pressable
+                onPress={() => setSelectedDirection('TO_COLLEGE')}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  borderRadius: 8,
+                  borderWidth: 2,
+                  borderColor: selectedDirection === 'TO_COLLEGE' ? '#EA580C' : '#334155',
+                  backgroundColor:
+                    selectedDirection === 'TO_COLLEGE' ? 'rgba(234, 88, 12, 0.15)' : 'transparent',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 22 }}>🎓</Text>
+                <Text
+                  style={{
+                    fontWeight: '700',
+                    color: selectedDirection === 'TO_COLLEGE' ? '#EA580C' : '#94a3b8',
+                    fontSize: 13,
+                    marginTop: 4,
+                  }}
+                >
+                  To College
+                </Text>
+                <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'center', marginTop: 2 }}>
+                  City Stops &rarr; VBIT
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setSelectedDirection('FROM_COLLEGE')}
+                style={{
+                  flex: 1,
+                  padding: 12,
+                  borderRadius: 8,
+                  borderWidth: 2,
+                  borderColor: selectedDirection === 'FROM_COLLEGE' ? '#EA580C' : '#334155',
+                  backgroundColor:
+                    selectedDirection === 'FROM_COLLEGE' ? 'rgba(234, 88, 12, 0.15)' : 'transparent',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ fontSize: 22 }}>🏠</Text>
+                <Text
+                  style={{
+                    fontWeight: '700',
+                    color: selectedDirection === 'FROM_COLLEGE' ? '#EA580C' : '#94a3b8',
+                    fontSize: 13,
+                    marginTop: 4,
+                  }}
+                >
+                  Return from College
+                </Text>
+                <Text style={{ fontSize: 11, color: '#64748b', textAlign: 'center', marginTop: 2 }}>
+                  VBIT &rarr; Reverse Drops
+                </Text>
+              </Pressable>
+            </View>
+
+            {startTrip.isError && (
+              <Notice tone="danger" title="Could not start trip" message={startTrip.error.message} />
+            )}
+            <Button
+              label={
+                selectedDirection === 'FROM_COLLEGE'
+                  ? 'Start Return Trip from VBIT'
+                  : 'Start Trip to College'
+              }
+              onPress={() => startTrip.mutate(selectedDirection)}
+              loading={startTrip.isPending}
+              disabled={!driver.assignedRoute}
+              size="lg"
+            />
+          </Card>
+
+          <Button label="Log out" variant="ghost" onPress={logout} />
+        </ScrollView>
       )}
 
-      <Button label="Log out" variant="ghost" onPress={logout} />
-
-      {/* ─── MODAL 1: REPORT BUS BREAKDOWN (For Current Driver) ─── */}
+      {/* ─── MODAL 1: REPORT BUS BREAKDOWN ─── */}
       <Modal visible={breakdownModalOpen} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -641,10 +1130,7 @@ export default function DriverConsoleScreen() {
                   )}
                 </Pressable>
 
-                <Pressable
-                  onPress={() => setBreakdownModalOpen(false)}
-                  style={styles.cancelBtn}
-                >
+                <Pressable onPress={() => setBreakdownModalOpen(false)} style={styles.cancelBtn}>
                   <Text style={styles.cancelBtnText}>Cancel</Text>
                 </Pressable>
               </View>
@@ -653,20 +1139,22 @@ export default function DriverConsoleScreen() {
         </View>
       </Modal>
 
-      {/* ─── MODAL 2: INCOMING BREAKDOWN ALERT (Received from other nearby driver) ─── */}
+      {/* ─── MODAL 2: INCOMING BREAKDOWN ALERT (From other nearby driver) ─── */}
       <Modal visible={Boolean(incomingAlert)} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { borderColor: '#EF4444', borderWidth: 2 }]}>
             <View style={{ alignItems: 'center', marginBottom: 12 }}>
-              <View style={{
-                width: 52,
-                height: 52,
-                borderRadius: 26,
-                backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: 8,
-              }}>
+              <View
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 26,
+                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 8,
+                }}
+              >
                 <Text style={{ fontSize: 28 }}>🚨</Text>
               </View>
               <Text style={{ color: '#EF4444', fontSize: 18, fontWeight: '800', textAlign: 'center' }}>
@@ -681,7 +1169,9 @@ export default function DriverConsoleScreen() {
               <View style={styles.alertDetailBox}>
                 <View style={styles.alertDetailRow}>
                   <Text style={styles.alertDetailLabel}>BROKEN DOWN BUS:</Text>
-                  <Text style={styles.alertDetailValue}>Route {incomingAlert.brokenDownRouteNo} ({incomingAlert.brokenDownRouteName})</Text>
+                  <Text style={styles.alertDetailValue}>
+                    Route {incomingAlert.brokenDownRouteNo} ({incomingAlert.brokenDownRouteName})
+                  </Text>
                 </View>
                 <View style={styles.alertDetailRow}>
                   <Text style={styles.alertDetailLabel}>DISTANCE TO YOU:</Text>
@@ -721,313 +1211,627 @@ export default function DriverConsoleScreen() {
                 </Pressable>
               ) : null}
 
-              <Pressable
-                onPress={() => setIncomingAlert(null)}
-                style={styles.acknowledgeBtn}
-              >
+              <Pressable onPress={() => setIncomingAlert(null)} style={styles.acknowledgeBtn}>
                 <Text style={styles.acknowledgeBtnText}>Acknowledge Alert & Dismiss</Text>
               </Pressable>
             </View>
           </View>
         </View>
       </Modal>
-    </Screen>
+    </View>
   );
 }
 
 const useStyles = () => {
-  const { colors } = useTheme();
-  return useMemo(() => StyleSheet.create({
-    help: { color: colors.textSecondary, lineHeight: 21 },
-    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
-    breakdownSection: {
-      marginTop: 14,
-      paddingTop: 14,
-      borderTopWidth: 1,
-      borderColor: colors.border,
-    },
-    breakdownInfoText: {
-      color: colors.textSecondary,
-      fontSize: 12,
-      marginBottom: 8,
-      lineHeight: 18,
-    },
-    breakdownButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#DC2626',
-      paddingVertical: 14,
-      paddingHorizontal: 16,
-      borderRadius: radius.md,
-      gap: 8,
-      shadowColor: '#DC2626',
-      shadowOffset: { width: 0, height: 3 },
-      shadowOpacity: 0.35,
-      shadowRadius: 6,
-      elevation: 4,
-    },
-    breakdownButtonText: {
-      color: '#FFFFFF',
-      fontSize: 15,
-      fontWeight: '700',
-    },
-    breakdownDisabledBox: {
-      backgroundColor: 'rgba(234, 88, 12, 0.08)',
-      borderWidth: 1,
-      borderColor: 'rgba(234, 88, 12, 0.25)',
-      borderRadius: radius.md,
-      padding: 12,
-    },
-    breakdownDisabledText: {
-      color: colors.textSecondary,
-      fontSize: 12,
-      lineHeight: 18,
-    },
-    breakdownAlertActiveBox: {
-      backgroundColor: 'rgba(239, 68, 68, 0.12)',
-      borderWidth: 1,
-      borderColor: '#EF4444',
-      borderRadius: radius.md,
-      padding: 14,
-    },
-    breakdownAlertActiveTitle: {
-      color: '#EF4444',
-      fontWeight: '800',
-      fontSize: 15,
-    },
-    breakdownAlertActiveText: {
-      color: colors.textSecondary,
-      fontSize: 13,
-      marginTop: 4,
-      lineHeight: 18,
-    },
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      justifyContent: 'flex-end',
-    },
-    modalContent: {
-      backgroundColor: colors.surfaceElevated || '#1e293b',
-      borderTopLeftRadius: 20,
-      borderTopRightRadius: 20,
-      padding: 20,
-      maxHeight: '90%',
-    },
-    modalHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 12,
-    },
-    modalTitle: {
-      fontSize: 18,
-      fontWeight: '700',
-      color: colors.text,
-    },
-    modalClose: {
-      fontSize: 18,
-      color: colors.textSecondary,
-      fontWeight: '700',
-      padding: 4,
-    },
-    modalSubtitle: {
-      fontSize: 13,
-      color: colors.textSecondary,
-      lineHeight: 18,
-      marginBottom: 14,
-    },
-    sectionHeader: {
-      fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 0.8,
-      color: colors.textSecondary,
-      marginBottom: 6,
-    },
-    nearbyLoadingBox: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      padding: 16,
-      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
-      borderRadius: radius.md,
-    },
-    nearbyLoadingText: {
-      fontSize: 13,
-      color: colors.textSecondary,
-    },
-    nearbyBusCard: {
-      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
-      padding: 12,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    nearbyBusHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 4,
-    },
-    routeBadge: {
-      backgroundColor: 'rgba(234, 88, 12, 0.15)',
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-      borderRadius: 6,
-      borderWidth: 1,
-      borderColor: 'rgba(234, 88, 12, 0.4)',
-    },
-    routeBadgeText: {
-      color: '#EA580C',
-      fontSize: 12,
-      fontWeight: '700',
-    },
-    distanceBadge: {
-      color: '#f59e0b',
-      fontSize: 12,
-      fontWeight: '700',
-    },
-    nearbyRouteName: {
-      fontSize: 13,
-      fontWeight: '600',
-      color: colors.text,
-      marginTop: 2,
-    },
-    nearbyDriverInfo: {
-      fontSize: 11,
-      color: colors.textSecondary,
-      marginTop: 2,
-    },
-    nearbyNote: {
-      fontSize: 11,
-      color: '#10B981',
-      fontWeight: '600',
-      marginTop: 2,
-    },
-    noNearbyBox: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      padding: 14,
-      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
-    noNearbyText: {
-      flex: 1,
-      fontSize: 12,
-      color: colors.textSecondary,
-      lineHeight: 17,
-    },
-    presetPillsRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6,
-      marginBottom: 8,
-    },
-    presetPill: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 6,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface || 'transparent',
-    },
-    presetPillActive: {
-      borderColor: '#EA580C',
-      backgroundColor: 'rgba(234, 88, 12, 0.15)',
-    },
-    presetPillText: {
-      fontSize: 11,
-      color: colors.textSecondary,
-    },
-    presetPillTextActive: {
-      color: '#EA580C',
-      fontWeight: '700',
-    },
-    reasonInput: {
-      backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: radius.md,
-      padding: 10,
-      color: colors.text,
-      fontSize: 13,
-      minHeight: 56,
-      textAlignVertical: 'top',
-    },
-    submitBreakdownBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#DC2626',
-      paddingVertical: 14,
-      borderRadius: radius.md,
-      gap: 8,
-    },
-    submitBreakdownBtnText: {
-      color: '#FFFFFF',
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    cancelBtn: {
-      alignItems: 'center',
-      paddingVertical: 10,
-    },
-    cancelBtnText: {
-      color: colors.textSecondary,
-      fontSize: 14,
-    },
-    alertDetailBox: {
-      backgroundColor: 'rgba(15, 23, 42, 0.85)',
-      borderRadius: radius.md,
-      padding: 12,
-      borderWidth: 1,
-      borderColor: 'rgba(239, 68, 68, 0.3)',
-      gap: 6,
-    },
-    alertDetailRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
-    alertDetailLabel: {
-      fontSize: 11,
-      color: '#94a3b8',
-      fontWeight: '700',
-    },
-    alertDetailValue: {
-      fontSize: 12,
-      color: '#f8fafc',
-      fontWeight: '600',
-      maxWidth: '65%',
-      textAlign: 'right',
-    },
-    callDriverBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#10B981',
-      paddingVertical: 12,
-      borderRadius: radius.md,
-      gap: 8,
-    },
-    callDriverBtnText: {
-      color: '#FFFFFF',
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    acknowledgeBtn: {
-      alignItems: 'center',
-      paddingVertical: 12,
-      borderRadius: radius.md,
-      backgroundColor: colors.surface || '#334155',
-    },
-    acknowledgeBtnText: {
-      color: colors.text,
-      fontSize: 13,
-      fontWeight: '600',
-    },
-  }), [colors]);
+  const { colors, isDark } = useTheme();
+  return useMemo(
+    () =>
+      StyleSheet.create({
+        screenContainer: {
+          flex: 1,
+          backgroundColor: colors.background,
+        },
+        offTripScroll: {
+          flex: 1,
+        },
+        help: {
+          color: colors.textSecondary,
+          lineHeight: 21,
+        },
+        tripActiveWrapper: {
+          flex: 1,
+          position: 'relative',
+        },
+        topHudBar: {
+          position: 'absolute',
+          top: Platform.OS === 'ios' ? 44 : 12,
+          left: 12,
+          right: 12,
+          zIndex: 40,
+          backgroundColor: isDark ? 'rgba(15, 23, 42, 0.94)' : 'rgba(255, 255, 255, 0.96)',
+          borderRadius: 14,
+          padding: 12,
+          flexDirection: 'row',
+          alignItems: 'center',
+          borderWidth: 1,
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.25,
+          shadowRadius: 10,
+          elevation: 6,
+        },
+        topHudRouteNo: {
+          fontSize: 16,
+          fontWeight: '800',
+          color: '#EA580C',
+        },
+        topHudRouteName: {
+          fontSize: 12,
+          color: colors.textSecondary,
+          marginTop: 2,
+        },
+        hudEndTripBtn: {
+          backgroundColor: 'rgba(239, 68, 68, 0.15)',
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          borderWidth: 1,
+          borderColor: 'rgba(239, 68, 68, 0.4)',
+        },
+        hudEndTripText: {
+          color: '#EF4444',
+          fontWeight: '700',
+          fontSize: 12,
+        },
+        mapContainer: {
+          flex: 1,
+          width: '100%',
+        },
+        mapFloatingControls: {
+          position: 'absolute',
+          top: Platform.OS === 'ios' ? 120 : 86,
+          right: 14,
+          zIndex: 35,
+          gap: 10,
+        },
+        floatingHudBtn: {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: isDark ? 'rgba(30, 41, 59, 0.92)' : 'rgba(255, 255, 255, 0.95)',
+          borderWidth: 1,
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.12)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.3,
+          shadowRadius: 6,
+          elevation: 5,
+        },
+        floatingHudIcon: {
+          fontSize: 18,
+        },
+        mapStatusBadge: {
+          position: 'absolute',
+          top: Platform.OS === 'ios' ? 120 : 86,
+          left: 14,
+          zIndex: 35,
+          backgroundColor: isDark ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.92)',
+          paddingHorizontal: 10,
+          paddingVertical: 5,
+          borderRadius: 20,
+          borderWidth: 1,
+          borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+        },
+        pulsingDot: {
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+        },
+        mapStatusBadgeText: {
+          fontSize: 11,
+          fontWeight: '700',
+          color: colors.text,
+        },
+        stopMarkerDot: {
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 2,
+          borderColor: '#ffffff',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.3,
+          shadowRadius: 3,
+          elevation: 3,
+        },
+        stopMarkerPassed: {
+          backgroundColor: '#10B981',
+        },
+        stopMarkerActive: {
+          backgroundColor: '#EA580C',
+          transform: [{ scale: 1.25 }],
+        },
+        stopMarkerUpcoming: {
+          backgroundColor: '#64748B',
+        },
+        stopMarkerInner: {
+          width: 6,
+          height: 6,
+          borderRadius: 3,
+          backgroundColor: '#ffffff',
+        },
+        busMarkerHalo: {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: 'rgba(234, 88, 12, 0.25)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 2,
+          borderColor: '#EA580C',
+        },
+        busMarkerEmoji: {
+          fontSize: 22,
+        },
+
+        // Bottom Sheet Styles
+        bottomSheet: {
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          backgroundColor: colors.surfaceElevated || '#1e293b',
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
+          borderTopWidth: 1,
+          borderColor: colors.border,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 12,
+          elevation: 16,
+          zIndex: 50,
+          overflow: 'hidden',
+        },
+        sheetHandleArea: {
+          paddingVertical: 10,
+          paddingHorizontal: 20,
+          alignItems: 'center',
+          borderBottomWidth: 1,
+          borderBottomColor: colors.border,
+        },
+        sheetHandleBar: {
+          width: 44,
+          height: 5,
+          borderRadius: 3,
+          backgroundColor: colors.textSecondary,
+          opacity: 0.5,
+          marginBottom: 8,
+        },
+        sheetHeaderRow: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          width: '100%',
+        },
+        sheetHeaderText: {
+          fontSize: 12,
+          color: colors.textSecondary,
+          fontWeight: '600',
+        },
+        sheetStopsCount: {
+          fontSize: 12,
+          fontWeight: '700',
+          color: '#EA580C',
+        },
+
+        // Timeline Styles
+        timelineList: {
+          padding: 16,
+          paddingBottom: 36,
+        },
+        timelineRow: {
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          minHeight: 52,
+        },
+        timelineRowPressed: {
+          opacity: 0.7,
+        },
+        timelineNodeColumn: {
+          width: 24,
+          alignItems: 'center',
+          marginRight: 12,
+        },
+        timelineCircle: {
+          width: 12,
+          height: 12,
+          borderRadius: 6,
+          marginTop: 4,
+          borderWidth: 2,
+          borderColor: colors.surfaceElevated || '#1e293b',
+        },
+        timelineCirclePassed: {
+          backgroundColor: '#10B981',
+        },
+        timelineCircleActive: {
+          backgroundColor: '#EA580C',
+          borderColor: '#EA580C',
+          shadowColor: '#EA580C',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.8,
+          shadowRadius: 4,
+          elevation: 4,
+        },
+        timelineCircleUpcoming: {
+          backgroundColor: '#475569',
+        },
+        timelineLine: {
+          width: 2,
+          flex: 1,
+          minHeight: 38,
+          marginVertical: 2,
+        },
+        timelineLinePassed: {
+          backgroundColor: '#10B981',
+        },
+        timelineLineUpcoming: {
+          backgroundColor: '#334155',
+        },
+        timelineDetails: {
+          flex: 1,
+          paddingBottom: 12,
+        },
+        stopNameText: {
+          fontSize: 13,
+          fontWeight: '700',
+          color: colors.text,
+          letterSpacing: 0.3,
+        },
+        timingRow: {
+          flexDirection: 'row',
+          gap: 12,
+          marginTop: 3,
+        },
+        arrivalText: {
+          fontSize: 11,
+          color: colors.textSecondary,
+          fontWeight: '500',
+        },
+        departureText: {
+          fontSize: 11,
+          color: colors.textSecondary,
+          opacity: 0.8,
+        },
+        statusCol: {
+          alignItems: 'flex-end',
+          paddingTop: 2,
+        },
+        statusBusLeft: {
+          fontSize: 10,
+          fontWeight: '700',
+          color: '#10B981',
+          backgroundColor: 'rgba(16, 185, 129, 0.12)',
+          paddingHorizontal: 7,
+          paddingVertical: 2,
+          borderRadius: 6,
+        },
+        statusAtStop: {
+          fontSize: 10,
+          fontWeight: '800',
+          color: '#EA580C',
+          backgroundColor: 'rgba(234, 88, 12, 0.15)',
+          paddingHorizontal: 7,
+          paddingVertical: 2,
+          borderRadius: 6,
+        },
+        statusScheduled: {
+          fontSize: 10,
+          fontWeight: '600',
+          color: colors.textSecondary,
+          backgroundColor: 'rgba(100, 116, 139, 0.12)',
+          paddingHorizontal: 7,
+          paddingVertical: 2,
+          borderRadius: 6,
+        },
+
+        timelineFooterActions: {
+          marginTop: 16,
+          paddingTop: 16,
+          borderTopWidth: 1,
+          borderTopColor: colors.border,
+          gap: 10,
+        },
+        breakdownSectionBox: {
+          marginVertical: 4,
+        },
+        breakdownButton: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#DC2626',
+          paddingVertical: 13,
+          borderRadius: radius.md,
+          gap: 8,
+          shadowColor: '#DC2626',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.3,
+          shadowRadius: 5,
+          elevation: 3,
+        },
+        breakdownButtonText: {
+          color: '#FFFFFF',
+          fontSize: 14,
+          fontWeight: '700',
+        },
+        breakdownDisabledBox: {
+          backgroundColor: 'rgba(234, 88, 12, 0.08)',
+          borderWidth: 1,
+          borderColor: 'rgba(234, 88, 12, 0.25)',
+          borderRadius: radius.md,
+          padding: 12,
+        },
+        breakdownDisabledText: {
+          color: colors.textSecondary,
+          fontSize: 12,
+          lineHeight: 18,
+        },
+        breakdownAlertActiveBox: {
+          backgroundColor: 'rgba(239, 68, 68, 0.12)',
+          borderWidth: 1,
+          borderColor: '#EF4444',
+          borderRadius: radius.md,
+          padding: 12,
+        },
+        breakdownAlertActiveTitle: {
+          color: '#EF4444',
+          fontWeight: '800',
+          fontSize: 14,
+        },
+        breakdownAlertActiveText: {
+          color: colors.textSecondary,
+          fontSize: 12,
+          marginTop: 4,
+          lineHeight: 17,
+        },
+
+        // Modal Styles
+        modalOverlay: {
+          flex: 1,
+          backgroundColor: 'rgba(0, 0, 0, 0.75)',
+          justifyContent: 'flex-end',
+        },
+        modalContent: {
+          backgroundColor: colors.surfaceElevated || '#1e293b',
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          padding: 20,
+          maxHeight: '90%',
+        },
+        modalHeader: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 12,
+        },
+        modalTitle: {
+          fontSize: 18,
+          fontWeight: '700',
+          color: colors.text,
+        },
+        modalClose: {
+          fontSize: 18,
+          color: colors.textSecondary,
+          fontWeight: '700',
+          padding: 4,
+        },
+        modalSubtitle: {
+          fontSize: 13,
+          color: colors.textSecondary,
+          lineHeight: 18,
+          marginBottom: 14,
+        },
+        sectionHeader: {
+          fontSize: 11,
+          fontWeight: '700',
+          letterSpacing: 0.8,
+          color: colors.textSecondary,
+          marginBottom: 6,
+        },
+        nearbyLoadingBox: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          padding: 16,
+          backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+          borderRadius: radius.md,
+        },
+        nearbyLoadingText: {
+          fontSize: 13,
+          color: colors.textSecondary,
+        },
+        nearbyBusCard: {
+          backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+          padding: 12,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        nearbyBusHeader: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 4,
+        },
+        routeBadge: {
+          backgroundColor: 'rgba(234, 88, 12, 0.15)',
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          borderRadius: 6,
+          borderWidth: 1,
+          borderColor: 'rgba(234, 88, 12, 0.4)',
+        },
+        routeBadgeText: {
+          color: '#EA580C',
+          fontSize: 12,
+          fontWeight: '700',
+        },
+        distanceBadge: {
+          color: '#f59e0b',
+          fontSize: 12,
+          fontWeight: '700',
+        },
+        nearbyRouteName: {
+          fontSize: 13,
+          fontWeight: '600',
+          color: colors.text,
+          marginTop: 2,
+        },
+        nearbyDriverInfo: {
+          fontSize: 11,
+          color: colors.textSecondary,
+          marginTop: 2,
+        },
+        nearbyNote: {
+          fontSize: 11,
+          color: '#10B981',
+          fontWeight: '600',
+          marginTop: 2,
+        },
+        noNearbyBox: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          padding: 14,
+          backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        noNearbyText: {
+          flex: 1,
+          fontSize: 12,
+          color: colors.textSecondary,
+          lineHeight: 17,
+        },
+        presetPillsRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 6,
+          marginBottom: 8,
+        },
+        presetPill: {
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: 6,
+          borderWidth: 1,
+          borderColor: colors.border,
+          backgroundColor: colors.surface || 'transparent',
+        },
+        presetPillActive: {
+          borderColor: '#EA580C',
+          backgroundColor: 'rgba(234, 88, 12, 0.15)',
+        },
+        presetPillText: {
+          fontSize: 11,
+          color: colors.textSecondary,
+        },
+        presetPillTextActive: {
+          color: '#EA580C',
+          fontWeight: '700',
+        },
+        reasonInput: {
+          backgroundColor: colors.surface || 'rgba(15, 23, 42, 0.6)',
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: radius.md,
+          padding: 10,
+          color: colors.text,
+          fontSize: 13,
+          minHeight: 56,
+          textAlignVertical: 'top',
+        },
+        submitBreakdownBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#DC2626',
+          paddingVertical: 14,
+          borderRadius: radius.md,
+          gap: 8,
+        },
+        submitBreakdownBtnText: {
+          color: '#FFFFFF',
+          fontSize: 14,
+          fontWeight: '700',
+        },
+        cancelBtn: {
+          alignItems: 'center',
+          paddingVertical: 10,
+        },
+        cancelBtnText: {
+          color: colors.textSecondary,
+          fontSize: 14,
+        },
+        alertDetailBox: {
+          backgroundColor: 'rgba(15, 23, 42, 0.85)',
+          borderRadius: radius.md,
+          padding: 12,
+          borderWidth: 1,
+          borderColor: 'rgba(239, 68, 68, 0.3)',
+          gap: 6,
+        },
+        alertDetailRow: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        },
+        alertDetailLabel: {
+          fontSize: 11,
+          color: '#94a3b8',
+          fontWeight: '700',
+        },
+        alertDetailValue: {
+          fontSize: 12,
+          color: '#f8fafc',
+          fontWeight: '600',
+          maxWidth: '65%',
+          textAlign: 'right',
+        },
+        callDriverBtn: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: '#10B981',
+          paddingVertical: 12,
+          borderRadius: radius.md,
+          gap: 8,
+        },
+        callDriverBtnText: {
+          color: '#FFFFFF',
+          fontSize: 14,
+          fontWeight: '700',
+        },
+        acknowledgeBtn: {
+          alignItems: 'center',
+          paddingVertical: 12,
+          borderRadius: radius.md,
+          backgroundColor: colors.surface || '#334155',
+        },
+        acknowledgeBtnText: {
+          color: colors.text,
+          fontSize: 13,
+          fontWeight: '600',
+        },
+      }),
+    [colors, isDark]
+  );
 };

@@ -318,7 +318,7 @@ router.get('/routes/:routeNo', async (req, res) => {
       const latestLocation = await prisma.liveLocation.findFirst({
         where: { tripId: runningTrip.id, acceptedForEta: true },
         orderBy: { receivedAt: 'desc' },
-        select: { receivedAt: true },
+        select: { latitude: true, longitude: true, receivedAt: true, deviceSpeedKmh: true },
       });
       activeTrip = {
         id: runningTrip.id,
@@ -327,6 +327,9 @@ router.get('/routes/:routeNo', async (req, res) => {
         tripDirection: runningTrip.tripDirection || 'TO_COLLEGE',
         trackingState: locationFreshness(latestLocation?.receivedAt),
         lastLocationAt: latestLocation?.receivedAt || null,
+        latitude: latestLocation?.latitude || null,
+        longitude: latestLocation?.longitude || null,
+        speedKmh: latestLocation?.deviceSpeedKmh != null ? Math.round(latestLocation.deviceSpeedKmh) : null,
       };
 
       // If running trip has snapshot stops, show live snapshot stops for current journey (e.g. reverse return trip)

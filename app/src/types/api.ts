@@ -39,6 +39,9 @@ export type RouteDetail = Omit<RouteSummary, 'roster'> & {
     currentStopIndex: number;
     tripDirection?: 'TO_COLLEGE' | 'FROM_COLLEGE';
     trackingState?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    speedKmh?: number | null;
   } | null;
   availableDirections?: string[];
   roster: { name: string; academicYear: string } | null;
@@ -105,8 +108,25 @@ export type DriverTrip = {
     capacity: number;
   };
   tripDirection?: string;
-  scheduleSnapshot?: any;
-  scheduleVersion: { stops: ScheduleStop[] };
+  scheduleSnapshot?: {
+    id?: number;
+    name?: string;
+    direction?: string;
+    geometryPolyline?: string | null;
+    stops: Array<{
+      scheduleStopId: number;
+      stopId: number;
+      sequenceOrder: number;
+      scheduledTime: string;
+      name: string;
+      latitude: number;
+      longitude: number;
+    }>;
+  } | null;
+  scheduleVersion: {
+    geometryPolyline?: string | null;
+    stops: ScheduleStop[];
+  };
 };
 
 export type BusUpdate = {

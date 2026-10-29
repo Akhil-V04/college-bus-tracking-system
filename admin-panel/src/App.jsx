@@ -16,6 +16,7 @@ import IssuesScreen from './screens/IssuesScreen';
 import KnowledgeScreen from './screens/KnowledgeScreen';
 import NotificationsScreen from './screens/NotificationsScreen';
 import StopsScreen from './screens/StopsScreen';
+import LiveTrackingScreen from './screens/LiveTrackingScreen';
 import ScheduleBuilderScreen from './screens/ScheduleBuilderScreen';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
             <Route index element={<Dashboard />} />
             <Route path="routes" element={<RouteServicesScreen />} />
             <Route path="stops" element={<StopsScreen />} />
+            <Route path="live-tracking" element={<LiveTrackingScreen />} />
             <Route path="schedules" element={<SchedulesScreen />} />
             <Route path="schedule-builder" element={<ScheduleBuilderScreen />} />
             <Route path="rosters" element={<RostersScreen />} />

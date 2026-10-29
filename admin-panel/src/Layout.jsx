@@ -7,6 +7,7 @@ const navigation = [
   { to: '/', label: 'Overview', iconName: 'overview', fallback: '⌂', end: true },
   { to: '/routes', label: 'Routes & capacity', iconName: 'routes', fallback: '↝' },
   { to: '/stops', label: 'Stops & Map', iconName: 'stops', fallback: '📍' },
+  { to: '/live-tracking', label: 'Live Bus Tracking', iconName: 'routes', fallback: '🚌' },
   { to: '/schedules', label: 'Schedules', iconName: 'schedules', fallback: '◷' },
   { to: '/schedule-builder', label: 'Event Overrides', iconName: 'schedule-builder', fallback: '⚡' },
   { to: '/rosters', label: 'Annual rosters', iconName: 'rosters', fallback: '▤' },
