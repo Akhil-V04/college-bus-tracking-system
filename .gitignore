@@ -20,6 +20,8 @@ backend/prisma/*.db-journal
 .expo/
 app/.expo/
 app/web-build/
+app/android/
+app/ios/
 mobile-app/.expo/
 mobile-app/web-build/
 mobile-app/.metro-health-check*
