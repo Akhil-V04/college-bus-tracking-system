@@ -72,12 +72,14 @@ export default function HeroLandingPage() {
 
   const handleDownloadClick = () => {
     setDownloadToast(true);
-    // Trigger download from backend or environment URL
-    const backendUrl = import.meta.env.VITE_API_URL 
-      ? import.meta.env.VITE_API_URL.replace('/api/v1', '') 
-      : `${window.location.protocol}//${window.location.hostname}:4000`;
-    window.location.href = `${backendUrl}/download/apk`;
-    setTimeout(() => setDownloadToast(false), 4500);
+    // Trigger direct instant APK download from public bundle
+    const link = document.createElement('a');
+    link.href = '/campus-transit.apk';
+    link.download = 'campus-transit-vbit.apk';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => setDownloadToast(false), 5000);
   };
 
   const scrollToTimetable = () => {

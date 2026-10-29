@@ -124,7 +124,8 @@ app.get('/download', (_req, res) => {
 app.get('/download/apk', (_req, res) => {
   const apkPath = path.join(publicDir, 'campus-transit.apk');
   if (fs.existsSync(apkPath)) {
-    return res.download(apkPath, 'campus-transit.apk');
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    return res.download(apkPath, 'campus-transit-vbit.apk');
   }
   return res.redirect('/download?status=build_ready');
 });
