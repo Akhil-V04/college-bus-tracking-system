@@ -359,8 +359,13 @@ router.get('/routes/:routeNo', async (req, res) => {
       }
     }
 
+    const scheduleAreaCovered = effectiveSchedule?.stops?.length
+      ? effectiveSchedule.stops.map((s) => `${s.stop.name} (${s.scheduledTime})`).join('; ')
+      : route.areaCovered;
+
     return res.json({
       ...route,
+      areaCovered: scheduleAreaCovered,
       schedule: effectiveSchedule
         ? {
             ...effectiveSchedule,

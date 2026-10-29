@@ -525,6 +525,164 @@ router.post('/:id/transfer', requireAuth(['admin']), async (req, res) => {
   }
 });
 
+router.get('/history', requireAuth(['admin']), async (req, res) => {
+  try {
+    const routeNo = req.query.routeNo ? String(req.query.routeNo).trim() : null;
+    const status = req.query.status ? String(req.query.status).trim().toUpperCase() : null;
+    const direction = req.query.direction ? String(req.query.direction).trim().toUpperCase() : null;
+    const dateStr = req.query.date ? String(req.query.date).trim() : null;
+    const search = req.query.search ? String(req.query.search).trim() : null;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    const isExport = req.query.export === 'true' || req.query.format === 'csv';
+
+    const where = {};
+    if (routeNo && routeNo !== 'ALL') {
+      where.routeService = { routeNo };
+    }
+    if (status && status !== 'ALL') {
+      where.status = status;
+    }
+    if (direction && direction !== 'ALL') {
+      where.tripDirection = direction;
+    }
+    if (dateStr) {
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) {
+        const startOfDay = new Date(d);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(d);
+        endOfDay.setHours(23, 59, 59, 999);
+        where.date = { gte: startOfDay, lte: endOfDay };
+      }
+    }
+    if (search) {
+      where.OR = [
+        { routeService: { routeNo: { contains: search, mode: 'insensitive' } } },
+        { routeService: { name: { contains: search, mode: 'insensitive' } } },
+        { driver: { name: { contains: search, mode: 'insensitive' } } },
+        { driver: { driverCode: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    const [trips, total] = await Promise.all([
+      prisma.trip.findMany({
+        where,
+        orderBy: [{ startTime: 'desc' }, { id: 'desc' }],
+        skip: isExport ? 0 : (page - 1) * limit,
+        take: isExport ? 1000 : limit,
+        include: {
+          routeService: { select: { id: true, routeNo: true, name: true, areaCovered: true, capacity: true } },
+          driver: { select: { id: true, name: true, driverCode: true, phone: true } },
+          stopEvents: {
+            orderBy: { detectedAt: 'asc' },
+            include: {
+              scheduleStop: {
+                select: {
+                  id: true,
+                  sequenceOrder: true,
+                  scheduledTime: true,
+                  stop: { select: { id: true, name: true } },
+                },
+              },
+            },
+          },
+        },
+      }),
+      prisma.trip.count({ where }),
+    ]);
+
+    const formatted = trips.map((t) => {
+      const snapshotStops = Array.isArray(t.scheduleSnapshot?.stops) ? t.scheduleSnapshot.stops : [];
+      const eventMap = new Map();
+      (t.stopEvents || []).forEach((e) => {
+        if (e.scheduleStopId) eventMap.set(e.scheduleStopId, e);
+      });
+
+      const timeline = snapshotStops.map((s, idx) => {
+        const ev = eventMap.get(s.scheduleStopId);
+        return {
+          sequenceOrder: s.sequenceOrder || idx + 1,
+          stopName: s.name || 'Stop ' + (idx + 1),
+          scheduledTime: s.scheduledTime,
+          reachedAt: ev?.detectedAt || null,
+          status: ev ? ev.status : (t.currentStopIndex > idx ? 'REACHED' : 'PENDING'),
+        };
+      });
+
+      const durationMinutes = t.startTime && t.endTime
+        ? Math.round((new Date(t.endTime) - new Date(t.startTime)) / 60000)
+        : t.startTime
+        ? Math.round((Date.now() - new Date(t.startTime)) / 60000)
+        : null;
+
+      return {
+        id: t.id,
+        routeNo: t.routeService?.routeNo || 'N/A',
+        routeName: t.routeService?.name || 'N/A',
+        driverName: t.driver?.name || 'Assigned Driver',
+        driverCode: t.driver?.driverCode || '',
+        driverPhone: t.driver?.phone || '',
+        direction: t.tripDirection || 'TO_COLLEGE',
+        status: t.status,
+        date: t.date,
+        startTime: t.startTime,
+        endTime: t.endTime,
+        durationMinutes,
+        currentStopIndex: t.currentStopIndex,
+        totalStops: snapshotStops.length,
+        reachedStopsCount: Math.min(snapshotStops.length, Math.max(t.currentStopIndex, eventMap.size)),
+        collegeDeadlineAt: t.collegeDeadlineAt,
+        actualCollegeArrivalAt: t.actualCollegeArrivalAt,
+        actualDelayMinutes: t.actualDelayMinutes,
+        timeline,
+      };
+    });
+
+    if (req.query.format === 'csv') {
+      const header = 'Trip ID,Route No,Route Name,Driver Name,Driver Code,Direction,Date,Start Time,End Time,Duration (Mins),Status,Stops Reached,Total Stops,Arrival Delay (Mins),Stop Arrival Timeline\r\n';
+      const rows = formatted.map((item) => {
+        const timelineStr = item.timeline
+          .filter((s) => s.reachedAt)
+          .map((s) => `${s.stopName} (${new Date(s.reachedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })})`)
+          .join('; ');
+        const clean = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        return [
+          item.id,
+          clean(item.routeNo),
+          clean(item.routeName),
+          clean(item.driverName),
+          clean(item.driverCode),
+          clean(item.direction === 'FROM_COLLEGE' ? 'Evening Return' : 'Morning To College'),
+          clean(item.date ? new Date(item.date).toLocaleDateString('en-IN') : ''),
+          clean(item.startTime ? new Date(item.startTime).toLocaleTimeString('en-IN') : ''),
+          clean(item.endTime ? new Date(item.endTime).toLocaleTimeString('en-IN') : ''),
+          item.durationMinutes ?? '',
+          clean(item.status),
+          item.reachedStopsCount,
+          item.totalStops,
+          item.actualDelayMinutes ?? '',
+          clean(timelineStr),
+        ].join(',');
+      }).join('\r\n');
+
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="campus_bus_trip_logs_${new Date().toISOString().slice(0, 10)}.csv"`);
+      return res.send('\uFEFF' + header + rows);
+    }
+
+    return res.json({
+      page,
+      limit,
+      total,
+      trips: formatted,
+    });
+  } catch (error) {
+    console.error('[trips/history]', error);
+    return res.status(500).json({ error: 'Failed to retrieve trip history' });
+  }
+});
+
 router.get('/mine', requireAuth(['driver']), async (req, res) => {
   if (!(await assertDriverSession(req.user))) {
     return res.status(401).json({ error: 'Driver session has been revoked' });

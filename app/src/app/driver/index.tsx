@@ -647,6 +647,28 @@ export default function DriverConsoleScreen() {
     }
   };
 
+  // Open Turn-by-Turn voice navigation in native Google Maps (100% free, 0 API charges)
+  const openGoogleMapsNavigation = (targetStop?: { stop: { latitude: number; longitude: number; name: string } }) => {
+    const dest =
+      targetStop ||
+      stops.find((s) => s.sequenceOrder >= currentStopIndex) ||
+      stops[stops.length - 1];
+    if (!dest) {
+      Alert.alert('No Stops Found', 'Could not determine the destination stop.');
+      return;
+    }
+    const lat = dest.stop.latitude;
+    const lng = dest.stop.longitude;
+    const url = Platform.select({
+      android: `google.navigation:q=${lat},${lng}&mode=d`,
+      ios: `maps://app?daddr=${lat},${lng}&dirflg=d`,
+      default: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`,
+    });
+    Linking.openURL(url!).catch(() => {
+      Linking.openURL(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}&travelmode=driving`);
+    });
+  };
+
   // Fetch nearby buses (max 3 only)
   const fetchNearbyBuses = async (tripId: number) => {
     setLoadingNearby(true);
@@ -759,19 +781,30 @@ export default function DriverConsoleScreen() {
               </Text>
             </View>
 
-            <Pressable
-              onPress={() => {
-                Alert.alert('End Active Trip', 'Are you sure you want to complete and end this trip?', [
-                  { text: 'Cancel', style: 'cancel' },
-                  { text: 'End Trip', style: 'destructive', onPress: () => endTrip.mutate(trip.id) },
-                ]);
-              }}
-              hitSlop={16}
-              style={styles.hudEndTripBtn}
-              accessibilityLabel="End Current Trip"
-            >
-              <Text style={styles.hudEndTripText}>End Trip</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Pressable
+                onPress={() => openGoogleMapsNavigation()}
+                hitSlop={12}
+                style={styles.hudNavBtn}
+                accessibilityLabel="Turn-by-turn Navigation in Google Maps"
+              >
+                <Text style={styles.hudNavBtnText}>🧭 Navigate</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => {
+                  Alert.alert('End Active Trip', 'Are you sure you want to complete and end this trip?', [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'End Trip', style: 'destructive', onPress: () => endTrip.mutate(trip.id) },
+                  ]);
+                }}
+                hitSlop={16}
+                style={styles.hudEndTripBtn}
+                accessibilityLabel="End Current Trip"
+              >
+                <Text style={styles.hudEndTripText}>End Trip</Text>
+              </Pressable>
+            </View>
           </View>
 
           {/* Full Live Campus Map */}
@@ -855,6 +888,15 @@ export default function DriverConsoleScreen() {
                 accessibilityLabel="Fit Route"
               >
                 <Text style={styles.floatingHudIcon}>↻</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => openGoogleMapsNavigation()}
+                style={[styles.floatingHudBtn, { backgroundColor: '#1E3A8A', borderColor: '#3B82F6' }]}
+                hitSlop={8}
+                accessibilityLabel="Navigate in Google Maps"
+              >
+                <Text style={styles.floatingHudIcon}>🧭</Text>
               </Pressable>
             </View>
 
@@ -1455,6 +1497,26 @@ const useStyles = () => {
           color: '#FFFFFF',
           fontWeight: '800',
           fontSize: 13,
+        },
+        hudNavBtn: {
+          backgroundColor: '#2563EB',
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+          borderColor: '#60A5FA',
+          elevation: 4,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.3,
+          shadowRadius: 4,
+        },
+        hudNavBtnText: {
+          color: '#FFFFFF',
+          fontWeight: '800',
+          fontSize: 12,
         },
         mapContainer: {
           flex: 1,

@@ -15,7 +15,7 @@ const navigation = [
   { to: '/class-advisors', label: 'Class advisors', iconName: 'class-advisors', fallback: '◎' },
   { to: '/late-alerts', label: 'Late alerts', iconName: 'late-alerts', fallback: '!' },
   { to: '/operations', label: 'Operations', iconName: 'operations', fallback: '⌁' },
-  { to: '/audit-log', label: 'Audit history', iconName: 'audit-log', fallback: '✓' },
+  { to: '/audit-log', label: 'Trip logs & Audit', iconName: 'audit-log', fallback: '✓' },
   { to: '/sessions', label: 'Sessions', iconName: 'sessions', fallback: '◌' },
   { to: '/issues', label: 'AI Issues', iconName: 'issues', fallback: '◆' },
   { to: '/knowledge', label: 'Knowledge base', iconName: 'knowledge', fallback: '▣' },

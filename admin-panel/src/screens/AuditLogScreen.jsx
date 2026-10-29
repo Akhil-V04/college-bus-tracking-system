@@ -532,7 +532,460 @@ function AuditDetailModal({ entry, onClose }) {
   );
 }
 
+function TripHistoryView() {
+  const [tripsData, setTripsData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [routesList, setRoutesList] = useState([]);
+  const [selectedRoute, setSelectedRoute] = useState('ALL');
+  const [selectedStatus, setSelectedStatus] = useState('ALL');
+  const [selectedDirection, setSelectedDirection] = useState('ALL');
+  const [selectedDate, setSelectedDate] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const [expandedTrips, setExpandedTrips] = useState(new Set());
+  const [exporting, setExporting] = useState(false);
+  const [message, setMessage] = useState(null);
+
+  // Load routes for filter dropdown
+  useEffect(() => {
+    api.get('/route-services')
+      .then((res) => {
+        const list = res.data?.items || res.data || [];
+        setRoutesList(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch trip execution history
+  const fetchTrips = (pageNum = 1) => {
+    setLoading(true);
+    const params = {
+      page: pageNum,
+      limit: 30,
+    };
+    if (selectedRoute !== 'ALL') params.routeNo = selectedRoute;
+    if (selectedStatus !== 'ALL') params.status = selectedStatus;
+    if (selectedDirection !== 'ALL') params.direction = selectedDirection;
+    if (selectedDate) params.date = selectedDate;
+    if (searchTerm.trim()) params.search = searchTerm.trim();
+
+    api.get('/trips/history', { params })
+      .then((res) => {
+        setTripsData(res.data);
+        setPage(pageNum);
+      })
+      .catch((err) => {
+        setMessage({ type: 'error', text: errorMessage(err, 'Failed to load trip history.') });
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    fetchTrips(1);
+  }, [selectedRoute, selectedStatus, selectedDirection, selectedDate]);
+
+  const toggleExpand = (tripId) => {
+    setExpandedTrips((prev) => {
+      const next = new Set(prev);
+      if (next.has(tripId)) next.delete(tripId);
+      else next.add(tripId);
+      return next;
+    });
+  };
+
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const params = {
+        format: 'csv',
+      };
+      if (selectedRoute !== 'ALL') params.routeNo = selectedRoute;
+      if (selectedStatus !== 'ALL') params.status = selectedStatus;
+      if (selectedDirection !== 'ALL') params.direction = selectedDirection;
+      if (selectedDate) params.date = selectedDate;
+      if (searchTerm.trim()) params.search = searchTerm.trim();
+
+      const res = await api.get('/trips/history', {
+        params,
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `campus_bus_trip_logs_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Failed to export trips to CSV: ' + errorMessage(err));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleSetToday = () => {
+    const today = new Date().toISOString().slice(0, 10);
+    setSelectedDate(today);
+  };
+
+  const trips = tripsData?.trips || [];
+  const total = tripsData?.total || 0;
+  const runningCount = trips.filter((t) => t.status === 'RUNNING').length;
+  const completedCount = trips.filter((t) => t.status === 'COMPLETED').length;
+
+  return (
+    <div>
+      <Notice message={message} onDismiss={() => setMessage(null)} />
+
+      {/* Top Action & Export Bar */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: 16, color: 'var(--navy)' }}>Organized Trip Execution Log</h3>
+          <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--muted)' }}>
+            Real-time & historic log of when trips started, when the bus reached which stop, and arrival times.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => fetchTrips(page)}
+            disabled={loading}
+          >
+            <span>🔄</span> Refresh
+          </button>
+          <button
+            type="button"
+            className="button button-primary"
+            onClick={handleExportCsv}
+            disabled={exporting || total === 0}
+            style={{ backgroundColor: '#10B981', borderColor: '#059669' }}
+          >
+            <span>📥</span> {exporting ? 'Generating Excel...' : 'Export to Excel (CSV)'}
+          </button>
+        </div>
+      </div>
+
+      {/* Summary KPI Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
+        <div className="panel" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Total Trips Recorded</span>
+          <strong style={{ fontSize: 22, color: 'var(--navy)' }}>{total}</strong>
+        </div>
+        <div className="panel" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Completed Trips</span>
+          <strong style={{ fontSize: 22, color: '#10B981' }}>{completedCount}</strong>
+        </div>
+        <div className="panel" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Live Running Trips</span>
+          <strong style={{ fontSize: 22, color: '#EA580C' }}>{runningCount}</strong>
+        </div>
+        <div className="panel" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Available Routes</span>
+          <strong style={{ fontSize: 22, color: 'var(--ink)' }}>{routesList.length}</strong>
+        </div>
+      </div>
+
+      {/* Filter Bar */}
+      <div className="panel filter-bar" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', marginBottom: 20 }}>
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 700, color: 'var(--ink)', minWidth: 150 }}>
+          Route
+          <select value={selectedRoute} onChange={(e) => setSelectedRoute(e.target.value)}>
+            <option value="ALL">All Routes</option>
+            {routesList.map((r) => (
+              <option key={r.id || r.routeNo} value={r.routeNo}>
+                Route {r.routeNo} - {r.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 700, color: 'var(--ink)', minWidth: 130 }}>
+          Status
+          <select value={selectedStatus} onChange={(e) => setSelectedStatus(e.target.value)}>
+            <option value="ALL">All Statuses</option>
+            <option value="RUNNING">Running Live</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="CANCELLED">Cancelled</option>
+          </select>
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 700, color: 'var(--ink)', minWidth: 140 }}>
+          Direction
+          <select value={selectedDirection} onChange={(e) => setSelectedDirection(e.target.value)}>
+            <option value="ALL">All Directions</option>
+            <option value="TO_COLLEGE">Morning (To Campus)</option>
+            <option value="FROM_COLLEGE">Evening (Return Drops)</option>
+          </select>
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 700, color: 'var(--ink)' }}>
+          Date
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--canvas)', color: 'var(--ink)' }}
+            />
+            <button
+              type="button"
+              className="button button-ghost"
+              onClick={handleSetToday}
+              style={{ padding: '6px 10px', fontSize: 11 }}
+            >
+              Today
+            </button>
+            {selectedDate && (
+              <button
+                type="button"
+                className="button button-ghost"
+                onClick={() => setSelectedDate('')}
+                style={{ padding: '6px 10px', fontSize: 11 }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </label>
+
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 700, color: 'var(--ink)', flex: '1 1 180px' }}>
+          Search Driver or Route
+          <input
+            type="text"
+            placeholder="Driver name, code, or keyword..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') fetchTrips(1); }}
+            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--canvas)', color: 'var(--ink)' }}
+          />
+        </label>
+
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={() => fetchTrips(1)}
+          style={{ height: 38 }}
+        >
+          Apply Filters
+        </button>
+      </div>
+
+      {/* Trips Execution Table / Cards */}
+      {loading ? (
+        <LoadingState label="Loading organized trip execution logs..." />
+      ) : trips.length === 0 ? (
+        <EmptyState
+          title="No trips found"
+          message="No bus trips match the selected filters. Change filters or run a trip from the driver app."
+        />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {trips.map((trip) => {
+            const isExpanded = expandedTrips.has(trip.id);
+            const isRunning = trip.status === 'RUNNING';
+            const isCompleted = trip.status === 'COMPLETED';
+            const isReturn = trip.direction === 'FROM_COLLEGE';
+
+            return (
+              <div
+                key={trip.id}
+                className="panel"
+                style={{
+                  padding: '16px 20px',
+                  borderRadius: 14,
+                  border: isRunning ? '2px solid #EA580C' : '1px solid var(--line)',
+                  background: 'var(--surface)',
+                  boxShadow: isRunning ? '0 4px 18px rgba(234, 88, 12, 0.12)' : 'none',
+                }}
+              >
+                {/* Trip Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, borderBottom: '1px solid var(--line)', paddingBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <span
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 8,
+                        fontWeight: 800,
+                        fontSize: 13,
+                        backgroundColor: 'rgba(234, 88, 12, 0.15)',
+                        color: '#EA580C',
+                        border: '1px solid rgba(234, 88, 12, 0.3)',
+                      }}
+                    >
+                      Route {trip.routeNo}
+                    </span>
+                    <strong style={{ fontSize: 16, color: 'var(--navy)' }}>{trip.routeName}</strong>
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        backgroundColor: isReturn ? 'rgba(168, 85, 247, 0.12)' : 'rgba(59, 130, 246, 0.12)',
+                        color: isReturn ? '#A855F7' : '#3B82F6',
+                        border: `1px solid ${isReturn ? 'rgba(168, 85, 247, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
+                      }}
+                    >
+                      {isReturn ? '🌆 Evening Return' : '🌅 Morning To Campus'}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        padding: '4px 10px',
+                        borderRadius: 999,
+                        fontSize: 12,
+                        fontWeight: 800,
+                        backgroundColor: isRunning ? 'rgba(234, 88, 12, 0.15)' : isCompleted ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                        color: isRunning ? '#EA580C' : isCompleted ? '#10B981' : '#EF4444',
+                        border: `1px solid ${isRunning ? '#EA580C' : isCompleted ? '#10B981' : '#EF4444'}`,
+                      }}
+                    >
+                      {isRunning && <span style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#EA580C', display: 'inline-block' }} />}
+                      {trip.status}
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600 }}>Trip #{trip.id}</span>
+                  </div>
+                </div>
+
+                {/* Trip Details Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14, margin: '14px 0' }}>
+                  <div>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>Driver</span>
+                    <strong style={{ fontSize: 13, color: 'var(--ink)' }}>{trip.driverName}</strong>
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>Code: {trip.driverCode || '—'} {trip.driverPhone ? `• ${trip.driverPhone}` : ''}</div>
+                  </div>
+
+                  <div>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>Trip Date</span>
+                    <strong style={{ fontSize: 13, color: 'var(--ink)' }}>
+                      {trip.date ? new Date(trip.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>Start Time</span>
+                    <strong style={{ fontSize: 13, color: 'var(--ink)' }}>
+                      {trip.startTime ? new Date(trip.startTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Not started'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>End Time</span>
+                    <strong style={{ fontSize: 13, color: 'var(--ink)' }}>
+                      {trip.endTime ? new Date(trip.endTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : isRunning ? '⚡ In Progress' : '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>Duration</span>
+                    <strong style={{ fontSize: 13, color: 'var(--ink)' }}>
+                      {trip.durationMinutes != null ? `${Math.floor(trip.durationMinutes / 60)}h ${trip.durationMinutes % 60}m (${trip.durationMinutes} mins)` : '—'}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', display: 'block' }}>Stops Progress</span>
+                    <strong style={{ fontSize: 13, color: isCompleted ? '#10B981' : '#EA580C' }}>
+                      {trip.reachedStopsCount} of {trip.totalStops} Reached
+                    </strong>
+                  </div>
+                </div>
+
+                {/* Timeline Accordion Button */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 10, borderTop: '1px dashed var(--line)' }}>
+                  <button
+                    type="button"
+                    className="button button-ghost"
+                    onClick={() => toggleExpand(trip.id)}
+                    style={{ fontSize: 12, fontWeight: 700, color: '#EA580C', display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    <span>{isExpanded ? '▲ Hide Stop Timeline' : '▼ View Reached Stops Timeline (' + (trip.timeline?.length || trip.totalStops) + ' stops)'}</span>
+                  </button>
+
+                  {trip.actualDelayMinutes != null && (
+                    <span style={{ fontSize: 12, fontWeight: 700, color: trip.actualDelayMinutes > 0 ? '#EF4444' : '#10B981' }}>
+                      {trip.actualDelayMinutes > 0 ? `Late by +${trip.actualDelayMinutes}m` : `Arrived on time / early (${Math.abs(trip.actualDelayMinutes)}m)`}
+                    </span>
+                  )}
+                </div>
+
+                {/* Stop Timeline Details Table */}
+                {isExpanded && (
+                  <div style={{ marginTop: 14, background: 'var(--canvas)', borderRadius: 10, padding: 12, border: '1px solid var(--line)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                      <strong style={{ fontSize: 13, color: 'var(--navy)' }}>Sequential Stop Arrival Logs</strong>
+                      <span style={{ fontSize: 11, color: 'var(--muted)' }}>Detailed timestamps captured via bus GPS geofence</span>
+                    </div>
+
+                    {trip.timeline?.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No intermediate stop data captured for this trip.</p>
+                    ) : (
+                      <div className="table-container" style={{ maxHeight: 320, overflowY: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--line)', color: 'var(--muted)' }}>
+                              <th style={{ padding: '6px 8px' }}>#</th>
+                              <th style={{ padding: '6px 8px' }}>Stop Name</th>
+                              <th style={{ padding: '6px 8px' }}>Scheduled Time</th>
+                              <th style={{ padding: '6px 8px' }}>Actual Reached Timestamp</th>
+                              <th style={{ padding: '6px 8px' }}>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {trip.timeline.map((st, idx) => {
+                              const isReached = st.status === 'REACHED' || Boolean(st.reachedAt);
+                              return (
+                                <tr key={idx} style={{ borderBottom: '1px solid var(--line)' }}>
+                                  <td style={{ padding: '6px 8px', fontWeight: 700, color: 'var(--muted)' }}>{st.sequenceOrder}</td>
+                                  <td style={{ padding: '6px 8px', fontWeight: 700, color: 'var(--ink)' }}>{st.stopName}</td>
+                                  <td style={{ padding: '6px 8px', color: 'var(--muted)', fontFamily: 'monospace' }}>{st.scheduledTime}</td>
+                                  <td style={{ padding: '6px 8px', fontWeight: 600, color: st.reachedAt ? '#10B981' : 'var(--muted)', fontFamily: 'monospace' }}>
+                                    {st.reachedAt ? new Date(st.reachedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : (isCompleted ? 'Completed with trip' : 'Pending')}
+                                  </td>
+                                  <td style={{ padding: '6px 8px' }}>
+                                    <span
+                                      style={{
+                                        padding: '2px 6px',
+                                        borderRadius: 4,
+                                        fontSize: 10,
+                                        fontWeight: 800,
+                                        backgroundColor: isReached ? 'rgba(16, 185, 129, 0.15)' : 'var(--surface-hover)',
+                                        color: isReached ? '#10B981' : 'var(--muted)',
+                                      }}
+                                    >
+                                      {isReached ? '✓ REACHED' : 'PENDING'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AuditLogScreen() {
+  const [activeTab, setActiveTab] = useState('trips');
   const [filters, setFilters] = useState(emptyFilters);
   const [query, setQuery] = useState({ ...emptyFilters, page: 1 });
   const [data, setData] = useState(null);
@@ -571,13 +1024,40 @@ export default function AuditLogScreen() {
   return (
     <>
       <PageHeader
-        eyebrow="Accountability"
-        title="Administrator audit history"
-        description="Review privacy-safe records of administrator changes. Credentials, phone numbers and passenger identifiers are deliberately excluded."
+        eyebrow="Accountability & Logs"
+        title="Trip Execution Logs & Audit Trail"
+        description="Review organized bus trip timelines, stop arrival events, driver execution history, and administrative audit changes."
       />
-      <Notice message={message} onDismiss={() => setMessage(null)} />
 
-      {/* Exact Original Filter View */}
+      {/* Main Tab Switcher */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, borderBottom: '1px solid var(--line)', paddingBottom: 12 }}>
+        <button
+          type="button"
+          className={`button ${activeTab === 'trips' ? 'button-primary' : 'button-secondary'}`}
+          onClick={() => setActiveTab('trips')}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: '10px 18px' }}
+        >
+          <span>🚌</span>
+          <span>Trip History & Stop Timelines</span>
+        </button>
+        <button
+          type="button"
+          className={`button ${activeTab === 'admin' ? 'button-primary' : 'button-secondary'}`}
+          onClick={() => setActiveTab('admin')}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, padding: '10px 18px' }}
+        >
+          <span>⚙️</span>
+          <span>System Security Audit</span>
+        </button>
+      </div>
+
+      {activeTab === 'trips' ? (
+        <TripHistoryView />
+      ) : (
+        <>
+          <Notice message={message} onDismiss={() => setMessage(null)} />
+
+          {/* Exact Original Filter View */}
       <form className="panel filter-bar" onSubmit={submit} aria-label="Audit log filters">
         <label>
           Action
@@ -818,6 +1298,8 @@ export default function AuditLogScreen() {
       {/* Inspect Detail Modal */}
       {selectedEntry && (
         <AuditDetailModal entry={selectedEntry} onClose={() => setSelectedEntry(null)} />
+      )}
+        </>
       )}
     </>
   );

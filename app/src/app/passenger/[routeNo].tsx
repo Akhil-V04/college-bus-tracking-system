@@ -127,7 +127,7 @@ export default function RouteDetailsScreen() {
   // Remind Me Modal state
   const [reminderModalVisible, setReminderModalVisible] = useState(false);
   const [selectedReminderStopId, setSelectedReminderStopId] = useState<number | null>(null);
-  const [reminderMinutes, setReminderMinutes] = useState<number>(3);
+  const [reminderMinutes, setReminderMinutes] = useState<number>(5);
   const [reminderFrequency, setReminderFrequency] = useState<ReminderFrequency>('TODAY');
   const [savedReminder, setSavedReminder] = useState<SavedReminder | null>(null);
 
@@ -248,6 +248,14 @@ export default function RouteDetailsScreen() {
   }, [routeNo]);
 
   const stops = useMemo(() => route.data?.schedule?.stops || [], [route.data?.schedule?.stops]);
+
+  // Dynamically formatted area covered matching currently selected direction (Morning vs Evening)
+  const displayedAreaCovered = useMemo(() => {
+    if (stops && stops.length > 0) {
+      return stops.map((s) => `${s.stop.name} (${s.scheduledTime})`).join('; ');
+    }
+    return route.data?.areaCovered || 'All major campus stops.';
+  }, [stops, route.data?.areaCovered]);
 
   // Auto-select first stop for reminder if none selected
   useEffect(() => {
@@ -914,10 +922,15 @@ export default function RouteDetailsScreen() {
             )}
           </View>
 
-          {/* Area Covered Card */}
+          {/* Area Covered Card (Reflects Morning vs Evening direction) */}
           <View style={styles.infoCard}>
-            <Text style={styles.cardSectionLabel}>AREA COVERED</Text>
-            <Text style={styles.areaCoveredText}>{detail.areaCovered || 'All major campus stops.'}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={styles.cardSectionLabel}>AREA COVERED</Text>
+              <Pill tone="accent">
+                {selectedDirection === 'EVENING' ? 'Evening Return' : 'Morning Pickup'}
+              </Pill>
+            </View>
+            <Text style={styles.areaCoveredText}>{displayedAreaCovered}</Text>
           </View>
 
           {/* Transport Helpdesk & In-Charge */}
@@ -1027,7 +1040,7 @@ export default function RouteDetailsScreen() {
             {/* Minutes Before Slider / Chips */}
             <Text style={styles.modalFieldLabel}>ALERT TIMING</Text>
             <View style={styles.minutesRow}>
-              {[1, 2, 3, 4, 5].map((m) => {
+              {[1, 2, 5, 10, 15].map((m) => {
                 const isSel = reminderMinutes === m;
                 return (
                   <Pressable
@@ -1038,7 +1051,7 @@ export default function RouteDetailsScreen() {
                     <Text
                       style={[styles.minuteChipText, isSel ? styles.minuteChipTextSelected : null]}
                     >
-                      {m} min
+                      {m} {m === 1 ? 'min' : 'mins'}
                     </Text>
                   </Pressable>
                 );
@@ -1046,7 +1059,7 @@ export default function RouteDetailsScreen() {
             </View>
 
             <Text style={styles.reminderExplainText}>
-              Alerts you {reminderMinutes} min before bus arrives at{' '}
+              Alerts you {reminderMinutes} {reminderMinutes === 1 ? 'min' : 'mins'} before bus arrives at{' '}
               <Text style={{ fontWeight: fontWeight.bold, color: colors.accent || ORANGE_ACCENT }}>
                 {stops.find((s) => s.stop.id === selectedReminderStopId)?.stop.name || 'selected stop'}
               </Text>
