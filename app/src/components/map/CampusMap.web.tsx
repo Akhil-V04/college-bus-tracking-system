@@ -163,25 +163,77 @@ const CampusMapWeb = forwardRef<MapViewRef, MapViewProps>(
       if (initialRegion) setCurrentRegion(initialRegion);
     };
 
+    // Calculate tile grid for Google Maps tiles
+    const tileZoom = Math.max(10, Math.min(18, Math.round(Math.log2(360 / Math.max(0.001, lngDelta)))));
+
+    const lon2tileX = (lon: number, z: number) => Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+    const lat2tileY = (lat: number, z: number) => {
+      const rad = (lat * Math.PI) / 180;
+      return Math.floor(((1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2) * Math.pow(2, z));
+    };
+    const tile2lon = (x: number, z: number) => (x / Math.pow(2, z)) * 360 - 180;
+    const tile2lat = (y: number, z: number) =>
+      (180 / Math.PI) * Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / Math.pow(2, z))));
+
+    const startTileX = lon2tileX(minLng, tileZoom);
+    const endTileX = lon2tileX(maxLng, tileZoom);
+    const startTileY = lat2tileY(maxLat, tileZoom);
+    const endTileY = lat2tileY(minLat, tileZoom);
+
+    const mapTiles = useMemo(() => {
+      const tiles: Array<{
+        key: string;
+        url: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }> = [];
+
+      const minX = Math.max(startTileX - 1, 0);
+      const maxX = Math.min(endTileX + 1, Math.pow(2, tileZoom) - 1);
+      const minY = Math.max(startTileY - 1, 0);
+      const maxY = Math.min(endTileY + 1, Math.pow(2, tileZoom) - 1);
+
+      for (let tx = minX; tx <= maxX; tx++) {
+        for (let ty = minY; ty <= maxY; ty++) {
+          const tLngMin = tile2lon(tx, tileZoom);
+          const tLngMax = tile2lon(tx + 1, tileZoom);
+          const tLatMax = tile2lat(ty, tileZoom);
+          const tLatMin = tile2lat(ty + 1, tileZoom);
+
+          const topLeft = projectToSvg(tLatMax, tLngMin);
+          const bottomRight = projectToSvg(tLatMin, tLngMax);
+
+          const sub = (tx + ty) % 4;
+          const url = `https://mt${sub}.google.com/vt/lyrs=m&x=${tx}&y=${ty}&z=${tileZoom}`;
+
+          tiles.push({
+            key: `tile-${tx}-${ty}-${tileZoom}`,
+            url,
+            x: topLeft.x,
+            y: topLeft.y,
+            width: bottomRight.x - topLeft.x,
+            height: bottomRight.y - topLeft.y,
+          });
+        }
+      }
+      return tiles;
+    }, [startTileX, endTileX, startTileY, endTileY, tileZoom, projectToSvg]);
+
     return (
       <View style={[styles.container, style]}>
-        {/* Map Canvas with SVG Vector Route Rendering */}
+        {/* Map Canvas with Google Maps Tiles & Vector Route Rendering */}
         <div
           style={{
             position: 'absolute',
             inset: 0,
             overflow: 'hidden',
             backgroundColor: '#0f172a',
-            backgroundImage: `
-              radial-gradient(circle at 50% 50%, rgba(30, 41, 59, 0.6) 0%, rgba(15, 23, 42, 0.95) 100%),
-              linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)
-            `,
-            backgroundSize: '100% 100%, 40px 40px, 40px 40px',
             userSelect: 'none',
           }}
         >
-          {/* SVG Layer for Polylines */}
+          {/* SVG Layer for Map Tiles & Polylines */}
           <svg
             viewBox="0 0 1000 1000"
             preserveAspectRatio="none"
@@ -194,6 +246,21 @@ const CampusMapWeb = forwardRef<MapViewRef, MapViewProps>(
               pointerEvents: 'none',
             }}
           >
+            {/* Google Maps Real Slippy Tiles */}
+            <g>
+              {mapTiles.map((tile) => (
+                <image
+                  key={tile.key}
+                  href={tile.url}
+                  x={tile.x}
+                  y={tile.y}
+                  width={tile.width}
+                  height={tile.height}
+                  preserveAspectRatio="none"
+                  opacity="0.95"
+                />
+              ))}
+            </g>
             {/* Compass / Grid lines */}
             <line
               x1="500"

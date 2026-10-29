@@ -8,6 +8,31 @@ import api, { errorMessage } from '../api';
 import { LoadingState, Notice, PageHeader } from '../components';
 import { decodePolyline } from '../lib/polyline';
 
+// Google Maps Tile Layers
+const MAP_LAYERS = {
+  roadmap: {
+    name: 'Google Maps',
+    url: 'https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    maxZoom: 20,
+    attribution: '&copy; Google Maps',
+  },
+  satellite: {
+    name: 'Google Satellite',
+    url: 'https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    maxZoom: 20,
+    attribution: '&copy; Google Maps Satellite',
+  },
+  osm: {
+    name: 'OpenStreetMap',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subdomains: ['a', 'b', 'c'],
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors',
+  },
+};
+
 // Custom Map Controller to allow flying/zooming programmatically
 function MapController({ center, zoom, bounds }) {
   const map = useMap();
@@ -70,6 +95,7 @@ export default function LiveTrackingScreen() {
   const [activeTrips, setActiveTrips] = useState([]);
   const [selectedRouteNo, setSelectedRouteNo] = useState(initialRoute);
   const [direction, setDirection] = useState('MORNING');
+  const [activeLayer, setActiveLayer] = useState('roadmap');
   const [routeDetail, setRouteDetail] = useState(null);
   const [liveLocation, setLiveLocation] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -356,6 +382,55 @@ export default function LiveTrackingScreen() {
                   🌆 Evening Return
                 </button>
               </div>
+
+              {/* Map Tile Layer Selector (Google Maps / Satellite / OSM) */}
+              <div style={{ display: 'inline-flex', borderRadius: 8, border: '1px solid var(--color-border)', overflow: 'hidden' }}>
+                <button
+                  type="button"
+                  onClick={() => setActiveLayer('roadmap')}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    cursor: 'pointer',
+                    backgroundColor: activeLayer === 'roadmap' ? '#0284c7' : 'transparent',
+                    color: activeLayer === 'roadmap' ? '#FFFFFF' : 'var(--color-text-secondary)',
+                  }}
+                >
+                  🗺️ Google Maps
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveLayer('satellite')}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    cursor: 'pointer',
+                    backgroundColor: activeLayer === 'satellite' ? '#0284c7' : 'transparent',
+                    color: activeLayer === 'satellite' ? '#FFFFFF' : 'var(--color-text-secondary)',
+                  }}
+                >
+                  🛰️ Satellite
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveLayer('osm')}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    border: 'none',
+                    cursor: 'pointer',
+                    backgroundColor: activeLayer === 'osm' ? '#0284c7' : 'transparent',
+                    color: activeLayer === 'osm' ? '#FFFFFF' : 'var(--color-text-secondary)',
+                  }}
+                >
+                  🌐 OSM
+                </button>
+              </div>
             </div>
 
             {/* Current Route Status Pill */}
@@ -428,8 +503,11 @@ export default function LiveTrackingScreen() {
                 scrollWheelZoom
               >
                 <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  key={MAP_LAYERS[activeLayer].url}
+                  url={MAP_LAYERS[activeLayer].url}
+                  subdomains={MAP_LAYERS[activeLayer].subdomains}
+                  attribution={MAP_LAYERS[activeLayer].attribution}
+                  maxZoom={MAP_LAYERS[activeLayer].maxZoom}
                 />
 
                 <MapController center={mapTarget} zoom={15} bounds={mapTarget ? null : mapBounds} />
