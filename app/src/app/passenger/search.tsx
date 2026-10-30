@@ -321,8 +321,10 @@ export default function SearchScreen() {
                   ) : null}
                 </View>
               </View>
-              <View style={styles.activeBadge}>
-                <Text style={styles.activeBadgeText}>Active</Text>
+              <View style={item.majorStops && item.majorStops.length > 0 ? styles.activeBadge : styles.pendingBadge}>
+                <Text style={item.majorStops && item.majorStops.length > 0 ? styles.activeBadgeText : styles.pendingBadgeText}>
+                  {item.majorStops && item.majorStops.length > 0 ? 'Published' : 'Pending'}
+                </Text>
               </View>
             </Pressable>
           )}
@@ -581,6 +583,19 @@ const useStyles = () => {
         activeBadgeText: {
           color: colors.accent,
           fontSize: 12,
+          fontWeight: fontWeight.bold,
+        },
+        pendingBadge: {
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          borderRadius: 4,
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+        },
+        pendingBadgeText: {
+          color: colors.textMuted,
+          fontSize: 11,
           fontWeight: fontWeight.bold,
         },
         separator: { height: 1, backgroundColor: colors.border, marginHorizontal: 20 },

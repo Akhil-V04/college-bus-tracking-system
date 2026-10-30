@@ -14,6 +14,8 @@ export type RouteSummary = {
   isEventOverride?: boolean;
   eventTitle?: string | null;
   previewStops?: string[];
+  majorStops?: Array<{ id: number; name: string }>;
+  isPublished?: boolean;
 };
 
 export type ScheduleStop = {

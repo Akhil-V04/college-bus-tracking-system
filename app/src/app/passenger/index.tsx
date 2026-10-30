@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import {
   Animated,
   FlatList,
@@ -44,6 +44,8 @@ const SUGGESTIONS = Object.keys(SUGGESTED_ANSWERS);
 function RouteCard({ route }: { route: RouteSummary }) {
     const styles = useStyles();
   const full = route.assignedPassengerCount >= route.capacity;
+  const isPublished = Boolean(route.isPublished ?? (route.majorStops && route.majorStops.length > 0));
+
   return (
     <Pressable
       onPress={() => router.push(`/passenger/${encodeURIComponent(route.routeNo)}`)}
@@ -64,18 +66,23 @@ function RouteCard({ route }: { route: RouteSummary }) {
         </Pill>
       </View>
 
-      {route.isEventOverride ? (
-        <View style={styles.eventOverrideCardBadge}>
-          <Text style={styles.eventOverrideCardBadgeText}>⚡ Special Event Timetable Active</Text>
-        </View>
-      ) : null}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 }}>
+        <Pill tone={isPublished ? 'success' : 'neutral'}>
+          {isPublished ? '● Published Timetable' : '⏳ Schedule Pending'}
+        </Pill>
+        {route.isEventOverride ? (
+          <View style={styles.eventOverrideCardBadge}>
+            <Text style={styles.eventOverrideCardBadgeText}>⚡ Special Event Timetable Active</Text>
+          </View>
+        ) : null}
+      </View>
 
       <View style={styles.routeMeta}>
         <View style={styles.metaItem}>
           <Text style={styles.metaLabel}>DRIVER</Text>
-          <Text style={styles.metaValue}>{route.driver?.name || 'Not assigned'}</Text>
+          <Text style={styles.metaValue}>{route.driver?.name || 'Assigned soon'}</Text>
         </View>
-        <Text style={styles.viewRoute}>View route →</Text>
+        <Text style={styles.viewRoute}>{isPublished ? 'View live route →' : 'Check route status →'}</Text>
       </View>
 
       {route.hasActiveTrip ? (
@@ -102,14 +109,16 @@ function AssistantOverlay({ visible, onClose }: { visible: boolean; onClose: () 
   const pulseAnim = useRef(new Animated.Value(0.4)).current;
 
   // Pulse animation for "thinking" indicator
-  useState(() => {
-    Animated.loop(
+  useEffect(() => {
+    const anim = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
         Animated.timing(pulseAnim, { toValue: 0.4, duration: 800, useNativeDriver: Platform.OS !== 'web' }),
       ])
-    ).start();
-  });
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [pulseAnim]);
 
   async function sendMessage(text: string) {
     const userMessage: Message = { id: `user-${Date.now()}`, role: 'USER', content: text };
@@ -298,14 +307,16 @@ export default function PassengerDashboard() {
 
   // FAB glow pulse
   const fabGlow = useRef(new Animated.Value(0)).current;
-  useState(() => {
-    Animated.loop(
+  useEffect(() => {
+    const anim = Animated.loop(
       Animated.sequence([
         Animated.timing(fabGlow, { toValue: 1, duration: 2000, useNativeDriver: false }),
         Animated.timing(fabGlow, { toValue: 0, duration: 2000, useNativeDriver: false }),
       ])
-    ).start();
-  });
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [fabGlow]);
 
   const fabShadowRadius = fabGlow.interpolate({ inputRange: [0, 1], outputRange: [8, 18] });
   const fabShadowOpacity = fabGlow.interpolate({ inputRange: [0, 1], outputRange: [0.4, 0.75] });
@@ -401,13 +412,13 @@ export default function PassengerDashboard() {
         {routes.isError ? (
           <ErrorState message={routes.error.message} retry={() => routes.refetch()} />
         ) : null}
-        {routes.data && routes.data.length === 0 ? (
+        {Array.isArray(routes.data) && routes.data.length === 0 ? (
           <EmptyState
             title="No routes published"
             message="The transport administrator has not added route services yet."
           />
         ) : null}
-        {routes.data?.map((route) => <RouteCard key={route.id} route={route} />)}
+        {Array.isArray(routes.data) ? routes.data.map((route) => <RouteCard key={route.id} route={route} />) : null}
 
         {/* Privacy Notice */}
         <View style={styles.privacyBox}>

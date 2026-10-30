@@ -19,7 +19,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from '@/components/map/CampusMap';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE, MapErrorBoundary } from '@/components/map/CampusMap';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppIcon } from '@/components/AppIcon';
@@ -49,6 +49,39 @@ type SavedReminder = {
   scheduledTime: string;
   createdAt: string;
 };
+
+type TentativeStop = {
+  sequence: number;
+  name: string;
+  time?: string;
+};
+
+function parseTentativeStops(areaCovered?: string | null): TentativeStop[] {
+  if (!areaCovered) return [];
+  const rawSegments = areaCovered.includes(';')
+    ? areaCovered.split(';')
+    : areaCovered.includes('->')
+    ? areaCovered.split('->')
+    : areaCovered.split(',');
+
+  return rawSegments
+    .map((seg) => seg.trim())
+    .filter(Boolean)
+    .map((seg, idx) => {
+      const match = seg.match(/^(.*?)(?:\s*\((.*?)\))?$/);
+      const name = (match && match[1]?.trim()) || seg;
+      const time = match && match[2]?.trim();
+      return {
+        sequence: idx + 1,
+        name,
+        time: time
+          ? time.toLowerCase().includes('am') || time.toLowerCase().includes('pm')
+            ? time
+            : `${time} AM`
+          : undefined,
+      };
+    });
+}
 
 export default function RouteDetailsScreen() {
   const { colors, isDark } = useTheme();
@@ -248,6 +281,11 @@ export default function RouteDetailsScreen() {
   }, [routeNo]);
 
   const stops = useMemo(() => route.data?.schedule?.stops || [], [route.data?.schedule?.stops]);
+  const hasPublishedSchedule = Boolean(route.data?.schedule && stops && stops.length > 0);
+  const tentativeStops = useMemo(
+    () => parseTentativeStops(route.data?.areaCovered),
+    [route.data?.areaCovered]
+  );
 
   // Dynamically formatted area covered matching currently selected direction (Morning vs Evening)
   const displayedAreaCovered = useMemo(() => {
@@ -463,7 +501,17 @@ export default function RouteDetailsScreen() {
           </Pressable>
 
           <Pressable
-            onPress={() => setReminderModalVisible(true)}
+            onPress={() => {
+              if (!hasPublishedSchedule) {
+                Alert.alert(
+                  'Timetable Under Preparation',
+                  `The official stop timetable for Route ${detail.routeNo} is pending publication by the Transport Office. Reminders will be available once the official stops are published.`,
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+              setReminderModalVisible(true);
+            }}
             style={[styles.navActionBtn, savedReminder ? styles.navActionBtnActive : null]}
             hitSlop={8}
             accessibilityLabel="Set Bus Reminder"
@@ -483,7 +531,7 @@ export default function RouteDetailsScreen() {
           <Text
             style={[styles.tabItemText, activeTab === 'FULL ROUTE' && styles.tabItemTextActive]}
           >
-            FULL ROUTE
+            {hasPublishedSchedule ? 'FULL ROUTE' : 'ROUTE STATUS'}
           </Text>
         </Pressable>
 
@@ -498,187 +546,367 @@ export default function RouteDetailsScreen() {
       </View>
 
       {/* ─── Direction Selector (Morning vs Evening) ─── */}
-      <View style={styles.directionBar}>
-        <Pressable
-          onPress={() => setSelectedDirection('MORNING')}
-          style={[
-            styles.directionPill,
-            selectedDirection === 'MORNING' && styles.directionPillActive,
-          ]}
-        >
-          <Text
+      {hasPublishedSchedule ? (
+        <View style={styles.directionBar}>
+          <Pressable
+            onPress={() => setSelectedDirection('MORNING')}
             style={[
-              styles.directionPillText,
-              selectedDirection === 'MORNING' && styles.directionPillTextActive,
+              styles.directionPill,
+              selectedDirection === 'MORNING' && styles.directionPillActive,
             ]}
           >
-            🌅 Morning (To College)
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() => setSelectedDirection('EVENING')}
-          style={[
-            styles.directionPill,
-            selectedDirection === 'EVENING' && styles.directionPillActive,
-          ]}
-        >
-          <Text
-            style={[
-              styles.directionPillText,
-              selectedDirection === 'EVENING' && styles.directionPillTextActive,
-            ]}
-          >
-            🌆 Evening (Return)
-          </Text>
-        </Pressable>
-      </View>
-
-      {/* ─── TAB 1: FULL ROUTE (MAP & TIMELINE SHEET) ─── */}
-      {activeTab === 'FULL ROUTE' ? (
-        <View style={styles.fullRouteContainer}>
-          {/* Map Section */}
-          <View style={styles.mapContainer}>
-            <MapView
-              ref={mapRef}
-              style={StyleSheet.absoluteFill}
-              provider={PROVIDER_GOOGLE}
-              initialRegion={initialRegion}
+            <Text
+              style={[
+                styles.directionPillText,
+                selectedDirection === 'MORNING' && styles.directionPillTextActive,
+              ]}
             >
-              {/* Route Polyline */}
-              {polylineCoordinates.length > 0 ? (
-                <Polyline
-                  coordinates={polylineCoordinates}
-                  strokeColor={colors.accent || ORANGE_ACCENT}
-                  strokeWidth={4}
-                />
-              ) : null}
+              🌅 Morning (To College)
+            </Text>
+          </Pressable>
 
-              {/* Stop Markers */}
-              {stops.map((entry, idx) => (
-                <Marker
-                  key={`stop-${entry.stop.id}-${idx}`}
-                  coordinate={{
-                    latitude: entry.stop.latitude,
-                    longitude: entry.stop.longitude,
-                  }}
-                  title={entry.stop.name}
-                  description={`Stop ${entry.sequenceOrder} • Scheduled: ${entry.scheduledTime}`}
-                  anchor={{ x: 0.5, y: 0.5 }}
+          <Pressable
+            onPress={() => setSelectedDirection('EVENING')}
+            style={[
+              styles.directionPill,
+              selectedDirection === 'EVENING' && styles.directionPillActive,
+            ]}
+          >
+            <Text
+              style={[
+                styles.directionPillText,
+                selectedDirection === 'EVENING' && styles.directionPillTextActive,
+              ]}
+            >
+              🌆 Evening (Return)
+            </Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.directionPendingBar}>
+          <Text style={styles.directionPendingText}>
+            🚍 Daily College Transit Service • Morning Inbound & Evening Return
+          </Text>
+        </View>
+      )}
+
+      {/* ─── TAB 1: FULL ROUTE (MAP & TIMELINE SHEET) OR UNPUBLISHED STATE ─── */}
+      {activeTab === 'FULL ROUTE' ? (
+        hasPublishedSchedule ? (
+          <View style={styles.fullRouteContainer}>
+            {/* Map Section */}
+            <View style={styles.mapContainer}>
+              <MapErrorBoundary>
+                <MapView
+                  ref={mapRef}
+                  style={StyleSheet.absoluteFill}
+                  provider={PROVIDER_GOOGLE}
+                  initialRegion={initialRegion}
                 >
-                  <View style={styles.stopMarkerDot}>
-                    <View style={styles.stopMarkerInner} />
-                  </View>
-                </Marker>
-              ))}
+                  {/* Route Polyline */}
+                  {polylineCoordinates.length > 0 ? (
+                    <Polyline
+                      coordinates={polylineCoordinates}
+                      strokeColor={colors.accent || ORANGE_ACCENT}
+                      strokeWidth={4}
+                    />
+                  ) : null}
 
-              {/* Live Bus Marker */}
-              {liveBusCoords ? (
-                <Marker
-                  coordinate={liveBusCoords}
-                  title="Campus Bus"
-                  description={`Route ${detail.routeNo}`}
-                  anchor={{ x: 0.5, y: 0.5 }}
-                >
-                  <View style={styles.busMarkerHalo}>
-                    <Text style={styles.busMarkerEmoji}>🚌</Text>
-                  </View>
-                </Marker>
-              ) : null}
-            </MapView>
+                  {/* Stop Markers */}
+                  {stops.map((entry, idx) => (
+                    <Marker
+                      key={`stop-${entry.stop.id}-${idx}`}
+                      coordinate={{
+                        latitude: entry.stop.latitude,
+                        longitude: entry.stop.longitude,
+                      }}
+                      title={entry.stop.name}
+                      description={`Stop ${entry.sequenceOrder} • Scheduled: ${entry.scheduledTime}`}
+                      anchor={{ x: 0.5, y: 0.5 }}
+                    >
+                      <View style={styles.stopMarkerDot}>
+                        <View style={styles.stopMarkerInner} />
+                      </View>
+                    </Marker>
+                  ))}
 
-            {/* Floating Re-center / Refresh Button on Map */}
-            <Pressable onPress={resetMapZoom} style={styles.floatingRefreshBtn} hitSlop={10}>
-              <Text style={styles.floatingRefreshIcon}>↻</Text>
-            </Pressable>
-          </View>
+                  {/* Live Bus Marker */}
+                  {liveBusCoords ? (
+                    <Marker
+                      coordinate={liveBusCoords}
+                      title="Campus Bus"
+                      description={`Route ${detail.routeNo}`}
+                      anchor={{ x: 0.5, y: 0.5 }}
+                    >
+                      <View style={styles.busMarkerHalo}>
+                        <Text style={styles.busMarkerEmoji}>🚌</Text>
+                      </View>
+                    </Marker>
+                  ) : null}
+                </MapView>
+              </MapErrorBoundary>
 
-          {/* Bottom Expandable Timeline Sheet */}
-          <Animated.View style={[styles.bottomSheet, { height: sheetHeightAnim }]}>
-            {/* Sheet Drag / Pull Handle */}
-            <View {...panResponder.panHandlers}>
-              <Pressable onPress={toggleSheet} style={styles.sheetHandleArea}>
-                <View style={styles.sheetHandleBar} />
-                <View style={styles.sheetHeaderRow}>
-                  <Text style={styles.sheetHeaderText}>
-                    {sheetExpanded ? '↓ Tap or drag down to collapse' : '↑ Tap or pull up to view more'}
-                  </Text>
-                  <Text style={styles.sheetStopsCount}>{stops.length} Stops</Text>
-                </View>
+              {/* Floating Re-center / Refresh Button on Map */}
+              <Pressable onPress={resetMapZoom} style={styles.floatingRefreshBtn} hitSlop={10}>
+                <Text style={styles.floatingRefreshIcon}>↻</Text>
               </Pressable>
             </View>
 
-            {/* Stop Timeline List */}
-            <FlatList
-              data={stops}
-              keyExtractor={(item) => String(item.id)}
-              contentContainerStyle={styles.timelineList}
-              showsVerticalScrollIndicator={false}
-              renderItem={({ item, index }) => {
-                const isPassed = currentStopIndex > item.sequenceOrder;
-                const isAtStop = currentStopIndex === item.sequenceOrder && currentStopIndex > 0;
-                const isLast = index === stops.length - 1;
+            {/* Bottom Expandable Timeline Sheet */}
+            <Animated.View style={[styles.bottomSheet, { height: sheetHeightAnim }]}>
+              {/* Sheet Drag / Pull Handle */}
+              <View {...panResponder.panHandlers}>
+                <Pressable onPress={toggleSheet} style={styles.sheetHandleArea}>
+                  <View style={styles.sheetHandleBar} />
+                  <View style={styles.sheetHeaderRow}>
+                    <Text style={styles.sheetHeaderText}>
+                      {sheetExpanded ? '↓ Tap or drag down to collapse' : '↑ Tap or pull up to view more'}
+                    </Text>
+                    <Text style={styles.sheetStopsCount}>{stops.length} Stops</Text>
+                  </View>
+                </Pressable>
+              </View>
 
-                return (
-                  <Pressable
-                    onPress={() => focusOnStop(item)}
-                    style={({ pressed }) => [
-                      styles.timelineRow,
-                      pressed ? styles.timelineRowPressed : null,
-                    ]}
-                  >
-                    {/* Left Column: Vertical Line & Node */}
-                    <View style={styles.timelineNodeColumn}>
-                      <View
-                        style={[
-                          styles.timelineCircle,
-                          isPassed
-                            ? styles.timelineCirclePassed
-                            : isAtStop
-                            ? styles.timelineCircleActive
-                            : styles.timelineCircleUpcoming,
-                        ]}
-                      />
-                      {!isLast ? (
+              {/* Stop Timeline List */}
+              <FlatList
+                data={stops}
+                keyExtractor={(item) => String(item.id)}
+                contentContainerStyle={styles.timelineList}
+                showsVerticalScrollIndicator={false}
+                renderItem={({ item, index }) => {
+                  const isPassed = currentStopIndex > item.sequenceOrder;
+                  const isAtStop = currentStopIndex === item.sequenceOrder && currentStopIndex > 0;
+                  const isLast = index === stops.length - 1;
+
+                  return (
+                    <Pressable
+                      onPress={() => focusOnStop(item)}
+                      style={({ pressed }) => [
+                        styles.timelineRow,
+                        pressed ? styles.timelineRowPressed : null,
+                      ]}
+                    >
+                      {/* Left Column: Vertical Line & Node */}
+                      <View style={styles.timelineNodeColumn}>
                         <View
                           style={[
-                            styles.timelineLine,
-                            isPassed ? styles.timelineLinePassed : styles.timelineLineUpcoming,
+                            styles.timelineCircle,
+                            isPassed
+                              ? styles.timelineCirclePassed
+                              : isAtStop
+                              ? styles.timelineCircleActive
+                              : styles.timelineCircleUpcoming,
                           ]}
                         />
-                      ) : null}
-                    </View>
-
-                    {/* Middle Column: Stop Name & Timings */}
-                    <View style={styles.timelineDetails}>
-                      <Text style={styles.stopNameText} numberOfLines={2}>
-                        {item.stop.name.toUpperCase()}
-                      </Text>
-
-                      <View style={styles.timingRow}>
-                        <Text style={styles.arrivalText}>→ {item.scheduledTime}</Text>
-                        <Text style={styles.departureText}>
-                          ↳ {getDepartureTime(item.scheduledTime)}
-                        </Text>
+                        {!isLast ? (
+                          <View
+                            style={[
+                              styles.timelineLine,
+                              isPassed ? styles.timelineLinePassed : styles.timelineLineUpcoming,
+                            ]}
+                          />
+                        ) : null}
                       </View>
-                    </View>
 
-                    {/* Right Column: Status Badge */}
-                    <View style={styles.statusCol}>
-                      {isPassed ? (
-                        <Text style={styles.statusBusLeft}>Bus Left</Text>
-                      ) : isAtStop ? (
-                        <Text style={styles.statusAtStop}>At Stop</Text>
-                      ) : (
-                        <Text style={styles.statusScheduled}>On Time</Text>
-                      )}
-                    </View>
-                  </Pressable>
-                );
-              }}
-            />
-          </Animated.View>
-        </View>
+                      {/* Middle Column: Stop Name & Timings */}
+                      <View style={styles.timelineDetails}>
+                        <Text style={styles.stopNameText} numberOfLines={2}>
+                          {item.stop.name.toUpperCase()}
+                        </Text>
+
+                        <View style={styles.timingRow}>
+                          <Text style={styles.arrivalText}>→ {item.scheduledTime}</Text>
+                          <Text style={styles.departureText}>
+                            ↳ {getDepartureTime(item.scheduledTime)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Right Column: Status Badge */}
+                      <View style={styles.statusCol}>
+                        {isPassed ? (
+                          <Text style={styles.statusBusLeft}>Bus Left</Text>
+                        ) : isAtStop ? (
+                          <Text style={styles.statusAtStop}>At Stop</Text>
+                        ) : (
+                          <Text style={styles.statusScheduled}>On Time</Text>
+                        )}
+                      </View>
+                    </Pressable>
+                  );
+                }}
+              />
+            </Animated.View>
+          </View>
+        ) : (
+          /* ─── UNPUBLISHED ROUTE STATE VIEW ─── */
+          <ScrollView
+            contentContainerStyle={styles.unpublishedContainer}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Hero Card */}
+            <View style={styles.unpublishedHeroCard}>
+              <View style={styles.unpublishedIconBadge}>
+                <Text style={styles.unpublishedIcon}>⏳</Text>
+              </View>
+              <Text style={styles.unpublishedHeroTitle}>Route Not Published Yet</Text>
+              <Text style={styles.unpublishedHeroSubtitle}>
+                Official GPS timetable for Route {detail.routeNo} is currently under preparation
+              </Text>
+              <Text style={styles.unpublishedHeroDesc}>
+                The transport office has not published the live digital stop schedule and GPS route for Route {detail.routeNo}. Live GPS tracking is currently active exclusively on Route 08 and DEMO routes.
+              </Text>
+
+              <View style={styles.unpublishedPillsRow}>
+                <View style={styles.statusPillPending}>
+                  <Text style={styles.statusPillPendingText}>⏳ Schedule Pending</Text>
+                </View>
+                <View style={styles.statusPillInfo}>
+                  <Text style={styles.statusPillInfoText}>👥 {detail.assignedPassengerCount} Students Assigned</Text>
+                </View>
+                <View style={styles.statusPillInfo}>
+                  <Text style={styles.statusPillInfoText}>🚌 {detail.capacity} Seat Capacity</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Tentative Stops Card */}
+            <View style={styles.unpublishedCard}>
+              <View style={styles.unpublishedCardHeader}>
+                <View style={styles.tentativeIconBox}>
+                  <Text style={{ fontSize: 18 }}>📍</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.unpublishedCardTitle}>Tentative Pickup Points & Schedule</Text>
+                  <Text style={styles.unpublishedCardSub}>From Transport Office Master Records</Text>
+                </View>
+                <Pill tone="accent">{tentativeStops.length} Stops</Pill>
+              </View>
+
+              <View style={styles.infoDivider} />
+
+              {tentativeStops.length > 0 ? (
+                <View style={styles.tentativeList}>
+                  {tentativeStops.map((stop, idx) => {
+                    const isFirst = idx === 0;
+                    const isLast = idx === tentativeStops.length - 1;
+                    return (
+                      <View key={`tentative-${idx}`} style={styles.tentativeRow}>
+                        {/* Timeline Node */}
+                        <View style={styles.tentativeNodeCol}>
+                          <View
+                            style={[
+                              styles.tentativeNodeCircle,
+                              isFirst && styles.tentativeNodeFirst,
+                              isLast && styles.tentativeNodeLast,
+                            ]}
+                          >
+                            <Text style={styles.tentativeNodeNumber}>{stop.sequence}</Text>
+                          </View>
+                          {!isLast && <View style={styles.tentativeNodeLine} />}
+                        </View>
+
+                        {/* Stop Details */}
+                        <View style={styles.tentativeDetails}>
+                          <Text style={styles.tentativeStopName}>{stop.name}</Text>
+                          <View style={styles.tentativeMetaRow}>
+                            {stop.time ? (
+                              <Text style={styles.tentativeStopTime}>⏰ {stop.time}</Text>
+                            ) : (
+                              <Text style={styles.tentativeStopTime}>⏰ Scheduled Pickup</Text>
+                            )}
+                            {isFirst && <Text style={styles.tentativeTagFirst}>First Pickup</Text>}
+                            {isLast && <Text style={styles.tentativeTagLast}>Campus Arrival</Text>}
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.noTentativeStopsText}>
+                  {detail.areaCovered || 'All major campus stops. Schedule details will be updated soon.'}
+                </Text>
+              )}
+
+              <View style={styles.tentativeFootnote}>
+                <Text style={styles.tentativeFootnoteText}>
+                  ℹ️ Stop timings above are tentative based on transport master records. Live GPS tracking and exact arrival times will activate once the timetable is published.
+                </Text>
+              </View>
+            </View>
+
+            {/* Assigned Vehicle & Crew Card */}
+            <View style={styles.unpublishedCard}>
+              <View style={styles.unpublishedCardHeader}>
+                <View style={styles.busIconBox}>
+                  <AppIcon name="bus" size={24} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.unpublishedCardTitle}>Bus & Crew Allocation</Text>
+                  <Text style={styles.unpublishedCardSub}>Route {detail.routeNo} Transit Unit</Text>
+                </View>
+              </View>
+
+              <View style={styles.infoDivider} />
+
+              <View style={styles.infoGrid}>
+                <View style={styles.infoGridItem}>
+                  <Text style={styles.infoGridLabel}>ASSIGNED DRIVER</Text>
+                  <Text style={styles.infoGridValue}>{detail.driver?.name || 'Driver allocation in progress'}</Text>
+                </View>
+                <View style={styles.infoGridItem}>
+                  <Text style={styles.infoGridLabel}>SEAT CAPACITY</Text>
+                  <Text style={styles.infoGridValue}>
+                    {detail.assignedPassengerCount}/{detail.capacity} Seats
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.infoGrid}>
+                <View style={styles.infoGridItem}>
+                  <Text style={styles.infoGridLabel}>COLLEGE ARRIVAL</Text>
+                  <Text style={styles.infoGridValue}>09:25 AM</Text>
+                </View>
+                <View style={styles.infoGridItem}>
+                  <Text style={styles.infoGridLabel}>EVENING DEPARTURE</Text>
+                  <Text style={styles.infoGridValue}>04:30 PM</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Action Buttons: Contact In-Charge & View Students */}
+            <View style={styles.unpublishedActionsCard}>
+              <Text style={styles.unpublishedActionsTitle}>Need Assistance?</Text>
+              <Text style={styles.unpublishedActionsDesc}>
+                Contact the transport office for route allocation queries, bus pass verification, or schedule publication inquiries.
+              </Text>
+
+              <Pressable
+                onPress={() => Linking.openURL('tel:7993453629')}
+                style={styles.callInchargeBtn}
+              >
+                <Text style={styles.callInchargeBtnText}>📞 Call Transport In-Charge: Mr. P. Venu Gopal (7993453629)</Text>
+              </Pressable>
+
+              <View style={styles.unpublishedActionsRow}>
+                <Pressable
+                  onPress={() => setActiveTab('BUS INFO')}
+                  style={styles.secondaryActionBtn}
+                >
+                  <Text style={styles.secondaryActionBtnText}>👥 View Student Roster ({detail.assignedPassengerCount})</Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => router.push(`/passenger/report-issue?routeNo=${encodeURIComponent(detail.routeNo)}`)}
+                  style={styles.secondaryActionBtn}
+                >
+                  <Text style={styles.secondaryActionBtnText}>📝 Report Route Issue</Text>
+                </Pressable>
+              </View>
+            </View>
+          </ScrollView>
+        )
       ) : (
         /* ─── TAB 2: BUS INFO ─── */
         <ScrollView contentContainerStyle={styles.busInfoContent} showsVerticalScrollIndicator={false}>
@@ -795,11 +1023,17 @@ export default function RouteDetailsScreen() {
             {!rosterQuery.isPending && !rosterQuery.isError && filteredStops.length === 0 && (
               <View style={styles.rosterEmptyBox}>
                 <Text style={styles.rosterEmptyTitle}>
-                  {rosterSearch ? 'No matching passengers found' : 'No passengers assigned'}
+                  {rosterSearch
+                    ? 'No matching passengers found'
+                    : detail.assignedPassengerCount > 0
+                    ? `${detail.assignedPassengerCount} Passengers Assigned`
+                    : 'No passengers assigned'}
                 </Text>
                 <Text style={styles.rosterEmptySub}>
                   {rosterSearch
                     ? `No students or stops match "${rosterSearch}".`
+                    : detail.assignedPassengerCount > 0
+                    ? `${detail.assignedPassengerCount} students are assigned to Route ${detail.routeNo}. Stop-level grouping will be activated upon timetable publication.`
                     : 'No published roster entries for this route.'}
                 </Text>
                 {rosterSearch ? (
@@ -1756,6 +1990,280 @@ const useStyles = () => {
           alignItems: 'center',
         },
         modalCreateBtnText: { fontSize: 14, fontWeight: fontWeight.bold, color: '#FFFFFF' },
+
+        /* Unpublished Route Screen Styles */
+        directionPendingBar: {
+          backgroundColor: isDark ? 'rgba(30, 41, 59, 0.6)' : '#F1F5F9',
+          paddingVertical: 10,
+          paddingHorizontal: 16,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.borderSubtle,
+          alignItems: 'center',
+        },
+        directionPendingText: {
+          color: colors.textSecondary,
+          fontSize: 12,
+          fontWeight: fontWeight.semibold,
+        },
+        unpublishedContainer: {
+          padding: spacing.md,
+          gap: spacing.md,
+          paddingBottom: 40,
+        },
+        unpublishedHeroCard: {
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          borderRadius: radius.lg,
+          padding: spacing.lg,
+          borderWidth: 1.5,
+          borderColor: 'rgba(245, 158, 11, 0.4)',
+          shadowColor: '#F59E0B',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.1,
+          shadowRadius: 10,
+          elevation: 4,
+        },
+        unpublishedIconBadge: {
+          width: 52,
+          height: 52,
+          borderRadius: 26,
+          backgroundColor: 'rgba(245, 158, 11, 0.15)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: 12,
+        },
+        unpublishedIcon: {
+          fontSize: 26,
+        },
+        unpublishedHeroTitle: {
+          fontSize: 20,
+          fontWeight: fontWeight.black,
+          color: colors.textPrimary,
+          letterSpacing: 0.2,
+          marginBottom: 4,
+        },
+        unpublishedHeroSubtitle: {
+          fontSize: 14,
+          fontWeight: fontWeight.bold,
+          color: '#F59E0B',
+          marginBottom: 8,
+        },
+        unpublishedHeroDesc: {
+          fontSize: 13,
+          color: colors.textSecondary,
+          lineHeight: 19,
+          marginBottom: 14,
+        },
+        unpublishedPillsRow: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 8,
+        },
+        statusPillPending: {
+          backgroundColor: 'rgba(245, 158, 11, 0.18)',
+          borderWidth: 1,
+          borderColor: 'rgba(245, 158, 11, 0.4)',
+          paddingHorizontal: 10,
+          paddingVertical: 5,
+          borderRadius: radius.full,
+        },
+        statusPillPendingText: {
+          color: '#F59E0B',
+          fontSize: 12,
+          fontWeight: fontWeight.bold,
+        },
+        statusPillInfo: {
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+          paddingHorizontal: 10,
+          paddingVertical: 5,
+          borderRadius: radius.full,
+        },
+        statusPillInfoText: {
+          color: colors.textPrimary,
+          fontSize: 12,
+          fontWeight: fontWeight.semibold,
+        },
+        unpublishedCard: {
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          borderRadius: radius.lg,
+          padding: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+        },
+        unpublishedCardHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+        },
+        tentativeIconBox: {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: 'rgba(13, 148, 136, 0.15)',
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        unpublishedCardTitle: {
+          fontSize: 16,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+        },
+        unpublishedCardSub: {
+          fontSize: 12,
+          color: colors.textSecondary,
+          marginTop: 1,
+        },
+        tentativeList: {
+          paddingVertical: 4,
+        },
+        tentativeRow: {
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          minHeight: 56,
+        },
+        tentativeNodeCol: {
+          width: 32,
+          alignItems: 'center',
+        },
+        tentativeNodeCircle: {
+          width: 24,
+          height: 24,
+          borderRadius: 12,
+          backgroundColor: colors.surface,
+          borderWidth: 2,
+          borderColor: colors.border,
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2,
+        },
+        tentativeNodeFirst: {
+          borderColor: '#10B981',
+          backgroundColor: 'rgba(16, 185, 129, 0.2)',
+        },
+        tentativeNodeLast: {
+          borderColor: accentColor,
+          backgroundColor: 'rgba(234, 88, 12, 0.2)',
+        },
+        tentativeNodeNumber: {
+          fontSize: 10,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+        },
+        tentativeNodeLine: {
+          width: 2,
+          flex: 1,
+          backgroundColor: colors.borderSubtle,
+          marginVertical: 2,
+        },
+        tentativeDetails: {
+          flex: 1,
+          paddingLeft: 10,
+          paddingBottom: 14,
+        },
+        tentativeStopName: {
+          fontSize: 14,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+        },
+        tentativeMetaRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          marginTop: 3,
+        },
+        tentativeStopTime: {
+          fontSize: 12,
+          color: accentColor,
+          fontWeight: fontWeight.semibold,
+        },
+        tentativeTagFirst: {
+          fontSize: 11,
+          color: '#10B981',
+          fontWeight: fontWeight.bold,
+          backgroundColor: 'rgba(16, 185, 129, 0.12)',
+          paddingHorizontal: 6,
+          paddingVertical: 1,
+          borderRadius: 4,
+        },
+        tentativeTagLast: {
+          fontSize: 11,
+          color: accentColor,
+          fontWeight: fontWeight.bold,
+          backgroundColor: 'rgba(234, 88, 12, 0.12)',
+          paddingHorizontal: 6,
+          paddingVertical: 1,
+          borderRadius: 4,
+        },
+        noTentativeStopsText: {
+          fontSize: 13,
+          color: colors.textSecondary,
+          lineHeight: 18,
+          paddingVertical: 8,
+        },
+        tentativeFootnote: {
+          marginTop: 8,
+          padding: 10,
+          borderRadius: radius.md,
+          backgroundColor: isDark ? 'rgba(30, 41, 59, 0.4)' : '#F8FAFC',
+        },
+        tentativeFootnoteText: {
+          fontSize: 12,
+          color: colors.textMuted,
+          lineHeight: 16,
+        },
+        unpublishedActionsCard: {
+          backgroundColor: isDark ? colors.surfaceElevated : '#FFFFFF',
+          borderRadius: radius.lg,
+          padding: spacing.md,
+          borderWidth: 1,
+          borderColor: colors.borderSubtle,
+          gap: 10,
+        },
+        unpublishedActionsTitle: {
+          fontSize: 16,
+          fontWeight: fontWeight.bold,
+          color: colors.textPrimary,
+        },
+        unpublishedActionsDesc: {
+          fontSize: 13,
+          color: colors.textSecondary,
+          lineHeight: 18,
+        },
+        callInchargeBtn: {
+          backgroundColor: '#0D9488',
+          borderRadius: radius.md,
+          paddingVertical: 12,
+          paddingHorizontal: 16,
+          alignItems: 'center',
+          marginTop: 4,
+        },
+        callInchargeBtnText: {
+          color: '#FFFFFF',
+          fontSize: 14,
+          fontWeight: fontWeight.bold,
+        },
+        unpublishedActionsRow: {
+          flexDirection: 'row',
+          gap: 8,
+          marginTop: 4,
+        },
+        secondaryActionBtn: {
+          flex: 1,
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.border,
+          borderRadius: radius.md,
+          paddingVertical: 10,
+          paddingHorizontal: 8,
+          alignItems: 'center',
+        },
+        secondaryActionBtnText: {
+          color: colors.textPrimary,
+          fontSize: 12,
+          fontWeight: fontWeight.semibold,
+          textAlign: 'center',
+        },
       }),
     [colors, isDark]
   );

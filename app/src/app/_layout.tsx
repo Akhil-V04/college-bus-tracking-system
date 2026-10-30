@@ -35,4 +35,14 @@ function RootApp() {
   );
 }
 
-export default function RootLayout() { return <ThemeProvider><RootApp /></ThemeProvider>; }
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+
+export default function RootLayout() {
+  return (
+    <ErrorBoundary>
+      <ThemeProvider>
+        <RootApp />
+      </ThemeProvider>
+    </ErrorBoundary>
+  );
+}

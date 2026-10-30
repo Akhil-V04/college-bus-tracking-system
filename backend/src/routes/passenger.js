@@ -105,6 +105,8 @@ router.get('/routes', async (req, res) => {
           tripDirection: activeTrip?.tripDirection || 'TO_COLLEGE',
           isEventOverride: Boolean(activeOverride),
           eventTitle: activeOverride?.name || null,
+          isPublished: Boolean(selectedSchedule && selectedSchedule.stops && selectedSchedule.stops.length > 0),
+          hasPublishedSchedule: Boolean(selectedSchedule && selectedSchedule.stops && selectedSchedule.stops.length > 0),
           majorStops: (selectedSchedule?.stops || []).map((entry) => entry.stop),
           assignedPassengerCount: countByRoute.get(route.id) || 0,
           roster: roster ? { name: roster.name, academicYear: roster.academicYear } : null,
