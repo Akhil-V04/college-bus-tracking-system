@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { GlobeLoading } from './GlobeLoading';
 import { NavLink, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './auth';
 import api from './api';
@@ -119,7 +120,7 @@ export default function Layout() {
 
   const visibleBreakdowns = activeBreakdowns.filter((b) => !dismissedBreakdownIds.has(b.id));
 
-  if (checking) return <div className="app-loading"><div className="spinner" /><p>Checking administrator session…</p></div>;
+  if (checking) return <div className="app-loading" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><GlobeLoading size="large" label="Checking administrator session…" /></div>;
   if (!isLoggedIn) return <Navigate to="/admin/login" replace />;
 
   return (

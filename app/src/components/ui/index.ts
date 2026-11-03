@@ -5,6 +5,7 @@ export { Pill } from './Pill';
 export { Field } from './Field';
 export { Notice } from './Notice';
 export { LoadingState } from './LoadingState';
+export { GlobeLoading } from './GlobeLoading';
 export { ErrorState } from './ErrorState';
 export { EmptyState } from './EmptyState';
 export { SectionTitle } from './SectionTitle';

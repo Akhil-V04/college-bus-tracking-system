@@ -6,14 +6,39 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { fontWeight, radius, spacing } from '@/constants/theme';
 import { useTheme } from "@/contexts/ThemeContext";
 import { AppIcon } from '@/components/AppIcon';
+import { GlobeLoading } from '@/components/ui';
 
 type Role = 'passenger' | 'driver';
 
 export default function RoleSelectionScreen() {
-    const styles = useStyles();
+  const { colors, isDark, toggleTheme } = useTheme();
+  const styles = useStyles();
   const [selectedRole, setSelectedRole] = useState<Role>('passenger');
 
-  // Animated splash
+  // Opening animated splash screen
+  const [isOpening, setIsOpening] = useState(true);
+  const splashFade = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      Animated.timing(splashFade, {
+        toValue: 0,
+        duration: 400,
+        useNativeDriver: true,
+      }).start(() => setIsOpening(false));
+    }, 1800);
+
+    return () => clearTimeout(timer);
+  }, [splashFade]);
+
+  const handleSkipSplash = () => {
+    Animated.timing(splashFade, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => setIsOpening(false));
+  };
+
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(0)).current;
 
@@ -25,7 +50,32 @@ export default function RoleSelectionScreen() {
     }
   };
 
-  const { isDark, toggleTheme } = useTheme();
+  if (isOpening) {
+    return (
+      <Pressable style={{ flex: 1 }} onPress={handleSkipSplash}>
+        <Animated.View style={[{ flex: 1, backgroundColor: colors.background, opacity: splashFade }]}>
+          <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+            <View style={{ alignItems: 'center', marginBottom: 24 }}>
+              <Text style={{ fontSize: 28, fontWeight: '800', color: colors.textPrimary, letterSpacing: -0.5 }}>
+                Campus Wheels
+              </Text>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: colors.accent, letterSpacing: 1.8, marginTop: 4 }}>
+                COLLEGE TRANSIT FLEET
+              </Text>
+            </View>
+
+            <GlobeLoading size="large" label="Starting Campus Wheels..." />
+
+            <View style={{ position: 'absolute', bottom: 36, alignItems: 'center' }}>
+              <Text style={{ fontSize: 11.5, color: colors.textMuted, letterSpacing: 0.4 }}>
+                Tap anywhere to continue
+              </Text>
+            </View>
+          </SafeAreaView>
+        </Animated.View>
+      </Pressable>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>

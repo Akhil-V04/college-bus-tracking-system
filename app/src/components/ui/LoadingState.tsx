@@ -1,29 +1,21 @@
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { GlobeLoading } from './GlobeLoading';
 
-import { spacing } from '@/constants/theme';
-import { useTheme } from "@/contexts/ThemeContext";
-import { useMemo } from "react";
-
-export function LoadingState({ label = 'Loading...' }: { label?: string }) {
-    const { colors } = useTheme();
-    const styles = useStyles();
-  return (
-    <View style={styles.state}>
-      <ActivityIndicator color={colors.accent} size="large" />
-      <Text style={styles.stateText}>{label}</Text>
-    </View>
-  );
+interface LoadingStateProps {
+  label?: string;
+  size?: 'small' | 'medium' | 'large';
+  fullScreen?: boolean;
 }
 
-const useStyles = () => {
-  const { colors } = useTheme();
-  return useMemo(() => StyleSheet.create({
-  state: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.md,
-    paddingVertical: spacing.xl,
-  },
-  stateText: { color: colors.textSecondary, textAlign: 'center', lineHeight: 21 },
-}), [colors]);
-};
+export function LoadingState({
+  label = 'Loading...',
+  size = 'medium',
+  fullScreen = false,
+}: LoadingStateProps) {
+  return (
+    <GlobeLoading
+      label={label}
+      size={size}
+      fullScreen={fullScreen}
+    />
+  );
+}

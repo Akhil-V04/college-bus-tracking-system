@@ -1,0 +1,351 @@
+/* Globe Loading Component Styles */
+.cw-globe-loading-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  user-select: none;
+}
+
+.cw-globe-loading-wrapper.cw-fullscreen {
+  min-height: 80vh;
+  width: 100%;
+}
+
+.cw-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Sizing presets */
+.cw-size-small .cw-stage { width: 100px; height: 100px; }
+.cw-size-small .cw-globe { width: 64px; height: 64px; }
+.cw-size-small .cw-road-ring { width: 78px; height: 78px; border-width: 6px; }
+.cw-size-small .cw-bus-anchor { top: 2px; transform: scale(0.65); }
+
+.cw-size-medium .cw-stage { width: 140px; height: 140px; }
+.cw-size-medium .cw-globe { width: 94px; height: 94px; }
+.cw-size-medium .cw-road-ring { width: 114px; height: 114px; border-width: 8px; }
+.cw-size-medium .cw-bus-anchor { top: 4px; transform: scale(0.85); }
+
+.cw-size-large .cw-stage { width: 180px; height: 180px; }
+.cw-size-large .cw-globe { width: 124px; height: 124px; }
+.cw-size-large .cw-road-ring { width: 152px; height: 152px; border-width: 11px; }
+.cw-size-large .cw-bus-anchor { top: 7px; transform: scale(1.1); }
+
+/* Atmosphere Glow */
+.cw-atmosphere {
+  position: absolute;
+  width: 90%;
+  height: 90%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(14, 165, 233, 0.22) 0%, rgba(14, 165, 233, 0.02) 70%, transparent 100%);
+  filter: blur(8px);
+  pointer-events: none;
+}
+
+/* Floating Clouds */
+.cw-cloud {
+  position: absolute;
+  background: rgba(226, 232, 240, 0.7);
+  border-radius: 10px;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
+}
+.cw-cloud-1 {
+  width: 26px;
+  height: 10px;
+  top: 45%;
+  left: 6px;
+  animation: cwCloudFloat1 3s ease-in-out infinite alternate;
+}
+.cw-cloud-2 {
+  width: 20px;
+  height: 8px;
+  top: 55%;
+  right: 8px;
+  animation: cwCloudFloat2 3.6s ease-in-out infinite alternate;
+}
+@keyframes cwCloudFloat1 {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(8px); }
+}
+@keyframes cwCloudFloat2 {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-6px); }
+}
+
+/* Rotating Globe */
+.cw-globe {
+  position: relative;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #0284C7 0%, #0369A1 70%, #0C4A6E 100%);
+  overflow: hidden;
+  box-shadow: inset -6px -6px 14px rgba(0, 0, 0, 0.35), 0 0 16px rgba(2, 132, 199, 0.3);
+  animation: cwRotateClockwise 6.5s linear infinite;
+  z-index: 3;
+}
+
+@keyframes cwRotateClockwise {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Continents / Landmasses on the rotating globe */
+.cw-land {
+  position: absolute;
+  background: #10B981;
+  border-radius: 12px;
+  opacity: 0.92;
+  box-shadow: inset 1px 1px 2px rgba(255, 255, 255, 0.25);
+}
+.cw-land-1 {
+  width: 44%;
+  height: 38%;
+  top: 14%;
+  left: 10%;
+  border-radius: 14px 10px 18px 8px;
+}
+.cw-land-2 {
+  width: 36%;
+  height: 34%;
+  bottom: 12%;
+  right: 14%;
+  border-radius: 10px 16px 10px 14px;
+}
+.cw-land-3 {
+  width: 25%;
+  height: 25%;
+  top: 40%;
+  right: 16%;
+  border-radius: 8px 12px 10px 6px;
+}
+.cw-land-4 {
+  width: 30%;
+  height: 22%;
+  bottom: 24%;
+  left: 20%;
+  border-radius: 8px;
+}
+
+/* Grid lines on globe */
+.cw-grid-lat {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.25);
+}
+.cw-grid-lon {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  border-left: 1px dashed rgba(255, 255, 255, 0.22);
+}
+
+/* Circular Road Ring around the globe */
+.cw-road-ring {
+  position: absolute;
+  border-radius: 50%;
+  border-style: solid;
+  border-color: #1E293B;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+  animation: cwRotateClockwise 6.5s linear infinite;
+  pointer-events: none;
+}
+
+.cw-road-dashes {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 1.5px dashed #F59E0B;
+  box-sizing: border-box;
+  opacity: 0.9;
+}
+
+/* Bus Perched at Top */
+.cw-bus-anchor {
+  position: absolute;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: cwBusBounce 0.45s ease-in-out infinite;
+}
+
+@keyframes cwBusBounce {
+  0%, 100% { transform: translateY(0); }
+  35% { transform: translateY(-2.5px); }
+  70% { transform: translateY(0.8px); }
+}
+
+.cw-bus {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Bus Body Elements */
+.cw-bus-roof {
+  width: 44px;
+  height: 4px;
+  background: #FFFFFF;
+  border-radius: 3px 4px 0 0;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.cw-bus-chassis {
+  width: 48px;
+  height: 22px;
+  background: #EA580C; /* Campus Wheels Signature Orange */
+  border-radius: 2px 6px 3px 2px;
+  position: relative;
+  padding: 2px 3px;
+  box-sizing: border-box;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+}
+
+.cw-dest-sign {
+  width: 82%;
+  height: 3px;
+  background: #0F172A;
+  border-radius: 1.5px;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  padding-left: 2px;
+}
+
+.cw-led {
+  width: 12px;
+  height: 1.5px;
+  background: #FDE047;
+  border-radius: 1px;
+}
+
+.cw-windows {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.cw-win {
+  width: 7px;
+  height: 8px;
+  background: #BAE6FD;
+  border-radius: 1.5px;
+}
+
+.cw-windshield {
+  width: 8px;
+  height: 9px;
+  background: #E0F2FE;
+  border-radius: 0 4px 1px 0;
+}
+
+.cw-stripe {
+  position: absolute;
+  bottom: 4px;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  background: #FFFFFF;
+  opacity: 0.95;
+  border-radius: 1px;
+}
+
+.cw-headlight {
+  position: absolute;
+  bottom: 5px;
+  right: 1px;
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: #FEF08A;
+  box-shadow: 0 0 4px #FEF08A;
+}
+
+.cw-headlight-cone {
+  position: absolute;
+  right: -24px;
+  top: 10px;
+  width: 26px;
+  height: 14px;
+  background: linear-gradient(90deg, rgba(254, 240, 138, 0.45) 0%, rgba(254, 240, 138, 0.05) 90%, transparent 100%);
+  border-radius: 0 10px 10px 0;
+  transform: rotate(8deg);
+  pointer-events: none;
+}
+
+.cw-wheels {
+  display: flex;
+  justify-content: space-between;
+  width: 36px;
+  margin-top: -3px;
+  z-index: 12;
+}
+
+.cw-wheel {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #0F172A;
+  border: 1.5px solid #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+
+.cw-wheel-hub {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #CBD5E1;
+}
+
+.cw-exhaust {
+  position: absolute;
+  left: -6px;
+  bottom: 2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(203, 213, 225, 0.5);
+  animation: cwExhaust 0.6s ease-out infinite;
+}
+
+@keyframes cwExhaust {
+  0% { transform: scale(0.6) translateX(0); opacity: 0.6; }
+  100% { transform: scale(1.6) translateX(-8px); opacity: 0; }
+}
+
+/* Pulsing Label */
+.cw-loading-label {
+  margin-top: 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted, #64748B);
+  letter-spacing: 0.2px;
+  animation: cwPulseLabel 1.8s ease-in-out infinite;
+  text-align: center;
+}
+
+@keyframes cwPulseLabel {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.55; }
+}
+

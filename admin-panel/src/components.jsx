@@ -1,3 +1,7 @@
+import { GlobeLoading } from './GlobeLoading';
+
+export { GlobeLoading };
+
 export function PageHeader({ eyebrow, title, description, actions }) {
   return <header className="page-header"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1>{description && <p>{description}</p>}</div>{actions && <div className="page-actions">{actions}</div>}</header>;
 }
@@ -14,8 +18,12 @@ export function StatusBadge({ value }) {
   return <span className={`status-badge status-${normalized}`}>{String(value || 'Unknown').replaceAll('_', ' ')}</span>;
 }
 
-export function LoadingState({ label = 'Loading data…' }) {
-  return <div className="state-card"><div className="spinner" /><p>{label}</p></div>;
+export function LoadingState({ label = 'Loading data…', size = 'medium' }) {
+  return (
+    <div className="state-card" style={{ padding: '24px 16px' }}>
+      <GlobeLoading label={label} size={size} />
+    </div>
+  );
 }
 
 export function EmptyState({ title, description }) {
