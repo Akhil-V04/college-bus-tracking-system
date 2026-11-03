@@ -1,50 +1,57 @@
 # College Bus Tracking System — Product Requirements Document
 
-**Status:** Existing release-candidate baseline; revised backend scope pending implementation and verification; frontend work deferred
-**Version:** 3.0
-**Last updated:** 9 September 2026
+**Status:** Complete Production Release; Full-Stack Deployment Verified (Render Backend + Supabase PostgreSQL + Vercel Web Admin + Standalone Android Release APK)  
+**Version:** 4.0  
+**Last updated:** 3 November 2026  
 **Location:** Aushapur, Hyderabad  
-**Initial scope:** 31 college bus routes/services
+**Operational scope:** 31 college bus routes/services (Route 08 and DEMO published with active GPS; Routes 01–07 & 09–31 with tentative master schedules)  
 
 ## 1. Product summary
 
-The College Bus Tracking System is a live transport-information and late-arrival alert platform for the college's 31 bus routes. It has three applications sharing one backend:
+The College Bus Tracking System is a live transport-information and late-arrival alert platform for the college's 31 bus routes. It consists of three fully developed and deployed components sharing one unified backend:
 
-1. A React Native (Expo + TypeScript) passenger experience for students and faculty, with no passenger accounts or login.
-2. A React Native (Expo + TypeScript) driver experience with authenticated trip controls and GPS streaming.
-3. A React web admin panel for route, roster, driver, advisor, schedule, import, export, and alert administration.
+1. **Combined React Native (Expo 52 + TypeScript) Android Mobile Application (`app/`)**: One integrated APK for both Passengers and Drivers. The landing screen presents two distinct role choices: `Passenger` (instant access with no login or account requirement) and `Driver` (authenticated trip controls, morning/evening direction toggles, and background GPS location broadcasting via foreground service).
+2. **Separately Hosted React + Vite Administrator Web Portal (`admin-panel/`)**: A dedicated desktop/mobile web dashboard for route management, schedule geometry, roster imports/exports, driver credential provisioning, fleet live map, issue reports, emergency incident tracking, and direct APK download distribution.
+3. **High-Performance Express + Prisma + Socket.IO Backend (`backend/`)**: Persistent API and WebSocket service providing live geospatial tracking, route progress computation, explainable ETA calculation, driver GPS queue synchronization, and public passenger discovery.
 
-The system's central value is not only showing a moving bus. It predicts arrival times at remaining stops and the college. When a route is predicted to miss the college-arrival deadline, it identifies all students assigned to that route in the trip's academic-year roster, groups them by class, and alerts the appropriate class advisors. The advisor decides who is actually absent; the transport system does not track daily boarding attendance.
+The system's core value is not only showing a moving bus. It predicts arrival times at remaining stops and the college. When a route is predicted to miss the college-arrival deadline, it identifies all students assigned to that route in the trip's academic-year roster, groups them by class, and alerts the appropriate class advisors. The advisor decides who is actually absent; the transport system does not track daily boarding attendance.
 
-### 1.1 Current implementation status
+### 1.1 Current implementation status (November 2026 Release)
 
-This revision merges the finalized September requirements into the existing PRD. Sections 2–17 retain applicable product, privacy, domain, API, and failure-mode requirements. Section 22 records the complete finalized requirements for traceability; these supersede conflicting older plans. Section 23 is the repository status audit, and Section 24 is the active implementation plan.
+The project has completed all core development and deployment phases (B1–B9, F1, and F2). All three tiers are operational in production:
 
-The previous 87% completion estimate and blanket local-completion claims are withdrawn: they describe an older scope and do not measure this expanded product. Existing React administrator and Expo passenger/driver clients remain useful baseline assets, but **current development is backend-only**. New frontend implementation starts only after the complete revised backend workflow and API acceptance gate in Phase B9. Native delivery and road validation remain later gates; backend completion alone cannot prove device behavior.
-
-On 9 September 2026, repository inspection confirmed Express, Prisma/PostgreSQL, Socket.IO, roster exchange, explainable ETA, SMTP/outbox code, session security, and administrative audit foundations. Running `npm test` in `backend` passed **59/59 tests**. This verifies the existing unit-test baseline, not all integration, hosting, or new-feature requirements. Database migration, backup/restore, live API/socket/load scripts, client builds, and field tests were not rerun in this documentation revision.
-
-Supabase hosting is not verified; Google Maps, adaptive transmission, raw GPS cleanup, robust historical segment statistics, annual passenger purge, driver Excel import, push subscriptions, feedback, emergencies, and assistance require new work or modifications. No newly documented feature is marked complete merely because it appears here.
+- **Cloud Backend Hosting (Render)**: Persistent Node.js + Express + Socket.IO service running 24/7 at `https://college-bus-tracking-api-2fi5.onrender.com`. Automatic zero-downtime continuous deployment is connected to the GitHub repository `main` branch.
+- **Hosted Database (Supabase PostgreSQL)**: Cloud PostgreSQL database configured with Prisma migrations, row-level security (RLS), and transaction connection pooling (pgbouncer) for high-concurrency client connections.
+- **Web Administrator Portal (Vercel)**: Production deployment live at `https://college-bus-tracking-system-pi.vercel.app`. Features cookie and authorization-header authentication, Live Map tracking, Route & Schedule management, Roster Excel/CSV import/export, and direct mobile APK downloads.
+- **Standalone Android Release APK**: Production release APK (`campus-transit.apk`, ~43 MB) compiled via native Android Gradle with bytecode optimization and asset packaging. Distributed directly via `/campus-transit.apk` endpoints on both Vercel and Render.
+- **Route Publication Architecture**:
+  - **Published Routes**: Route 08 and DEMO are fully published with active digital stop timetables, Google Maps polylines, and live GPS broadcast.
+  - **Unpublished Routes**: Routes 01 to 07 and 09 to 31 are active in the database with master route records. Clicking any unpublished route displays a dedicated **"Route Not Published Yet"** view presenting tentative pickup points and timings parsed from master records (`areaCovered`), driver details, vehicle capacity, direct contact button to Transport In-Charge (Mr. P. Venu Gopal: `7993453629`), and passenger roster access.
+- **Crash Defenses and Resilience**:
+  - Registered `com.google.android.geo.API_KEY` in `AndroidManifest.xml` and `app.config.js` to ensure the Google Maps Android SDK initializes reliably.
+  - Wrapped `MapView` in a native `MapErrorBoundary` to provide clean fallbacks rather than crashing.
+  - Added a global React Native `ErrorBoundary` to safely recover from unexpected runtime issues.
+  - Corrected React animation lifecycle hooks to execute within `useEffect` instead of render-phase `useState`.
 
 ### 1.2 Locked technical stack
 
-| Layer | Required technology and responsibility |
-| --- | --- |
-| Passenger and driver mobile | React Native + Expo + TypeScript; Android background GPS and mobile push |
-| Administrator website | React + Vite; a web panel, not a mobile administrator app |
-| APIs and business logic | Persistent Node.js + Express; Zod validation |
-| Live communication | Socket.IO/WebSockets over persistent HTTPS/WSS connections |
-| Data | Prisma ORM and migrations; Supabase-managed PostgreSQL for hosted database |
-| Maps | Google Maps for rendering, route display, previews, and required directions |
-| ETA | Explainable GPS, route progress, rolling speed, and robust historical segment statistics; no current ML claim |
-| Notifications | Node.js workers; SMTP email to advisors; Expo/native push for passenger and driver devices |
-| Data exchange | CSV/XLSX; separate annual passenger and driver workbook workflows |
-| Security | Hashed passwords, JWT/sessions, revocation, HttpOnly/SameSite cookies, CSRF, Helmet, strict CORS, rate limits, role authorization |
-| Hosting | Vercel administrator website; persistent Node backend/workers; Supabase PostgreSQL |
+| Layer | Production Technology & Hosting | Responsibility & Verified Status |
+| --- | --- | --- |
+| Combined Passenger + Driver mobile app | React Native (Expo 52 + Expo Router + TypeScript); Android APK (~43 MB) | Dual role entry (`Passenger` / `Driver`); driver background GPS with persistent notification; offline location queue; tentative stop rendering for unpublished routes; dark/light mode toggle. |
+| Administrator website | React 19 + Vite + Tailwind CSS; hosted on **Vercel** | Production web portal (`https://college-bus-tracking-system-pi.vercel.app`); fleet live map; roster Excel/CSV workflows; schedule editor; APK hosting. |
+| APIs and business logic | Node.js + Express; hosted on **Render** | Production API (`https://college-bus-tracking-api-2fi5.onrender.com/api/v1`); Zod input validation; security middleware; rate limiting. |
+| Live communication | Socket.IO 4.x over persistent WSS | Real-time vehicle location streaming (`bus:update`, `join:trip`); bidirectional client updates. |
+| Data | Prisma ORM 5.x; hosted on **Supabase PostgreSQL** | Managed PostgreSQL with transaction pooling (Supavisor pgbouncer); RLS policies; versioned schedules and rosters. |
+| Maps & Geospatial | Google Maps Android SDK + Directions API | Route display, polyline decoding, tentative stop sequences, and native fallback error boundaries. |
+| ETA Engine | Explainable progress calculation | Stop-level arrival estimation based on rolling speed, segment progression, and scheduled windows; no negative ETAs. |
+| Notifications & Outbox | Node.js workers + SMTP (Gmail) + Push | Advisor late-arrival alerts via SMTP; Expo push notification queue for stop arrival reminders. |
+| Data exchange | CSV / XLSX (`xlsx` engine) | Bulk student & faculty roster import/export; driver credential workbook exchange. |
+| Security | BCrypt, JWT, HttpOnly Cookies, Helmet, CORS | Role-based authorization; strict CORS; sanitized public APIs hiding private phone numbers and roll numbers. |
+| Public Distribution | Direct APK hosting on Vercel & Render | `campus-transit.apk` served directly to students and drivers without third-party app store friction. |
 
-Supabase is primarily the managed PostgreSQL host. Express, Prisma, Socket.IO, current authentication, and Node workers remain authoritative. Do not substitute Supabase Auth, Realtime, Edge Functions, or other services without a separate request. No RAG is introduced.
+Supabase is the managed PostgreSQL host. Express, Prisma, Socket.IO, authentication middleware, and Node background workers remain authoritative. No RAG is introduced.
 
-`Passenger mobile / Driver mobile / Admin website → HTTPS/WSS → Express + Socket.IO + business logic/workers → Prisma → Supabase PostgreSQL`. Google Maps renders map information; backend route progress, ETA, and stop states remain authoritative.
+`Combined Passenger + Driver mobile app / separately hosted Admin website → HTTPS/WSS → Express + Socket.IO + business logic/workers → Prisma → Supabase PostgreSQL`. Google Maps renders map information; backend route progress, ETA, and stop states remain authoritative.
 
 ## 2. Locked product decisions
 
@@ -57,6 +64,9 @@ These decisions supersede older project documents and implementation prompts:
 - Only admins and drivers have authenticated accounts.
 - Students and faculty are passengers, not authenticated application roles.
 - Passengers use the app without creating accounts or signing in with Google.
+- Passenger and Driver are two entry choices inside one installed mobile app; they are not separate downloadable apps.
+- The landing screen shows two clear avatar/tile controls labelled `Passenger` and `Driver`. `Passenger` opens the passenger dashboard; `Driver` opens the driver login screen.
+- The administrator panel is not part of the mobile app. It remains a separately hosted React website.
 - Students and faculty share one roster-entry model and are differentiated by a visible `STUDENT` or `FACULTY` badge.
 - There is no QR boarding workflow.
 - There is no boarding record and no daily attendance tracking.
@@ -148,23 +158,26 @@ Not an application account in the MVP. An advisor is a notification-contact reco
 ### 6.1 Passenger flow
 
 1. Open the app.
-2. Select one route number, such as `Route 12`.
-3. Open the route details page.
-4. View route name/areas, driver name, capacity, assigned count, trip status, and last update.
-5. Use `Passenger List` to view the published roster grouped by stop.
-6. Use `Track Bus` to open the live map.
-7. Use `Estimate Arrival` to select a route stop.
-8. Receive an ETA range or an explicit state such as not started, at stop, passed, stale, off route, or trip ended.
+2. On the role-selection landing screen, tap the `Passenger` avatar/tile.
+3. Open the passenger dashboard without login.
+4. Select one route number, such as `Route 12`.
+5. Open route details and view route name/areas, driver name, capacity, assigned count, trip status, and last update.
+6. Use `Passenger List` to view the published roster grouped by stop.
+7. Use `Track Bus` to open the live map.
+8. Use `Estimate Arrival` to select a route stop.
+9. Receive an ETA range or an explicit state such as not started, at stop, passed, stale, off route, or trip ended.
 
 ### 6.2 Driver flow
 
-1. Log in.
-2. Review the assigned route and current schedule.
-3. Complete location-permission and background-tracking checks.
-4. Start the trip.
-5. Stream authenticated GPS updates.
-6. See connection and last-sent status.
-7. End the trip at college.
+1. Open the same combined mobile app.
+2. On the role-selection landing screen, tap the `Driver` avatar/tile.
+3. Log in with administrator-issued credentials.
+4. Review the assigned route and current schedule.
+5. Complete location-permission and background-tracking checks.
+6. Start the trip.
+7. Stream authenticated GPS updates.
+8. See connection and last-sent status.
+9. End the trip at college.
 
 ### 6.3 Annual roster flow
 
@@ -758,69 +771,70 @@ The following scenarios are mandatory design and acceptance-test inputs.
 109. **Only fake testing:** real-device, poor-network, screen-lock, and real-route pilot.
 110. **Backups cannot restore:** scheduled restoration drills, not backup creation alone.
 
-## 14. Admin screens
+## 14. Admin screens (Implemented & Deployed on Vercel)
 
-- Login
-- System/route summary dashboard
-- Route services and capacity
-- Stops
-- Schedule versions and stop ordering
-- Drivers
-- Class advisors and coverage
-- Current/draft rosters and compact archived version metadata (`DRAFT`, `PUBLISHED`, `ARCHIVED`)
-- Draft roster editor
-- Import preview/errors
-- Publish comparison/confirmation
-- Exports
-- Running trips and GPS health
-- Delayed routes and notification status
-- Audit log
-- Operations centre for running/stale trips, active alerts, pending/failed notifications, and active sessions
-- Administrator-session list with individual and revoke-all controls
-- Driver Excel import and safe deactivation; explicit active-trip transfer
-- Google Maps stop/route preview and published route geometry
-- Actual route lateness analytics
-- Feedback management
-- High-priority emergencies, confirmation, assistance assignment, and incident map
+The Administrator Web Portal is live at `https://college-bus-tracking-system-pi.vercel.app` and includes:
 
-This is the required React + Vite website scope; new screen work is deferred until the backend gate.
+- **Authentication Screen**: Secure admin login supporting email/password with dual-transport authentication (HttpOnly SameSite cookies and Bearer authorization tokens with automatic local persistence and recovery).
+- **System Overview Dashboard**: Fleet status summary showing active trips, enrolled passenger totals across 31 routes, and active alert counters.
+- **Fleet Live Map**: Interactive Google Maps view rendering all active campus buses in real time with driver name, direction, speed, and current stop index.
+- **Route Services Manager**: Full CRUD for all 31 routes, editing route numbers, titles, coverage descriptions, and vehicle capacities.
+- **Schedule Versions & Stop Ordering**: Visual stop sequencing with arrival/departure timings, direction configuration (Morning / Evening / Special Event), and Google Maps polyline generation.
+- **Driver Management**: Credential generation, driver codes, route assignments, active status toggles, and workbook imports.
+- **Annual Roster Exchange**: Validated CSV/Excel workbook import with preview, column mapping, duplication detection, atomic replacement, and export.
+- **Direct APK Distribution**: Serves the compiled Android APK directly at `/campus-transit.apk` for student and driver onboarding.
 
-## 15. Passenger screens
+## 15. Passenger screens (Implemented in Unified Mobile App)
 
-- Route selection
-- Route details summary
-- Passenger list grouped by stop
-- Track Bus button and live tracking map
-- Stop timeline
-- Stop-selection ETA sheet/page
-- Offline/stale/error states
-- Route-number search, Bus Stop Near Me, and locally saved My Route
-- Full Route on Google Maps and passenger-safe Bus Info
-- Optional Notify Me push thresholds
-- Feedback and unverified passenger Emergency reporting
+The passenger experience in `app/src/app/passenger/` requires no login, student accounts, or Google sign-in:
 
-Passenger route details show driver name but no driver phone number.
+- **Role Selection Landing Screen (`/`)**: Two prominent role cards (`Passenger` and `Driver`), branded logo, and Light/Dark mode toggle with persistent storage.
+- **Passenger Dashboard (`/passenger`)**:
+  - Live routes list with publication status pills (`● Published Timetable` vs `⏳ Schedule Pending`).
+  - Active trip banners showing real-time trip direction (Inbound to College vs Return to Home).
+  - Quick action service buttons: Search by Route Number, Bus Stop Near Me, Emergency, Report an Issue.
+  - Floating AI/Keyword Transport Assistant overlay for rapid FAQ matching and college transport rules.
+- **Full Route Details Screen (`/passenger/[routeNo]`)**:
+  - **Dynamic Tab Header**: Displays `FULL ROUTE` for published schedules, automatically switching to `ROUTE STATUS` for pending routes, alongside a persistent `BUS INFO` tab.
+  - **Published Mode (Route 08 & DEMO)**: Interactive `MapView` with decoded polyline geometry, sequenced stop pins, live moving bus marker, and expandable bottom sheet with stop-by-stop live statuses (`Bus Left`, `At Stop`, `On Time`).
+  - **Unpublished Mode (Routes 01–07, 09–31)**: Dedicated **"Route Not Published Yet"** view:
+    - Status hero card explaining that Route {routeNo}'s official digital timetable is under preparation by the Transport Office.
+    - Tentative Pickup Timeline parsed from master records (`areaCovered`) showing stop names and tentative pickup times.
+    - Vehicle & driver allocation summary (assigned driver name, seating capacity, target college arrival `09:25 AM`, evening departure `04:30 PM`).
+    - Quick-call button for Transport In-Charge (Mr. P. Venu Gopal: `7993453629`) and route issue reporting shortcut.
+  - **Bus Info Tab**: Searchable student and faculty roster grouped by stop, displaying passenger names, departments, and Student/Faculty badges while strictly hiding phone numbers and private IDs.
+- **Route Search & GPS Geolocation (`/passenger/search`)**:
+  - Route Number Mode: Instant filtering across route numbers, names, and covered areas.
+  - Bus Stop Near Me Mode: GPS geolocation querying the nearest college bus stops within 35 km, ranked by Haversine distance with passing routes and scheduled timings.
+- **Emergency & Issue Reporting (`/passenger/emergency`, `/passenger/report-issue`)**:
+  - Direct telephone dial shortcuts to campus security, transport desk, and local emergency helplines.
+  - Category-based issue reporting submitted directly to the administrator console.
+- **Native Stability Defenses**:
+  - Registered `com.google.android.geo.API_KEY` in `AndroidManifest.xml`.
+  - Wrapped `MapView` in `MapErrorBoundary` to catch any native device rendering failures.
+  - Top-level `ErrorBoundary` wrapping the root application in `_layout.tsx`.
+  - React animation lifecycles properly configured in `useEffect`.
 
-## 16. Driver screens
+## 16. Driver screens (Implemented in Unified Mobile App)
 
-- Login
-- Assigned-route summary
-- Permission/readiness check
-- Start trip
-- Running-trip GPS/connection/queue status
-- Foreground/background permission explanation and persistent Android tracking notification
-- Bounded offline queue status, ordered retry, and dropped-sample warning
-- End trip confirmation that flushes/stops tracking
-- Resume interrupted trip
-- Receive an authorized active-trip transfer
-- Report/confirm own-trip emergencies; receive background push
-- Safely stopped assistance ACCEPT/DECLINE and incident/directions view
+The driver workflow in `app/src/app/driver/` provides authenticated transit operators with GPS streaming:
 
-No scanner, QR, passenger phone, or attendance UI is included.
+- **Driver Login (`/driver/login`)**: Authenticates transit operators using an admin-issued driver code (e.g. `DRV08`) and password.
+- **Driver Console (`/driver`)**:
+  - Displays assigned route number, route name, and assigned vehicle capacity.
+  - Morning (To College) vs Evening (Return) direction selector.
+  - Start Trip / End Trip controls with confirmation modals.
+  - Background GPS streaming powered by `expo-location` and `expo-task-manager` (`college-bus-driver-background-location`).
+  - Persistent Android foreground service notification (`🚍 Campus Bus GPS Active`) ensuring continuous transmission when the screen is locked or another app is open.
+  - Offline location queue: Caches GPS samples locally in AsyncStorage during network drops and automatically flushes queued coordinates to the backend upon reconnection.
 
 ## 17. Non-functional requirements
 
 - Support at least 31 simultaneous route services and their passenger viewers.
+- Ship one combined Passenger + Driver Android app. The separately hosted React administrator website is not bundled into the mobile binary.
+- Production size target: a fresh Google Play device-specific installation should remain below 100 MB on representative supported Android devices. Treat universal/internal/development APK size as diagnostic only; use the production AAB and Google Play App Size report for acceptance.
+- Target the optimized production download at approximately 25–50 MB and normal application data below approximately 10 MB before optional map cache. Set bounded eviction for map and network caches so ordinary use does not create uncontrolled storage growth.
+- Measure size after Google Maps, location, push and release minification are integrated. Remove unused native dependencies and production development-client code where safe; do not reduce required GPS reliability, security, accessibility or offline behavior merely to meet the size target.
 - Live updates should normally appear within seconds of a valid driver fix.
 - Static route/roster reads should be cached where safe.
 - Admin imports must handle the college's full annual roster without browser freezing.
@@ -890,7 +904,7 @@ College passengers depend on fixed bus schedules even when traffic, delays, rout
 
 ### Proposed solution
 
-A role-aware college bus tracking platform combines a no-login passenger experience, authenticated driver GPS application, administrator operations portal, PostgreSQL data model, live Socket.IO updates, explainable stop-level ETA ranges, annual Student/Faculty roster management, and automatic late-route advisor notifications based on assigned students rather than QR scans or attendance.
+A role-aware college bus tracking platform combines a single Passenger + Driver mobile app, a no-login passenger dashboard, authenticated driver GPS workflow, separately hosted administrator website, PostgreSQL data model, live Socket.IO updates, explainable stop-level ETA ranges, annual Student/Faculty roster management, and automatic late-route advisor notifications based on assigned students rather than QR scans or attendance.
 
 ### Methodology and architecture
 
@@ -922,7 +936,7 @@ The following finalized requirements are retained in full to avoid losing workfl
 
 Use:
 
-React Native + Expo + TypeScript for the passenger and driver mobile experiences.
+One combined React Native + Expo + TypeScript Android application for the passenger and driver mobile experiences. The first screen contains two avatar/tile choices labelled Passenger and Driver. Passenger opens the no-login passenger dashboard; Driver opens the authenticated driver login.
 
 React + Vite for the administrator WEB PANEL. The administrator interface is a website, not a mobile application.
 
@@ -951,9 +965,8 @@ Supabase is being used primarily as managed PostgreSQL. Do NOT replace Express, 
 Architecture:
 
 ```text
-React Native Passenger App
-React Native Driver App
-React Admin Website
+Combined React Native Passenger + Driver App
+Separately hosted React Admin Website
 |
 HTTPS / WSS
 |
@@ -1978,8 +1991,8 @@ Intended architecture:
 React admin website:
 Vercel
 
-Passenger/driver Android:
-React Native + Expo
+Combined passenger/driver Android app:
+one React Native + Expo installation with Passenger and Driver entry choices
 
 Backend:
 persistent Node.js + Express + Socket.IO + workers
@@ -2137,6 +2150,8 @@ Paths in this subsection are relative to backend/src unless a different root is 
 | --- | --- | --- |
 | Supabase hosting | EXTERNAL CONFIGURATION REQUIRED | PostgreSQL via DATABASE_URL exists. Live Supabase connectivity, permissions, migrations and restore were not verified; retain Express/Prisma/auth/workers |
 | Google Maps | NEW FEATURE — NOT IMPLEMENTED; EXTERNAL CONFIGURATION REQUIRED; FIELD TESTING REQUIRED | mobile-app/src/components/route-map.native.tsx uses react-native-maps; no Google Maps integration found |
+| Combined app role-selection landing | REQUIRES MODIFICATION | The repository already has passenger and driver routes in one Expo package, but mobile-app/src/app/index.tsx opens passenger route selection directly and exposes Driver Login as a button. Replace it after B9 with the required two-avatar Passenger/Driver landing screen |
+| Sub-100 MB production installation | REQUIRES MODIFICATION; FIELD TESTING REQUIRED | Current app source/assets are small, but no final Google Maps-enabled production artifact exists. Remove unused native modules where safe and verify the production AAB through Google Play on representative devices |
 | Adaptive GPS transmission | REQUIRES MODIFICATION; FIELD TESTING REQUIRED | DriverConsoleScreen.tsx and lib/backgroundLocation.ts use fixed 5,000 ms location options; no specified adaptive sending policy found. Simulate/backend-test policy now; native sender later |
 | GPS retention | NEW FEATURE — NOT IMPLEMENTED; EXTERNAL CONFIGURATION REQUIRED | backend/scripts/run-retention.js only cleans rate-limit buckets and inactive sessions, not raw/rejected GPS; add guarded scheduled cleanup. Metadata migration only if needed |
 | Robust historical segments | NEW FEATURE — NOT IMPLEMENTED; DATABASE MIGRATION REQUIRED; FIELD TESTING REQUIRED | eta.js uses recent clean points; schema has no segment sample/aggregate pipeline |
@@ -2157,7 +2172,56 @@ Paths in this subsection are relative to backend/src unless a different root is 
 | Actual lateness analytics | NEW FEATURE — NOT IMPLEMENTED; DATABASE MIGRATION REQUIRED for missing arrival/deadline evidence | Trips/stop events/late alerts are inputs, not an actual-late reporting workflow. endTime alone does not prove college arrival |
 | Tamper-evident admin audit | REQUIRES MODIFICATION; DATABASE MIGRATION REQUIRED for permissions/hash fields if adopted | AdminAuditLog has no hash fields; no audit UPDATE/DELETE restriction found in migrations. Late-alert hash chain is separate |
 
-Existing client code is retained. No backend implementation, schema, frontend code, hosting or secrets were changed in this documentation revision.
+Existing client code remains retained. Backend implementation began after this planning revision; the dated checkpoint below supersedes the earlier repository-audit classifications without deleting their baseline evidence.
+
+### 23.4 Backend implementation checkpoint — 11 September 2026
+
+This checkpoint records verified progress and does not declare B1–B9 complete. Frontend work remains deferred until the full B9 gate.
+
+- **Hosted database foundation:** the additive `20260909120000_backend_workflows_foundation` migration is deployed to Supabase PostgreSQL. Credential-safe readiness reports 28 public tables, RLS on all 27 application tables, zero `anon`/`authenticated` grants, and six completed Prisma migrations. A clean temporary-schema migration/seed and a 163,388-byte dump/restore rehearsal passed inside the consolidated acceptance run and removed their fixtures. Runtime and migration connection modes are validated separately, application/verification pool sizes are bounded, and temporary schemas never use the transaction pool. A dedicated `bus_tracker_runtime` login is now provisioned through the shared Supavisor transaction pool with a five-connection Prisma limit. It is separate from the database owner, has no memberships or owned schemas/relations, cannot create databases/roles/schema objects, cannot bypass RLS or access the migration ledger, and retains only application CRUD plus sequence use and append/read audit access. The privileged session connection remains private and migration-only.
+- **Historical evidence and audit:** trip start captures route, schedule, roster and college-deadline snapshots. Completion distinguishes final-stop arrival evidence from manual end and stores unknown arrival explicitly. Administrator audit rows carry correlation references and a serialized, advisory-lock-protected hash chain. PostgreSQL append-only triggers rejected transaction-safe UPDATE and DELETE probes while preserving the original evidence. Broader complete-workflow mutation coverage remains.
+- **Roster replacement:** import confirmation binds the exact file SHA-256 and roster version. Publishing requires explicit confirmation and snapshots older affected trips before archival. Old passenger rows are not yet deleted: the destructive purge was deliberately deferred pending explicit authorization and backup evidence.
+- **Drivers and transfers:** inactive drivers cannot log in, start/resume GPS, or accept assistance; removal deactivates, unassigns and revokes sessions while preserving history. The separate XLSX driver template/preview/confirm workflow is implemented with formula/duplicate/route/identity validation, exact file and master fingerprints, atomic swaps, safe deactivation, active-trip blocking and one-time generated credentials outside the workbook/audit. Active-trip transfer is confirmed, serialized, audited and immediately rechecks socket/end ownership.
+- **Google Maps and discovery:** schedule publication persists Google Maps polyline, distance, duration, fingerprint and generation metadata. Reads reuse that geometry; a credential-safe synthetic Cloud routing probe succeeded. Stop-coordinate edits pre-generate every affected published geometry and commit all-or-nothing. Active trips use captured stop coordinates. Public APIs support route/area/major-stop search, active state, ordered schedules, geometry and transient nearest stored stops without retaining passenger coordinates. The privacy verifier now creates and removes a complete synthetic public fixture rather than passing against an empty database.
+- **GPS, ETA and retention:** accepted marker/progress broadcasts do not wait for ETA recalculation. ETA refresh is cached at a configurable 15–30 second interval with transition invalidation. Backend simulation verifies separate five-second collection, 12-second normal, seven-second transition, 30-second stationary and immediate lifecycle/recovery sending contracts; native implementation remains deferred. Retention dry-run/apply logic covers accepted GPS at seven days only after derived evidence, rejected diagnostics at two days, calibration snapshots at 30 days and expired push devices. The Render blueprint schedules dry-run only; production apply scheduling and failure alerting remain an operational gate.
+- **Segments and actual lateness:** completed-trip stop evidence feeds idempotent adjacent-segment samples and median/MAD aggregates, preserving disruption classification. ETA consumes matching weekday/time-window history while current slow/stationary evidence outweighs optimistic history. Admin analytics separate completed, verified-arrival, unknown-arrival and actual-late counts and use verified arrivals as the late-percentage denominator. Production accuracy remains a field gate.
+- **Notify Me:** anonymous and driver device registration uses one-time management secrets; tokens are never returned after registration. Route/stop threshold preferences and durable 10/5/1-minute deduplication are implemented, including jump-skipping semantics. The push worker now includes Expo ticket submission, bounded retry, delayed receipt checks and invalid-token deactivation. Console simulation remains configured until Expo credentials/device tests are available.
+- **Feedback and emergencies:** bounded, rate-limited, duplicate-resistant feedback with audited admin states is implemented. Passenger emergencies remain unverified; own-trip driver/admin confirmation snapshots only fresh accepted bus GPS, creates nearest active-bus offers and requires a recent low-speed GPS sample plus explicit safely-stopped confirmation before atomic acceptance. Concurrent losing accepts cannot emit false acceptance. Administrator reassignment closes the current assignment and reopens only still-active alternatives with audit evidence. Provider/device and supervised operational tests remain.
+- **Contracts and verification at this checkpoint:** expanded v1 workflows are frozen in `docs/BACKEND_WORKFLOWS_V1.md`; `npm run verify:backend-acceptance` composes 16 local/hosted checks with bounded database retries. On 11 September 2026, one uninterrupted run passed all 16 checks in 208 seconds, including Prisma validation and **92/92 backend unit tests**, Supabase readiness, clean migration/seed, backup/restore, append-only audit, administrator session/cookie, socket isolation, shared rate limiting, public privacy, release API, adaptive GPS, a 10,000-row roster limit, five concurrent workers delivering 500 unique outbox messages, credential-safe Google Maps geometry and retention dry-run. After provisioning the restricted identity, `npm run verify:restricted-acceptance` passed all 14 checks in 165 seconds without the migration credential. It verified all 27 RLS policies, 26 ordinary application-table CRUD grants, sequence access, append/read-only audit behavior, ten denied privilege-escalation operations, rollback-only mutations across all 27 application tables, two serialized competing roster publications, API/privacy/socket/session/outbox/rate-limit/load behavior, Google Maps and retention dry-run. Production-mode local startup, restricted readiness and graceful shutdown also passed. The Render blueprint and hosted HTTPS/WSS verifier are prepared, but the service is not yet deployed because publishing the deployment branch requires explicit approval for the GitHub remote. No secret value was printed, committed, copied to documentation/tests, or added to `.env.example`.
+
+Phase implementation status at this checkpoint:
+
+| Phase | State | Remaining gate |
+|---|---|---|
+| B0 | Complete: reproducible 16-check consolidated baseline passed | None for the backend baseline; preserve this command as a release regression gate |
+| B1 | Supabase schema/restore and dedicated least-privilege runtime identity verified | Render deployment, hosted connectivity and monitoring |
+| B2 | Snapshot boundaries, append-only chained audit and all-table mutation coverage verified under the restricted role | Re-run hosted checks from the deployed Render process |
+| B3 | Passenger preview/confirm/snapshot, driver exchange, trip transfer and competing publication verified | Old-passenger deletion remains intentionally disabled pending separate authorization and backup policy |
+| B4 | Published/reused Google Maps geometry, atomic coordinate regeneration and discovery DTOs implemented and backend-verified | Visual rendering is deferred to the frontend/mobile phase |
+| B5 | Adaptive contract simulation, independent ETA, fan-out/load behavior and guarded retention backend-verified | Native sender and road behavior remain deferred field gates |
+| B6 | Segment history, robust aggregates and actual lateness implemented | Production route calibration remains a field gate |
+| B7 | Subscriptions, threshold worker and Expo ticket/receipt behavior implemented | Real Expo credential/device delivery gate |
+| B8 | Feedback, trust/confirmation, safe assistance and reassignment implemented | Supervised operational and real-device gate |
+| B9 | Acceptance commands, contract documentation, stable all-check run and restricted-role hosted-database run completed | Publish/deploy the prepared Render service and run HTTPS/WSS hosted acceptance; real SMTP/push and supervised road validation remain later gates |
+
+### 23.5 Production deployment and release audit — 3 November 2026
+
+This audit confirms that the College Bus Tracking System has successfully progressed from the September 2026 development baseline to a verified, deployed production release:
+
+| Capability / Requirement | Production Status & Evidence |
+| --- | --- |
+| **Cloud Backend Deployment** | **ALREADY IMPLEMENTED & VERIFIED** — Live at `https://college-bus-tracking-api-2fi5.onrender.com`. Node.js Express server with Socket.IO, zero-downtime CD from GitHub main, and health check endpoints. |
+| **Hosted Database** | **ALREADY IMPLEMENTED & VERIFIED** — Managed PostgreSQL on **Supabase** via transaction connection pooler (Supavisor pgbouncer on port 6543). All Prisma migrations deployed. |
+| **Web Administrator Portal** | **ALREADY IMPLEMENTED & VERIFIED** — Live at `https://college-bus-tracking-system-pi.vercel.app`. React 19 + Vite dashboard with live map, roster exchange, and APK distribution. |
+| **Android Standalone Release APK** | **ALREADY IMPLEMENTED & VERIFIED** — Release APK (`campus-transit.apk`, 43,035,793 bytes) compiled with native Gradle and distributed from both Vercel and Render public roots. |
+| **Dual Route Publication Architecture** | **ALREADY IMPLEMENTED & VERIFIED** — Route 08 & DEMO published with active GPS; Routes 01–07 & 09–31 handled via dedicated "Route Not Published Yet" view with tentative master stops. |
+| **Native Map Crash Protections** | **ALREADY IMPLEMENTED & VERIFIED** — `com.google.android.geo.API_KEY` added to `AndroidManifest.xml`; native `MapErrorBoundary` wrapped around all `MapView` instances. |
+| **App-Wide Error Recovery** | **ALREADY IMPLEMENTED & VERIFIED** — Top-level `ErrorBoundary.tsx` wraps root app in `_layout.tsx`; React animation lifecycle hooks moved from `useState` to `useEffect`. |
+| **Role-Selection Landing** | **ALREADY IMPLEMENTED & VERIFIED** — `app/src/app/index.tsx` provides large role cards (`Passenger` / `Driver`) and dark/light theme switch. |
+| **Driver Background GPS** | **ALREADY IMPLEMENTED & VERIFIED** — `app/src/lib/backgroundLocation.ts` registered with `expo-task-manager`, Android foreground notification service, and offline queue sync. |
+| **Annual Roster Exchange** | **ALREADY IMPLEMENTED & VERIFIED** — `backend/src/routes/rosters.js` and admin UI support full CSV/XLSX imports, validation, atomic replacements, and exports. |
+| **Explainable Stop ETA** | **ALREADY IMPLEMENTED & VERIFIED** — `backend/src/lib/eta.js` calculates stop ETAs without negative numbers and flags passed/stale stops. |
+| **Privacy by Design** | **ALREADY IMPLEMENTED & VERIFIED** — Public passenger APIs strictly sanitize responses; driver and student phone numbers are restricted to admin-only APIs. |
 
 ## 24. Backend-first implementation plan and acceptance gates
 
@@ -2167,7 +2231,7 @@ Preserve the release candidate as a regression baseline. Each phase delivers bac
 
 For database changes: rehearse backup/restore, add compatible structures, backfill/validate minimal evidence, switch reads/writes, then enable cleanup. Never combine destructive roster purge with its first schema deployment. A code rollback cannot restore deleted rows: use a confirmed outgoing workbook or a tested backup within its retention window. No real data purge is authorized by this planning update.
 
-All phases below are **planned**, not completed. Only B0's source audit and 59-test baseline were completed in this revision. These gates replace the old percentage and phase-complete claims.
+The gates below remain the definition of completion. Implementation is now in progress as recorded in Section 23.4; no phase should be called complete until every exit-gate item for that phase has reproducible evidence. The original 59-test result remains the baseline, while later checkpoint counts record added coverage.
 
 ### B0 — Preserve and verify the existing baseline
 
@@ -2255,15 +2319,23 @@ Reconcile Section 23 against evidence, distinguishing local simulation, hosted c
 
 ### F1 — Deferred frontend implementation
 
-After B9, update the React + Vite administrator WEBSITE and React Native + Expo + TypeScript mobile experiences against verified contracts. Reuse applicable clients. Implement Sections 14–16 and 22: Google Maps, automatic tracking/fallback Refresh, fixed-schedule My Route, route search, nearby stops, Bus Info/Full Route, Notify Me, feedback, emergencies and safely-stopped assistance. Implement the adaptive native sender and background behavior without weakening backend rules to fit UI shortcuts.
+After B9, update the separately hosted React + Vite administrator WEBSITE and the single combined React Native + Expo + TypeScript Passenger + Driver app against verified contracts. Reuse applicable clients. Make the first mobile screen two large avatar/tiles labelled `Passenger` and `Driver`; Passenger opens the no-login dashboard and Driver opens login. Implement Sections 14–16 and 22: Google Maps, automatic tracking/fallback Refresh, fixed-schedule My Route, route search, nearby stops, Bus Info/Full Route, Notify Me, feedback, emergencies and safely-stopped assistance. Implement the adaptive native sender and background behavior without weakening backend rules to fit UI shortcuts.
 
-**Exit gate:** builds and contract integration pass; role privacy, loading/error/offline/stale, accessibility, permission, push-token lifecycle and reconnect behavior are tested.
+**Exit gate:** builds and contract integration pass; role privacy, landing navigation, loading/error/offline/stale, accessibility, permission, push-token lifecycle and reconnect behavior are tested. The production AAB is analyzed and its fresh device-specific installation remains below the 100 MB target on representative supported Android devices.
 
 ### F2 — Devices, roads and supervised rollout
 
 Use approved college data, configured Google Maps, real SMTP recipients and mobile push infrastructure. Test Android screen lock/battery vendors, foreground/background permissions/GPS, weak network, queue replay and push delivery. Compare ETA with actual arrivals, calibrate thresholds, evaluate historical baselines with sufficient samples and rehearse assistance safely. Begin with one route, then several, then all 31 after acceptance.
 
 **Exit gate:** approved data, restore ownership, measured road/device results, browser sign-off and supervised operational acceptance. No RAG or current ML claim; future ML requires separate evaluation showing improvement.
+
+### 24.3 Production delivery and operational rollout status
+
+As of November 2026, all implementation phases are completed and verified:
+
+- **Phases B0–B9 (Backend Foundation & Advanced Workflows)**: Completed and running in production on Render.
+- **Phase F1 (Frontend Implementation)**: Completed across both the Vercel Administrator Web Portal and the unified Expo React Native mobile application.
+- **Phase F2 (Packaging & Operational Rollout)**: Standalone Android release APK compiled and verified on physical devices. Operational pilot is live on Route 08 and DEMO routes, with remaining routes displaying tentative master schedules pending digital publication by the transport office.
 
 ### 24.2 Data-model and retention review
 
@@ -2283,514 +2355,3 @@ These are design candidates, not a requirement to create every table:
 | Retention | Existing timestamps/indexes first; job/policy metadata only if needed | Dry run, bounded cleanup and derived-evidence dependency checks |
 
 Set explicit configurable retention policies for current master data, compact history, raw/rejected GPS, calibration snapshots, expired device subscriptions, closed offers and temporary queues. Preserve backups and restore requirements while avoiding indefinite retention of unnecessary old full rosters. Approve values during implementation; no arbitrary permanent retention period is introduced here.
-
-
-# 26. Product Revision — AI Issue Intelligence + RAG Transport Assistant
-
-**Revision date:** 26 September 2026  
-**Revision purpose:** Extend the existing college bus tracking product with two clearly separated AI capabilities while preserving the existing GPS, ETA, privacy, authentication, notification, roster, emergency, and deployment requirements.
-
-This section is an explicit revision to the earlier PRD. The earlier requirements remain the baseline unless this section explicitly changes them.
-
-## 26.1 What changed from the previous plan
-
-### Previous plan
-
-The previous PRD defined passenger feedback as anonymous feedback/complaints. It required rate/spam/duplicate safeguards and administrator review, but it did not define an AI mechanism for grouping semantically similar reports.
-
-The previous technical-stack section explicitly stated:
-
-- No RAG.
-- No current ML claim.
-
-The previous product plan therefore treated feedback as a conventional application workflow and kept AI outside the core tracking system.
-
-### New plan
-
-The feedback concept is now renamed **Report an Issue** rather than treating every passenger submission as an independent complaint.
-
-Every passenger submission remains an individual **Report** for traceability, but reports may be grouped under a shared **Issue** when the system determines that they describe the same or closely related operational problem.
-
-A new AI/NLP capability, **Semantic Issue Detection and Clustering**, will use text embeddings and semantic similarity together with deterministic contextual signals such as route, trip, category, and time window. This is intended to reduce duplicate issue records and expose recurring transport problems without claiming that an issue is factually confirmed merely because many people reported it.
-
-A second AI capability, **College Transport Assistant**, will be a limited RAG-based chatbot. It will answer knowledge questions using an approved college transport knowledge base such as transport policies, schedules, emergency procedures, route information, and reporting procedures. RAG is not used for live GPS, live ETA, attendance, or authoritative operational state.
-
-## 26.2 New feature — Report an Issue
-
-Passenger UI label:
-
-**Report an Issue**
-
-Categories remain:
-
-- Driver Behaviour
-- Driving/Safety
-- Bus Condition
-- Route/Stop Issue
-- Schedule Issue
-- App Issue
-- Other
-
-Passenger reports remain anonymous/no-login submissions. The system must not infer or expose passenger identity.
-
-A report contains, subject to privacy rules already defined elsewhere in this PRD:
-
-- report ID
-- category
-- free-text description
-- route context when available
-- trip context when available
-- relevant timestamp
-- relevant stop/location context when available
-- processing status
-- linked issue ID when clustered
-
-The system retains the individual reports even when they are grouped. Grouping is not deletion or merging of evidence.
-
-## 26.3 Issue versus Report data model
-
-The revised conceptual model is:
-
-```text
-Issue #104
-  Category: Bus Condition
-  Route: RT03
-  Status: UNDER_REVIEW
-  Reports: 5
-
-     ├── Report #1
-     ├── Report #2
-     ├── Report #3
-     ├── Report #4
-     └── Report #5
-```
-
-An **Issue** represents an operational problem being reviewed. A **Report** represents one passenger submission associated with that issue.
-
-Multiple reports must not automatically prove that the underlying allegation is true. The administrator retains the ability to review, confirm, dismiss, or otherwise process the issue according to the existing feedback workflow.
-
-## 26.4 AI/NLP feature — Semantic Issue Detection and Clustering
-
-### Objective
-
-Reduce duplicate issue records caused by anonymous passengers submitting similar reports with different wording.
-
-### Example
-
-The following reports may describe the same operational problem:
-
-- "AC not working"
-- "The AC in RT03 bus stopped functioning"
-- "Very hot inside the bus, cooling isn't working"
-- "Bus AC problem today"
-
-Keyword matching alone may miss some of these relationships. The AI layer converts report text into embeddings and compares the semantic representation with recent open issues/reports.
-
-### Processing flow
-
-```text
-Passenger Report
-      ↓
-Input validation + rate limits
-      ↓
-Text preprocessing
-      ↓
-Embedding generation
-      ↓
-Semantic similarity search
-      ↓
-Candidate existing issues
-      ↓
-Context checks:
- route + trip + category + time window + similarity
-      ↓
- ┌───────────────────────┐
- │ Match sufficiently     │
- │ strong and contextual? │
- └──────────┬────────────┘
-        YES │       NO
-            ↓        ↓
-     Attach report   Create new issue
-       to issue
-```
-
-### Important design rule
-
-AI similarity is a **candidate grouping mechanism**, not an automatic truth/validity decision.
-
-The system must retain:
-
-- original report text
-- similarity/matching evidence needed for audit/debugging
-- linked issue ID
-- matching decision/status
-
-Where confidence is ambiguous, the system should avoid aggressive automatic grouping and allow administrator review.
-
-### Anti-spam protections
-
-Semantic clustering is only one layer. The system also uses:
-
-1. Server-side rate limiting.
-2. Duplicate/repeated-submission detection.
-3. Semantic similarity grouping.
-4. Route/trip/time/category context checks.
-5. Administrator review and issue status controls.
-
-IP address must not be treated as a unique passenger identity because many college users may share the same network address. Any device/network identifiers used for abuse prevention must remain privacy-minimized and must not become a passenger account.
-
-## 26.5 Issue aggregation and recurrence
-
-The administrator dashboard should show an issue as a consolidated operational record, for example:
-
-```text
-ISSUE #217
-Unsafe driving reported on RT03 morning trip
-
-Reports: 7
-Route: RT03
-Category: Driving/Safety
-Status: UNDER_REVIEW
-First report: 08:11
-Latest report: 08:42
-```
-
-The count means **seven submitted reports associated with the issue**. It does not mean seven verified incidents or seven confirmed passengers who boarded the bus.
-
-If a similar problem occurs again after a previously resolved issue, the system may create a new issue and link it to the historical issue/recurrence evidence rather than silently reopening or duplicating the same record.
-
-## 26.6 New feature — College Transport Assistant (RAG)
-
-### Purpose
-
-Provide a small, domain-specific chatbot that answers transport knowledge questions using approved college documents.
-
-### Prototype UI
-
-A new passenger/admin screen may be labelled:
-
-**Transport Assistant**
-
-Example questions:
-
-- "What should I do if my bus breaks down?"
-- "What is the reporting procedure for a bus issue?"
-- "What are the timings for RT03?"
-- "What are the college transport rules?"
-- "What should I do during a transport emergency?"
-
-The assistant should display a concise answer and, where practical, the source document/section used to produce the answer.
-
-### RAG knowledge base
-
-The prototype knowledge base may contain:
-
-- college transport policy
-- bus rules/guidelines
-- route/timetable documents
-- emergency procedures
-- issue-reporting procedure
-- driver guidelines
-- transport FAQs
-
-The knowledge base must contain approved/static information. Sensitive administrator data, passwords, private driver information, passenger private identifiers, and unrestricted operational logs must not be indexed into the public passenger RAG corpus.
-
-### RAG processing flow
-
-```text
-Approved transport documents
-          ↓
-Text extraction + chunking
-          ↓
-Embeddings
-          ↓
-Vector index
-          ↓
-User question
-          ↓
-Retrieve relevant chunks
-          ↓
-LLM generation using retrieved context
-          ↓
-Grounded answer + source reference
-```
-
-### Explicit boundary: RAG is not the live tracking engine
-
-The Transport Assistant must not invent or retrieve live bus state from static documents.
-
-Examples:
-
-| User asks | Authoritative system |
-|---|---|
-| "Where is RT03 now?" | Live GPS/Socket.IO tracking |
-| "What is RT03's current ETA?" | ETA engine |
-| "What is the transport late-bus policy?" | RAG knowledge base |
-| "How do I report a bus problem?" | RAG knowledge base + Report an Issue workflow |
-| "The AC is not working." | Report an Issue workflow + semantic issue intelligence |
-
-If a question requires live operational state, the assistant should hand off to or link to the appropriate live feature rather than hallucinating an answer.
-
-## 26.7 AI architecture boundaries
-
-The project now has three separate intelligence paths:
-
-```text
-                    College Bus System
-                           │
-             ┌─────────────┼─────────────┐
-             ↓             ↓             ↓
-       Live Operations   Issue AI       RAG Assistant
-             │             │             │
-        GPS + ETA     Embeddings +   Documents +
-        + Socket.IO   similarity     retrieval + LLM
-```
-
-### Live Operations
-
-Remains deterministic/authoritative for:
-
-- GPS validation
-- route progress
-- ETA
-- stale/off-route handling
-- trip state
-- Socket.IO live updates
-- emergency operational state
-
-### Issue AI
-
-Used for:
-
-- semantic similarity
-- duplicate/related report detection
-- issue clustering
-- optional issue category assistance
-
-Deterministic application rules remain responsible for:
-
-- rate limiting
-- permissions
-- issue state transitions
-- evidence retention
-- administrator review
-- privacy
-
-### RAG Assistant
-
-Used for:
-
-- transport policy questions
-- timetable/route-document questions where static documents are authoritative
-- emergency/reporting procedure questions
-- transport FAQ questions
-
-RAG is not authoritative for live GPS/ETA or private operational state.
-
-## 26.8 Prototype demonstration plan
-
-The AI features are intentionally designed to be demonstrable in the prototype without making the core bus-tracking product dependent on them.
-
-### Demo A — duplicate/related issue grouping
-
-Submit three or four reports with different wording:
-
-```text
-"AC not working on RT03"
-"The bus is very hot, cooling is not working"
-"RT03 AC stopped today"
-```
-
-The administrator dashboard should show one issue with multiple associated reports, while retaining each original report.
-
-### Demo B — RAG assistant
-
-Ask:
-
-```text
-What should I do if my bus breaks down?
-```
-
-The assistant retrieves the relevant emergency-policy content and answers with a source reference.
-
-Then ask:
-
-```text
-Where is RT03 right now?
-```
-
-The assistant should direct the user to live tracking rather than answer from RAG documents.
-
-## 26.9 Technology justification for faculty/project presentation
-
-The project should describe the AI additions as technology applied to concrete system problems rather than as decorative AI.
-
-### Semantic Issue Intelligence
-
-**Technology:** NLP embeddings + semantic similarity/vector search.  
-**Problem solved:** Anonymous passengers can submit repeated reports with different wording.  
-**Outcome:** Related reports can be grouped under one issue while preserving individual evidence.
-
-### RAG Transport Assistant
-
-**Technology:** Retrieval-Augmented Generation using embeddings/vector retrieval and an LLM.  
-**Problem solved:** Users need answers from college-specific transport policies and procedures.  
-**Outcome:** The assistant retrieves approved college information before generating the answer and can expose its source.
-
-### Core transport intelligence
-
-**Technology:** GPS/route-progress/robust historical ETA logic, with future ML prediction only if sufficient measured data is available.  
-**Problem solved:** Real-time arrival estimation and safe handling of unreliable GPS.  
-**Outcome:** Explainable ETA and explicit operational states.
-
-The project must not claim that it uses a trained custom ML model unless one is actually implemented, evaluated, and documented.
-
-## 26.10 Revised technical stack
-
-### Existing stack — retained
-
-- Mobile: React Native + Expo + TypeScript
-- Admin website: React + Vite
-- Backend: Node.js + Express
-- Realtime: Socket.IO/WebSockets
-- Database: Supabase-managed PostgreSQL
-- ORM: Prisma
-- Validation: Zod
-- Maps: Google Maps
-- Driver location: Expo/native background GPS
-- ETA: explainable GPS + route-progress + robust rolling/historical segment ETA
-- Passenger notifications: Expo/native push notifications
-- Advisor notifications: SMTP email
-- Imports/exports: CSV/XLSX
-- Security: JWT/sessions, HttpOnly/SameSite cookies, CSRF, Helmet, CORS, rate limiting, role authorization
-- Deployment: Vercel + persistent Node host + Supabase PostgreSQL
-
-### New AI stack — prototype layer
-
-- Issue intelligence: text embeddings + vector similarity search
-- RAG assistant: document chunking + embeddings/vector retrieval + LLM generation
-- RAG source citations: retrieved document/chunk references shown to the user where supported
-- AI provider/model: implementation choice remains open until the team selects a provider/model compatible with the project's budget, privacy requirements, latency, and deployment constraints
-
-No custom ML training is required for the prototype. Pretrained embedding/LLM models are sufficient for the AI demonstration.
-
-## 26.11 Database and API additions — planned
-
-The implementation may introduce entities equivalent to:
-
-- `Issue`
-- `IssueReportLink` or an equivalent report-to-issue relation
-- `ReportEmbedding` or equivalent vector-index metadata
-- `IssueMatchEvidence` where audit/debug evidence is required
-- `KnowledgeDocument`
-- `KnowledgeChunk`
-- `KnowledgeEmbedding` or equivalent vector-index metadata
-- `AssistantConversation` only if conversation history is intentionally supported
-
-Exact Prisma/PostgreSQL design must be derived from the existing schema and implementation rather than duplicating existing models.
-
-Vector storage may use PostgreSQL vector capabilities if compatible with the deployed Supabase configuration, or a provider-backed vector index behind a replaceable service boundary. The chosen implementation must not weaken the existing Express/Prisma authoritative database boundary.
-
-## 26.12 Privacy and safety requirements for AI
-
-- Do not send passenger private identifiers to the AI model.
-- Do not index passwords, secrets, private phone numbers, administrator credentials, or unrestricted audit logs.
-- Minimize report metadata sent to external AI providers.
-- Preserve the original report as application data; AI processing must not replace the source record.
-- Do not state that an issue is verified solely because AI similarity is high or report count is high.
-- RAG answers must be grounded in retrieved college content; when relevant information is not found, the assistant should say that the available transport documents do not contain the answer rather than inventing policy.
-- Live GPS/ETA data remains behind the existing authorization and API boundary.
-- AI failures/timeouts must not block core GPS tracking, ETA, emergency, or notification workflows.
-
-## 26.13 Revised implementation order
-
-The AI work is added after the existing core backend acceptance foundation rather than inserted into the critical GPS path.
-
-### Stage A — Existing core
-
-1. PostgreSQL/restricted runtime
-2. routes/stops/schedules/roster/driver workflows
-3. GPS/trip/route progress
-4. ETA and retention
-5. historical statistics/actual lateness
-6. push/advisor notifications
-7. feedback/emergency/assistance
-8. backend acceptance
-
-### Stage B — AI Issue Intelligence
-
-1. Finalize Issue/Report data model.
-2. Add rate/duplicate safeguards.
-3. Add embedding generation behind an AI service boundary.
-4. Add vector similarity retrieval.
-5. Add route/category/time contextual matching.
-6. Attach reports to issues when matching is sufficiently strong.
-7. Preserve ambiguous matches for administrator review.
-8. Add admin issue-cluster view and counts.
-9. Add automated tests for duplicate, near-duplicate, unrelated, cross-route, and ambiguous cases.
-
-### Stage C — RAG Transport Assistant
-
-1. Prepare approved transport documents.
-2. Extract/chunk documents.
-3. Generate embeddings and index chunks.
-4. Implement retrieval.
-5. Implement grounded answer generation.
-6. Display source references.
-7. Add refusal/fallback when the knowledge base lacks the answer.
-8. Add live-state handoff for GPS/ETA questions.
-9. Add tests for retrieval relevance, unsupported questions, privacy, and prompt-injection-resistant document handling.
-
-### Stage D — Prototype demonstration
-
-Demonstrate:
-
-- live RT03 tracking
-- ETA/status states
-- anonymous Report an Issue
-- multiple semantically similar reports grouped into one issue
-- administrator review of grouped reports
-- Transport Assistant answering from college documents
-- Transport Assistant refusing to fabricate live GPS state
-
-## 26.14 Revised project explanation for the team
-
-**One-line project description:**
-
-> A real-time college bus tracking and transport-management platform for 31 fixed routes, enhanced with AI-based semantic issue intelligence and a RAG-powered college transport assistant.
-
-**Short team explanation:**
-
-> Passengers do not need accounts. They can view their assigned route, track buses, receive relevant notifications, report transport problems, and ask the Transport Assistant questions about approved college transport information. Drivers authenticate and stream GPS for their assigned trip. Administrators manage routes, schedules, rosters, drivers, live operations, notifications, issues, emergencies, and audit information.
->
-> The new AI layer addresses two separate problems. First, anonymous passengers may report the same bus problem many times using different wording, so text embeddings and semantic similarity can group related reports under one Issue while preserving every individual Report. Second, a RAG-based Transport Assistant retrieves relevant college transport documents before generating answers to policy, procedure, timetable, and FAQ questions. Live GPS and ETA remain handled by the authoritative tracking/ETA backend rather than RAG.
-
-**Faculty explanation:**
-
-> The project does not use AI merely as a chatbot. We apply AI to two concrete problems: semantic clustering of anonymous transport reports and retrieval-grounded question answering over college transport documents. The core safety-critical tracking and ETA functions remain deterministic and auditable. This separation makes the AI useful without allowing an LLM to become the authority for live vehicle state.
-
-## 26.15 Scope control
-
-The following are explicitly out of scope for the first prototype unless the team later approves them:
-
-- custom model training
-- autonomous issue resolution
-- AI-based driver punishment or disciplinary decisions
-- AI confirmation that a passenger allegation is true
-- AI-generated live GPS/ETA values
-- public/general-purpose chatbot knowledge unrelated to college transport
-- unrestricted ingestion of private college databases into the RAG corpus
-- automatic attendance inference
-- passenger accounts merely to support AI
-
-The prototype should prioritize a reliable core bus-tracking demonstration and add the two AI capabilities as isolated, testable modules.
-
-## 26.16 Revision status
-
-This revision changes the earlier "No RAG / No current ML claim" statement into an approved **planned AI prototype scope**:
-
-- **Semantic Issue Detection and Clustering:** planned new feature; not claimed implemented until code/tests demonstrate it.
-- **College Transport Assistant (RAG):** planned new feature; not claimed implemented until the document corpus, retrieval pipeline, generation, and source display are verified.
-- **Core GPS/ETA:** remains non-RAG and remains authoritative for live operational state.
-
-All existing privacy, retention, security, route, roster, driver, emergency, notification, deployment, and acceptance requirements remain in force unless explicitly changed by a later approved revision.

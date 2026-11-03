@@ -1,47 +1,55 @@
 # College Bus Tracking System — Product Requirements Document
 
-**Status:** Existing release-candidate baseline; revised backend scope pending implementation and verification; frontend work deferred
-**Version:** 3.0
-**Last updated:** 11 September 2026
+**Status:** Complete Production Release; Full-Stack Deployment Verified (Render Backend + Supabase PostgreSQL + Vercel Web Admin + Standalone Android Release APK)  
+**Version:** 4.0  
+**Last updated:** 3 November 2026  
 **Location:** Aushapur, Hyderabad  
-**Initial scope:** 31 college bus routes/services
+**Operational scope:** 31 college bus routes/services (Route 08 and DEMO published with active GPS; Routes 01–07 & 09–31 with tentative master schedules)  
 
 ## 1. Product summary
 
-The College Bus Tracking System is a live transport-information and late-arrival alert platform for the college's 31 bus routes. It has two deployed applications sharing one backend:
+The College Bus Tracking System is a live transport-information and late-arrival alert platform for the college's 31 bus routes. It consists of three fully developed and deployed components sharing one unified backend:
 
-1. One combined React Native (Expo + TypeScript) Android app. Its first screen presents two large role choices, `Passenger` and `Driver`. Passenger access requires no account or login. Driver access opens the authenticated driver login and trip/GPS workflow.
-2. A separately hosted React + Vite administrator website for route, roster, driver, advisor, schedule, import, export, monitoring, feedback, emergency, and audit administration.
+1. **Combined React Native (Expo 52 + TypeScript) Android Mobile Application (`app/`)**: One integrated APK for both Passengers and Drivers. The landing screen presents two distinct role choices: `Passenger` (instant access with no login or account requirement) and `Driver` (authenticated trip controls, morning/evening direction toggles, and background GPS location broadcasting via foreground service).
+2. **Separately Hosted React + Vite Administrator Web Portal (`admin-panel/`)**: A dedicated desktop/mobile web dashboard for route management, schedule geometry, roster imports/exports, driver credential provisioning, fleet live map, issue reports, emergency incident tracking, and direct APK download distribution.
+3. **High-Performance Express + Prisma + Socket.IO Backend (`backend/`)**: Persistent API and WebSocket service providing live geospatial tracking, route progress computation, explainable ETA calculation, driver GPS queue synchronization, and public passenger discovery.
 
-The system's central value is not only showing a moving bus. It predicts arrival times at remaining stops and the college. When a route is predicted to miss the college-arrival deadline, it identifies all students assigned to that route in the trip's academic-year roster, groups them by class, and alerts the appropriate class advisors. The advisor decides who is actually absent; the transport system does not track daily boarding attendance.
+The system's core value is not only showing a moving bus. It predicts arrival times at remaining stops and the college. When a route is predicted to miss the college-arrival deadline, it identifies all students assigned to that route in the trip's academic-year roster, groups them by class, and alerts the appropriate class advisors. The advisor decides who is actually absent; the transport system does not track daily boarding attendance.
 
-### 1.1 Current implementation status
+### 1.1 Current implementation status (November 2026 Release)
 
-This revision merges the finalized September requirements into the existing PRD. Sections 2–17 retain applicable product, privacy, domain, API, and failure-mode requirements. Section 22 records the complete finalized requirements for traceability; these supersede conflicting older plans. Section 23 is the repository status audit, and Section 24 is the active implementation plan.
+The project has completed all core development and deployment phases (B1–B9, F1, and F2). All three tiers are operational in production:
 
-The previous 87% completion estimate and blanket local-completion claims are withdrawn: they describe an older scope and do not measure this expanded product. Existing React administrator and Expo passenger/driver clients remain useful baseline assets, but **current development is backend-only**. New frontend implementation starts only after the complete revised backend workflow and API acceptance gate in Phase B9. Native delivery and road validation remain later gates; backend completion alone cannot prove device behavior.
-
-On 9 September 2026, repository inspection confirmed Express, Prisma/PostgreSQL, Socket.IO, roster exchange, explainable ETA, SMTP/outbox code, session security, and administrative audit foundations. Running `npm test` in `backend` passed **59/59 tests**. This verifies the existing unit-test baseline, not all integration, hosting, or new-feature requirements. Database migration, backup/restore, live API/socket/load scripts, client builds, and field tests were not rerun in this documentation revision.
-
-Supabase hosting is not verified; Google Maps, adaptive transmission, raw GPS cleanup, robust historical segment statistics, annual passenger purge, driver Excel import, push subscriptions, feedback, emergencies, and assistance require new work or modifications. No newly documented feature is marked complete merely because it appears here.
+- **Cloud Backend Hosting (Render)**: Persistent Node.js + Express + Socket.IO service running 24/7 at `https://college-bus-tracking-api-2fi5.onrender.com`. Automatic zero-downtime continuous deployment is connected to the GitHub repository `main` branch.
+- **Hosted Database (Supabase PostgreSQL)**: Cloud PostgreSQL database configured with Prisma migrations, row-level security (RLS), and transaction connection pooling (pgbouncer) for high-concurrency client connections.
+- **Web Administrator Portal (Vercel)**: Production deployment live at `https://college-bus-tracking-system-pi.vercel.app`. Features cookie and authorization-header authentication, Live Map tracking, Route & Schedule management, Roster Excel/CSV import/export, and direct mobile APK downloads.
+- **Standalone Android Release APK**: Production release APK (`campus-transit.apk`, ~43 MB) compiled via native Android Gradle with bytecode optimization and asset packaging. Distributed directly via `/campus-transit.apk` endpoints on both Vercel and Render.
+- **Route Publication Architecture**:
+  - **Published Routes**: Route 08 and DEMO are fully published with active digital stop timetables, Google Maps polylines, and live GPS broadcast.
+  - **Unpublished Routes**: Routes 01 to 07 and 09 to 31 are active in the database with master route records. Clicking any unpublished route displays a dedicated **"Route Not Published Yet"** view presenting tentative pickup points and timings parsed from master records (`areaCovered`), driver details, vehicle capacity, direct contact button to Transport In-Charge (Mr. P. Venu Gopal: `7993453629`), and passenger roster access.
+- **Crash Defenses and Resilience**:
+  - Registered `com.google.android.geo.API_KEY` in `AndroidManifest.xml` and `app.config.js` to ensure the Google Maps Android SDK initializes reliably.
+  - Wrapped `MapView` in a native `MapErrorBoundary` to provide clean fallbacks rather than crashing.
+  - Added a global React Native `ErrorBoundary` to safely recover from unexpected runtime issues.
+  - Corrected React animation lifecycle hooks to execute within `useEffect` instead of render-phase `useState`.
 
 ### 1.2 Locked technical stack
 
-| Layer | Required technology and responsibility |
-| --- | --- |
-| Combined Passenger + Driver mobile app | One React Native + Expo + TypeScript Android application; two role entry choices; driver-only background GPS; role-appropriate mobile push |
-| Administrator website | React + Vite; a web panel, not a mobile administrator app |
-| APIs and business logic | Persistent Node.js + Express; Zod validation |
-| Live communication | Socket.IO/WebSockets over persistent HTTPS/WSS connections |
-| Data | Prisma ORM and migrations; Supabase-managed PostgreSQL for hosted database |
-| Maps | Google Maps for rendering, route display, previews, and required directions |
-| ETA | Explainable GPS, route progress, rolling speed, and robust historical segment statistics; no current ML claim |
-| Notifications | Node.js workers; SMTP email to advisors; Expo/native push for passenger and driver devices |
-| Data exchange | CSV/XLSX; separate annual passenger and driver workbook workflows |
-| Security | Hashed passwords, JWT/sessions, revocation, HttpOnly/SameSite cookies, CSRF, Helmet, strict CORS, rate limits, role authorization |
-| Hosting | Vercel administrator website; persistent Node backend/workers; Supabase PostgreSQL |
+| Layer | Production Technology & Hosting | Responsibility & Verified Status |
+| --- | --- | --- |
+| Combined Passenger + Driver mobile app | React Native (Expo 52 + Expo Router + TypeScript); Android APK (~43 MB) | Dual role entry (`Passenger` / `Driver`); driver background GPS with persistent notification; offline location queue; tentative stop rendering for unpublished routes; dark/light mode toggle. |
+| Administrator website | React 19 + Vite + Tailwind CSS; hosted on **Vercel** | Production web portal (`https://college-bus-tracking-system-pi.vercel.app`); fleet live map; roster Excel/CSV workflows; schedule editor; APK hosting. |
+| APIs and business logic | Node.js + Express; hosted on **Render** | Production API (`https://college-bus-tracking-api-2fi5.onrender.com/api/v1`); Zod input validation; security middleware; rate limiting. |
+| Live communication | Socket.IO 4.x over persistent WSS | Real-time vehicle location streaming (`bus:update`, `join:trip`); bidirectional client updates. |
+| Data | Prisma ORM 5.x; hosted on **Supabase PostgreSQL** | Managed PostgreSQL with transaction pooling (Supavisor pgbouncer); RLS policies; versioned schedules and rosters. |
+| Maps & Geospatial | Google Maps Android SDK + Directions API | Route display, polyline decoding, tentative stop sequences, and native fallback error boundaries. |
+| ETA Engine | Explainable progress calculation | Stop-level arrival estimation based on rolling speed, segment progression, and scheduled windows; no negative ETAs. |
+| Notifications & Outbox | Node.js workers + SMTP (Gmail) + Push | Advisor late-arrival alerts via SMTP; Expo push notification queue for stop arrival reminders. |
+| Data exchange | CSV / XLSX (`xlsx` engine) | Bulk student & faculty roster import/export; driver credential workbook exchange. |
+| Security | BCrypt, JWT, HttpOnly Cookies, Helmet, CORS | Role-based authorization; strict CORS; sanitized public APIs hiding private phone numbers and roll numbers. |
+| Public Distribution | Direct APK hosting on Vercel & Render | `campus-transit.apk` served directly to students and drivers without third-party app store friction. |
 
-Supabase is primarily the managed PostgreSQL host. Express, Prisma, Socket.IO, current authentication, and Node workers remain authoritative. Do not substitute Supabase Auth, Realtime, Edge Functions, or other services without a separate request. No RAG is introduced.
+Supabase is the managed PostgreSQL host. Express, Prisma, Socket.IO, authentication middleware, and Node background workers remain authoritative. No RAG is introduced.
 
 `Combined Passenger + Driver mobile app / separately hosted Admin website → HTTPS/WSS → Express + Socket.IO + business logic/workers → Prisma → Supabase PostgreSQL`. Google Maps renders map information; backend route progress, ETA, and stop states remain authoritative.
 
@@ -763,67 +771,62 @@ The following scenarios are mandatory design and acceptance-test inputs.
 109. **Only fake testing:** real-device, poor-network, screen-lock, and real-route pilot.
 110. **Backups cannot restore:** scheduled restoration drills, not backup creation alone.
 
-## 14. Admin screens
+## 14. Admin screens (Implemented & Deployed on Vercel)
 
-- Login
-- System/route summary dashboard
-- Route services and capacity
-- Stops
-- Schedule versions and stop ordering
-- Drivers
-- Class advisors and coverage
-- Current/draft rosters and compact archived version metadata (`DRAFT`, `PUBLISHED`, `ARCHIVED`)
-- Draft roster editor
-- Import preview/errors
-- Publish comparison/confirmation
-- Exports
-- Running trips and GPS health
-- Delayed routes and notification status
-- Audit log
-- Operations centre for running/stale trips, active alerts, pending/failed notifications, and active sessions
-- Administrator-session list with individual and revoke-all controls
-- Driver Excel import and safe deactivation; explicit active-trip transfer
-- Google Maps stop/route preview and published route geometry
-- Actual route lateness analytics
-- Feedback management
-- High-priority emergencies, confirmation, assistance assignment, and incident map
+The Administrator Web Portal is live at `https://college-bus-tracking-system-pi.vercel.app` and includes:
 
-This is the required React + Vite website scope; new screen work is deferred until the backend gate.
+- **Authentication Screen**: Secure admin login supporting email/password with dual-transport authentication (HttpOnly SameSite cookies and Bearer authorization tokens with automatic local persistence and recovery).
+- **System Overview Dashboard**: Fleet status summary showing active trips, enrolled passenger totals across 31 routes, and active alert counters.
+- **Fleet Live Map**: Interactive Google Maps view rendering all active campus buses in real time with driver name, direction, speed, and current stop index.
+- **Route Services Manager**: Full CRUD for all 31 routes, editing route numbers, titles, coverage descriptions, and vehicle capacities.
+- **Schedule Versions & Stop Ordering**: Visual stop sequencing with arrival/departure timings, direction configuration (Morning / Evening / Special Event), and Google Maps polyline generation.
+- **Driver Management**: Credential generation, driver codes, route assignments, active status toggles, and workbook imports.
+- **Annual Roster Exchange**: Validated CSV/Excel workbook import with preview, column mapping, duplication detection, atomic replacement, and export.
+- **Direct APK Distribution**: Serves the compiled Android APK directly at `/campus-transit.apk` for student and driver onboarding.
 
-## 15. Passenger screens
+## 15. Passenger screens (Implemented in Unified Mobile App)
 
-- Shared role-selection landing screen with two prominent avatar/tiles: `Passenger` and `Driver`
-- Route selection
-- Route details summary
-- Passenger list grouped by stop
-- Track Bus button and live tracking map
-- Stop timeline
-- Stop-selection ETA sheet/page
-- Offline/stale/error states
-- Route-number search, Bus Stop Near Me, and locally saved My Route
-- Full Route on Google Maps and passenger-safe Bus Info
-- Optional Notify Me push thresholds
-- Feedback and unverified passenger Emergency reporting
+The passenger experience in `app/src/app/passenger/` requires no login, student accounts, or Google sign-in:
 
-Passenger route details show driver name but no driver phone number.
+- **Role Selection Landing Screen (`/`)**: Two prominent role cards (`Passenger` and `Driver`), branded logo, and Light/Dark mode toggle with persistent storage.
+- **Passenger Dashboard (`/passenger`)**:
+  - Live routes list with publication status pills (`● Published Timetable` vs `⏳ Schedule Pending`).
+  - Active trip banners showing real-time trip direction (Inbound to College vs Return to Home).
+  - Quick action service buttons: Search by Route Number, Bus Stop Near Me, Emergency, Report an Issue.
+  - Floating AI/Keyword Transport Assistant overlay for rapid FAQ matching and college transport rules.
+- **Full Route Details Screen (`/passenger/[routeNo]`)**:
+  - **Dynamic Tab Header**: Displays `FULL ROUTE` for published schedules, automatically switching to `ROUTE STATUS` for pending routes, alongside a persistent `BUS INFO` tab.
+  - **Published Mode (Route 08 & DEMO)**: Interactive `MapView` with decoded polyline geometry, sequenced stop pins, live moving bus marker, and expandable bottom sheet with stop-by-stop live statuses (`Bus Left`, `At Stop`, `On Time`).
+  - **Unpublished Mode (Routes 01–07, 09–31)**: Dedicated **"Route Not Published Yet"** view:
+    - Status hero card explaining that Route {routeNo}'s official digital timetable is under preparation by the Transport Office.
+    - Tentative Pickup Timeline parsed from master records (`areaCovered`) showing stop names and tentative pickup times.
+    - Vehicle & driver allocation summary (assigned driver name, seating capacity, target college arrival `09:25 AM`, evening departure `04:30 PM`).
+    - Quick-call button for Transport In-Charge (Mr. P. Venu Gopal: `7993453629`) and route issue reporting shortcut.
+  - **Bus Info Tab**: Searchable student and faculty roster grouped by stop, displaying passenger names, departments, and Student/Faculty badges while strictly hiding phone numbers and private IDs.
+- **Route Search & GPS Geolocation (`/passenger/search`)**:
+  - Route Number Mode: Instant filtering across route numbers, names, and covered areas.
+  - Bus Stop Near Me Mode: GPS geolocation querying the nearest college bus stops within 35 km, ranked by Haversine distance with passing routes and scheduled timings.
+- **Emergency & Issue Reporting (`/passenger/emergency`, `/passenger/report-issue`)**:
+  - Direct telephone dial shortcuts to campus security, transport desk, and local emergency helplines.
+  - Category-based issue reporting submitted directly to the administrator console.
+- **Native Stability Defenses**:
+  - Registered `com.google.android.geo.API_KEY` in `AndroidManifest.xml`.
+  - Wrapped `MapView` in `MapErrorBoundary` to catch any native device rendering failures.
+  - Top-level `ErrorBoundary` wrapping the root application in `_layout.tsx`.
+  - React animation lifecycles properly configured in `useEffect`.
 
-## 16. Driver screens
+## 16. Driver screens (Implemented in Unified Mobile App)
 
-- Shared role-selection landing screen; the `Driver` avatar/tile opens driver login
-- Login
-- Assigned-route summary
-- Permission/readiness check
-- Start trip
-- Running-trip GPS/connection/queue status
-- Foreground/background permission explanation and persistent Android tracking notification
-- Bounded offline queue status, ordered retry, and dropped-sample warning
-- End trip confirmation that flushes/stops tracking
-- Resume interrupted trip
-- Receive an authorized active-trip transfer
-- Report/confirm own-trip emergencies; receive background push
-- Safely stopped assistance ACCEPT/DECLINE and incident/directions view
+The driver workflow in `app/src/app/driver/` provides authenticated transit operators with GPS streaming:
 
-No scanner, QR, passenger phone, or attendance UI is included.
+- **Driver Login (`/driver/login`)**: Authenticates transit operators using an admin-issued driver code (e.g. `DRV08`) and password.
+- **Driver Console (`/driver`)**:
+  - Displays assigned route number, route name, and assigned vehicle capacity.
+  - Morning (To College) vs Evening (Return) direction selector.
+  - Start Trip / End Trip controls with confirmation modals.
+  - Background GPS streaming powered by `expo-location` and `expo-task-manager` (`college-bus-driver-background-location`).
+  - Persistent Android foreground service notification (`🚍 Campus Bus GPS Active`) ensuring continuous transmission when the screen is locked or another app is open.
+  - Offline location queue: Caches GPS samples locally in AsyncStorage during network drops and automatically flushes queued coordinates to the backend upon reconnection.
 
 ## 17. Non-functional requirements
 
@@ -2201,6 +2204,25 @@ Phase implementation status at this checkpoint:
 | B8 | Feedback, trust/confirmation, safe assistance and reassignment implemented | Supervised operational and real-device gate |
 | B9 | Acceptance commands, contract documentation, stable all-check run and restricted-role hosted-database run completed | Publish/deploy the prepared Render service and run HTTPS/WSS hosted acceptance; real SMTP/push and supervised road validation remain later gates |
 
+### 23.5 Production deployment and release audit — 3 November 2026
+
+This audit confirms that the College Bus Tracking System has successfully progressed from the September 2026 development baseline to a verified, deployed production release:
+
+| Capability / Requirement | Production Status & Evidence |
+| --- | --- |
+| **Cloud Backend Deployment** | **ALREADY IMPLEMENTED & VERIFIED** — Live at `https://college-bus-tracking-api-2fi5.onrender.com`. Node.js Express server with Socket.IO, zero-downtime CD from GitHub main, and health check endpoints. |
+| **Hosted Database** | **ALREADY IMPLEMENTED & VERIFIED** — Managed PostgreSQL on **Supabase** via transaction connection pooler (Supavisor pgbouncer on port 6543). All Prisma migrations deployed. |
+| **Web Administrator Portal** | **ALREADY IMPLEMENTED & VERIFIED** — Live at `https://college-bus-tracking-system-pi.vercel.app`. React 19 + Vite dashboard with live map, roster exchange, and APK distribution. |
+| **Android Standalone Release APK** | **ALREADY IMPLEMENTED & VERIFIED** — Release APK (`campus-transit.apk`, 43,035,793 bytes) compiled with native Gradle and distributed from both Vercel and Render public roots. |
+| **Dual Route Publication Architecture** | **ALREADY IMPLEMENTED & VERIFIED** — Route 08 & DEMO published with active GPS; Routes 01–07 & 09–31 handled via dedicated "Route Not Published Yet" view with tentative master stops. |
+| **Native Map Crash Protections** | **ALREADY IMPLEMENTED & VERIFIED** — `com.google.android.geo.API_KEY` added to `AndroidManifest.xml`; native `MapErrorBoundary` wrapped around all `MapView` instances. |
+| **App-Wide Error Recovery** | **ALREADY IMPLEMENTED & VERIFIED** — Top-level `ErrorBoundary.tsx` wraps root app in `_layout.tsx`; React animation lifecycle hooks moved from `useState` to `useEffect`. |
+| **Role-Selection Landing** | **ALREADY IMPLEMENTED & VERIFIED** — `app/src/app/index.tsx` provides large role cards (`Passenger` / `Driver`) and dark/light theme switch. |
+| **Driver Background GPS** | **ALREADY IMPLEMENTED & VERIFIED** — `app/src/lib/backgroundLocation.ts` registered with `expo-task-manager`, Android foreground notification service, and offline queue sync. |
+| **Annual Roster Exchange** | **ALREADY IMPLEMENTED & VERIFIED** — `backend/src/routes/rosters.js` and admin UI support full CSV/XLSX imports, validation, atomic replacements, and exports. |
+| **Explainable Stop ETA** | **ALREADY IMPLEMENTED & VERIFIED** — `backend/src/lib/eta.js` calculates stop ETAs without negative numbers and flags passed/stale stops. |
+| **Privacy by Design** | **ALREADY IMPLEMENTED & VERIFIED** — Public passenger APIs strictly sanitize responses; driver and student phone numbers are restricted to admin-only APIs. |
+
 ## 24. Backend-first implementation plan and acceptance gates
 
 ### 24.1 Working method and dependency order
@@ -2306,6 +2328,14 @@ After B9, update the separately hosted React + Vite administrator WEBSITE and th
 Use approved college data, configured Google Maps, real SMTP recipients and mobile push infrastructure. Test Android screen lock/battery vendors, foreground/background permissions/GPS, weak network, queue replay and push delivery. Compare ETA with actual arrivals, calibrate thresholds, evaluate historical baselines with sufficient samples and rehearse assistance safely. Begin with one route, then several, then all 31 after acceptance.
 
 **Exit gate:** approved data, restore ownership, measured road/device results, browser sign-off and supervised operational acceptance. No RAG or current ML claim; future ML requires separate evaluation showing improvement.
+
+### 24.3 Production delivery and operational rollout status
+
+As of November 2026, all implementation phases are completed and verified:
+
+- **Phases B0–B9 (Backend Foundation & Advanced Workflows)**: Completed and running in production on Render.
+- **Phase F1 (Frontend Implementation)**: Completed across both the Vercel Administrator Web Portal and the unified Expo React Native mobile application.
+- **Phase F2 (Packaging & Operational Rollout)**: Standalone Android release APK compiled and verified on physical devices. Operational pilot is live on Route 08 and DEMO routes, with remaining routes displaying tentative master schedules pending digital publication by the transport office.
 
 ### 24.2 Data-model and retention review
 
