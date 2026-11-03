@@ -64,7 +64,7 @@ function generateRouteStops(startTimeStr, routeOrigin) {
 }
 
 export default function HeroLandingPage() {
-  const [selectedRouteId, setSelectedRouteId] = useState('08');
+  const [selectedRouteId, setSelectedRouteId] = useState('01');
   const [downloadToast, setDownloadToast] = useState(false);
 
   const currentRoute = COLLEGE_ROUTES.find((r) => r.id === selectedRouteId) || COLLEGE_ROUTES[0];
@@ -175,8 +175,8 @@ export default function HeroLandingPage() {
               <div className="hl-screen">
                 <div className="hl-mockup-top">
                   <div>
-                    <div className="hl-mockup-title">Route 08 • VBIT</div>
-                    <div className="hl-mockup-sub">Lalapet to Campus</div>
+                    <div className="hl-mockup-title">Route 01 • VBIT</div>
+                    <div className="hl-mockup-sub">Stop A to Campus</div>
                   </div>
                   <div style={{ fontSize: '13px' }}>🔔</div>
                 </div>
@@ -211,18 +211,18 @@ export default function HeroLandingPage() {
                   </div>
                   <div className="hl-timeline-item">
                     <span className="hl-dot" />
-                    <span className="hl-t-name">Lalapet (Origin)</span>
-                    <span className="hl-t-time">07:55 AM</span>
+                    <span className="hl-t-name">Stop A (Origin)</span>
+                    <span className="hl-t-time">07:40 AM</span>
                   </div>
                   <div className="hl-timeline-item">
                     <span className="hl-dot" />
-                    <span className="hl-t-name">Sainathapuram</span>
-                    <span className="hl-t-time">08:25 AM</span>
+                    <span className="hl-t-name">Stop B</span>
+                    <span className="hl-t-time">08:05 AM</span>
                   </div>
                   <div className="hl-timeline-item">
                     <span className="hl-dot" />
-                    <span className="hl-t-name">Dr. A. S. Rao Nagar</span>
-                    <span className="hl-t-time">08:30 AM</span>
+                    <span className="hl-t-name">Stop C</span>
+                    <span className="hl-t-time">08:35 AM</span>
                   </div>
                   <div className="hl-timeline-item">
                     <span className="hl-dot" style={{ backgroundColor: '#10B981', boxShadow: '0 0 5px #10B981' }} />
