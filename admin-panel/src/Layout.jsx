@@ -126,8 +126,8 @@ export default function Layout() {
     <div className="app-shell">
       <aside className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
         <div className="sidebar-brand">
-          <div className="brand-mark brand-mark-small">CB</div>
-          <div><strong>Bus Control</strong><span>Transport office</span></div>
+          <div className="brand-mark brand-mark-small">CW</div>
+          <div><strong>Campus Wheels</strong><span>Transport office</span></div>
         </div>
         <nav className="sidebar-nav" aria-label="Admin navigation">
           {navigation.map((item) => (

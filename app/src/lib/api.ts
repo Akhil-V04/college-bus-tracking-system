@@ -170,7 +170,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
     // All candidate hosts failed
     throw new ApiError(
-      'Cannot connect to campus transit server. Please check your Wi-Fi or hotspot connection.',
+      'Cannot connect to Campus Wheels server. Please check your Wi-Fi or hotspot connection.',
       0
     );
   }

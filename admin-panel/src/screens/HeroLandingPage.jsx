@@ -74,8 +74,8 @@ export default function HeroLandingPage() {
     setDownloadToast(true);
     // Trigger direct instant APK download from public bundle
     const link = document.createElement('a');
-    link.href = '/campus-transit.apk';
-    link.download = 'campus-transit-vbit.apk';
+    link.href = '/campus-wheels.apk';
+    link.download = 'campus-wheels.apk';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -97,7 +97,7 @@ export default function HeroLandingPage() {
           <div className="hl-brand">
             <div className="hl-brand-icon">🚌</div>
             <div className="hl-brand-text">
-              <h1>Campus Transit</h1>
+              <h1>Campus Wheels</h1>
               <p>Vignana Bharathi Institute of Technology</p>
             </div>
           </div>
@@ -358,7 +358,7 @@ export default function HeroLandingPage() {
             <div className="hl-step-item">
               <div className="hl-step-num">3</div>
               <h4>Open & Track</h4>
-              <p>Launch Campus Transit on your phone. All 25+ college routes are loaded and ready to track!</p>
+              <p>Launch Campus Wheels on your phone. All 25+ college routes are loaded and ready to track!</p>
             </div>
           </div>
         </div>
@@ -368,7 +368,7 @@ export default function HeroLandingPage() {
           <div className="hl-footer-inner">
             <div className="hl-footer-logo">
               <span>🚌</span>
-              <span>Campus Transit</span>
+              <span>Campus Wheels</span>
             </div>
             <p className="hl-footer-desc">
               Real-time GPS transit tracking, smart arrival alerts, and timetable navigation for 

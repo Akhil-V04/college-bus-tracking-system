@@ -337,7 +337,7 @@ export default function PassengerDashboard() {
           <View style={styles.headerIcon}>
             <AppIcon name="bus" size={26} />
           </View>
-          <Text style={styles.headerTitle}>Campus Transit</Text>
+          <Text style={styles.headerTitle}>Campus Wheels</Text>
         </View>
         <View style={styles.headerRightActions}>
           <Pressable
@@ -441,7 +441,7 @@ export default function PassengerDashboard() {
         {/* Branding */}
         <View style={styles.footerBrand}>
           <Text style={styles.footerPowered}>Powered by</Text>
-          <Text style={styles.footerBrandName}>CAMPUS<Text style={styles.footerBrandAccent}>Transit</Text></Text>
+          <Text style={styles.footerBrandName}>CAMPUS<Text style={styles.footerBrandAccent}>Wheels</Text></Text>
           <Text style={styles.footerDev}>Developed by Akhil Vaddeboina • akhilvaddeboina25@gmail.com</Text>
         </View>
       </ScrollView>

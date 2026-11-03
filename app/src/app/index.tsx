@@ -49,7 +49,7 @@ export default function RoleSelectionScreen() {
               <AppIcon name="bus" size={36} />
             </View>
           </View>
-          <Text style={styles.brandTitle}>CampusTransit</Text>
+          <Text style={styles.brandTitle}>Campus Wheels</Text>
           <Text style={styles.brandTag}>COLLEGE BUS TRACKING SYSTEM</Text>
           <Text style={styles.brandSubtitle}>Choose your role to continue</Text>
         </View>

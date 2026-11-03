@@ -23,7 +23,7 @@ The project has completed all core development and deployment phases (B1–B9, F
 - **Cloud Backend Hosting (Render)**: Persistent Node.js + Express + Socket.IO service running 24/7 at `https://college-bus-tracking-api-2fi5.onrender.com`. Automatic zero-downtime continuous deployment is connected to the GitHub repository `main` branch.
 - **Hosted Database (Supabase PostgreSQL)**: Cloud PostgreSQL database configured with Prisma migrations, row-level security (RLS), and transaction connection pooling (pgbouncer) for high-concurrency client connections.
 - **Web Administrator Portal (Vercel)**: Production deployment live at `https://college-bus-tracking-system-pi.vercel.app`. Features cookie and authorization-header authentication, Live Map tracking, Route & Schedule management, Roster Excel/CSV import/export, and direct mobile APK downloads.
-- **Standalone Android Release APK**: Production release APK (`campus-transit.apk`, ~43 MB) compiled via native Android Gradle with bytecode optimization and asset packaging. Distributed directly via `/campus-transit.apk` endpoints on both Vercel and Render.
+- **Standalone Android Release APK**: Production release APK (`campus-wheels.apk`, ~43 MB) compiled via native Android Gradle with bytecode optimization and asset packaging. Distributed directly via `/campus-wheels.apk` endpoints on both Vercel and Render.
 - **Route Publication Architecture**:
   - **Published Routes**: Route 08 and DEMO are fully published with active digital stop timetables, Google Maps polylines, and live GPS broadcast.
   - **Unpublished Routes**: Routes 01 to 07 and 09 to 31 are active in the database with master route records. Clicking any unpublished route displays a dedicated **"Route Not Published Yet"** view presenting tentative pickup points and timings parsed from master records (`areaCovered`), driver details, vehicle capacity, direct contact button to Transport In-Charge (Mr. P. Venu Gopal: `7993453629`), and passenger roster access.
@@ -47,7 +47,7 @@ The project has completed all core development and deployment phases (B1–B9, F
 | Notifications & Outbox | Node.js workers + SMTP (Gmail) + Push | Advisor late-arrival alerts via SMTP; Expo push notification queue for stop arrival reminders. |
 | Data exchange | CSV / XLSX (`xlsx` engine) | Bulk student & faculty roster import/export; driver credential workbook exchange. |
 | Security | BCrypt, JWT, HttpOnly Cookies, Helmet, CORS | Role-based authorization; strict CORS; sanitized public APIs hiding private phone numbers and roll numbers. |
-| Public Distribution | Direct APK hosting on Vercel & Render | `campus-transit.apk` served directly to students and drivers without third-party app store friction. |
+| Public Distribution | Direct APK hosting on Vercel & Render | `campus-wheels.apk` served directly to students and drivers without third-party app store friction. |
 
 Supabase is the managed PostgreSQL host. Express, Prisma, Socket.IO, authentication middleware, and Node background workers remain authoritative. No RAG is introduced.
 
@@ -782,7 +782,7 @@ The Administrator Web Portal is live at `https://college-bus-tracking-system-pi.
 - **Schedule Versions & Stop Ordering**: Visual stop sequencing with arrival/departure timings, direction configuration (Morning / Evening / Special Event), and Google Maps polyline generation.
 - **Driver Management**: Credential generation, driver codes, route assignments, active status toggles, and workbook imports.
 - **Annual Roster Exchange**: Validated CSV/Excel workbook import with preview, column mapping, duplication detection, atomic replacement, and export.
-- **Direct APK Distribution**: Serves the compiled Android APK directly at `/campus-transit.apk` for student and driver onboarding.
+- **Direct APK Distribution**: Serves the compiled Android APK directly at `/campus-wheels.apk` for student and driver onboarding.
 
 ## 15. Passenger screens (Implemented in Unified Mobile App)
 
@@ -2213,7 +2213,7 @@ This audit confirms that the College Bus Tracking System has successfully progre
 | **Cloud Backend Deployment** | **ALREADY IMPLEMENTED & VERIFIED** — Live at `https://college-bus-tracking-api-2fi5.onrender.com`. Node.js Express server with Socket.IO, zero-downtime CD from GitHub main, and health check endpoints. |
 | **Hosted Database** | **ALREADY IMPLEMENTED & VERIFIED** — Managed PostgreSQL on **Supabase** via transaction connection pooler (Supavisor pgbouncer on port 6543). All Prisma migrations deployed. |
 | **Web Administrator Portal** | **ALREADY IMPLEMENTED & VERIFIED** — Live at `https://college-bus-tracking-system-pi.vercel.app`. React 19 + Vite dashboard with live map, roster exchange, and APK distribution. |
-| **Android Standalone Release APK** | **ALREADY IMPLEMENTED & VERIFIED** — Release APK (`campus-transit.apk`, 43,035,793 bytes) compiled with native Gradle and distributed from both Vercel and Render public roots. |
+| **Android Standalone Release APK** | **ALREADY IMPLEMENTED & VERIFIED** — Release APK (`campus-wheels.apk`, 43,035,793 bytes) compiled with native Gradle and distributed from both Vercel and Render public roots. |
 | **Dual Route Publication Architecture** | **ALREADY IMPLEMENTED & VERIFIED** — Route 08 & DEMO published with active GPS; Routes 01–07 & 09–31 handled via dedicated "Route Not Published Yet" view with tentative master stops. |
 | **Native Map Crash Protections** | **ALREADY IMPLEMENTED & VERIFIED** — `com.google.android.geo.API_KEY` added to `AndroidManifest.xml`; native `MapErrorBoundary` wrapped around all `MapView` instances. |
 | **App-Wide Error Recovery** | **ALREADY IMPLEMENTED & VERIFIED** — Top-level `ErrorBoundary.tsx` wraps root app in `_layout.tsx`; React animation lifecycle hooks moved from `useState` to `useEffect`. |

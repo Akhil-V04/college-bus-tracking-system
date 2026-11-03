@@ -71,7 +71,7 @@ If you notice smoke or fire:
 - Call 112 for fire services.
 
 5. Reporting
-All passengers can report emergencies through the Campus Transit app using the Emergency / SOS button. Driver-reported emergencies are treated as confirmed. Passenger-reported emergencies are verified by the driver or transport office before dispatching assistance.
+All passengers can report emergencies through the Campus Wheels app using the Emergency / SOS button. Driver-reported emergencies are treated as confirmed. Passenger-reported emergencies are verified by the driver or transport office before dispatching assistance.
 
 ---
 
@@ -84,7 +84,7 @@ All passengers can report emergencies through the Campus Transit app using the E
 Transport FAQ
 
 Q: How do I track my bus?
-A: Open the Campus Transit app, select your route number, and you will see the live bus location on the map when the trip is active.
+A: Open the Campus Wheels app, select your route number, and you will see the live bus location on the map when the trip is active.
 
 Q: What if my bus is running late?
 A: The app shows estimated arrival times (ETA) for each stop. If the bus is significantly late, class advisors of affected students are automatically notified by email.
@@ -96,7 +96,7 @@ Q: What if I miss my bus?
 A: The college is not responsible for alternate transport if a passenger misses the bus. Please arrive at your stop at least 5 minutes before the scheduled time.
 
 Q: How do I report a problem with the bus or driver?
-A: Use the "Report an Issue" feature in the Campus Transit app. Select a category, describe the problem, and submit. Reports are anonymous.
+A: Use the "Report an Issue" feature in the Campus Wheels app. Select a category, describe the problem, and submit. Reports are anonymous.
 
 Q: Is my personal information stored in the app?
 A: No. The passenger app does not require login or any personal information. Your privacy is protected by design.

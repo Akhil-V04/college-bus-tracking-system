@@ -124,10 +124,12 @@ app.get('/download', (_req, res) => {
   res.sendFile(path.join(publicDir, 'download.html'));
 });
 app.get('/download/apk', (_req, res) => {
-  const apkPath = path.join(publicDir, 'campus-transit.apk');
+  const wheelsApk = path.join(publicDir, 'campus-wheels.apk');
+  const transitApk = path.join(publicDir, 'campus-transit.apk');
+  const apkPath = fs.existsSync(wheelsApk) ? wheelsApk : transitApk;
   if (fs.existsSync(apkPath)) {
     res.setHeader('Content-Type', 'application/vnd.android.package-archive');
-    return res.download(apkPath, 'campus-transit-vbit.apk');
+    return res.download(apkPath, 'campus-wheels.apk');
   }
   return res.redirect('/download?status=build_ready');
 });

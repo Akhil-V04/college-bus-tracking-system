@@ -126,7 +126,7 @@ export async function startBackgroundDriverLocation(tripId: number) {
     activityType: Location.ActivityType.AutomotiveNavigation,
     showsBackgroundLocationIndicator: true,
     foregroundService: {
-      notificationTitle: '🚍 Campus Bus GPS Active',
+      notificationTitle: '🚍 Campus Wheels GPS Active',
       notificationBody: 'Broadcasting live location to passengers and transport desk.',
       killServiceOnDestroy: false,
     },

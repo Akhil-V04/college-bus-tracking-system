@@ -39,9 +39,9 @@ export default function Login() {
       <div className="login-orb login-orb-one" />
       <div className="login-orb login-orb-two" />
       <main className="login-card">
-        <div className="brand-mark" aria-hidden="true">CB</div>
-        <p className="eyebrow">Transport operations</p>
-        <h1>College Bus Control</h1>
+        <div className="brand-mark" aria-hidden="true">CW</div>
+        <p className="eyebrow">Campus Wheels Operations</p>
+        <h1>Campus Wheels Control</h1>
         <p className="login-copy">
           Administrator access for routes, annual passenger rosters, schedules, drivers, and late-bus alerts.
         </p>

@@ -114,7 +114,7 @@ const androidManifestXml = `<?xml version="1.0" encoding="utf-8"?>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
-        android:label="Campus Transit"
+        android:label="Campus Wheels"
         android:icon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
@@ -140,7 +140,7 @@ const entries = [
   { name: 'META-INF/MANIFEST.MF', data: Buffer.from('Manifest-Version: 1.0\nCreated-By: 17.0.12 (Oracle Corporation)\nBuilt-By: Akhil Vaddeboina\n') },
   { name: 'META-INF/CERT.SF', data: Buffer.from('Signature-Version: 1.0\nCreated-By: 1.0 (Android)\nSHA-256-Digest-Manifest: VBIT_TRANSIT_RELEASE_DIGEST_VALID_2026\n') },
   { name: 'assets/app.json', data: Buffer.from(JSON.stringify({
-    name: 'Campus Transit',
+    name: 'Campus Wheels',
     slug: 'college-bus-tracking',
     version: '1.5.0',
     developer: 'Akhil Vaddeboina',
@@ -151,12 +151,14 @@ const entries = [
 
 const zipBuffer = createZipArchive(entries);
 
-// Target 1: admin-panel/public/campus-transit.apk (Served directly by Vercel CDN)
-const adminPanelPublicApk = path.resolve(__dirname, '..', 'admin-panel', 'public', 'campus-transit.apk');
+// Target 1: admin-panel/public/campus-wheels.apk & campus-transit.apk (Served directly by Vercel CDN)
+const adminPanelPublicApk = path.resolve(__dirname, '..', 'admin-panel', 'public', 'campus-wheels.apk');
 fs.writeFileSync(adminPanelPublicApk, zipBuffer);
+fs.writeFileSync(path.resolve(__dirname, '..', 'admin-panel', 'public', 'campus-transit.apk'), zipBuffer);
 console.log('Created ' + adminPanelPublicApk + ' (' + zipBuffer.length + ' bytes)');
 
-// Target 2: backend/src/public/campus-transit.apk (Served by Render API)
-const backendPublicApk = path.resolve(__dirname, '..', 'backend', 'src', 'public', 'campus-transit.apk');
+// Target 2: backend/src/public/campus-wheels.apk & campus-transit.apk (Served by Render API)
+const backendPublicApk = path.resolve(__dirname, '..', 'backend', 'src', 'public', 'campus-wheels.apk');
 fs.writeFileSync(backendPublicApk, zipBuffer);
+fs.writeFileSync(path.resolve(__dirname, '..', 'backend', 'src', 'public', 'campus-transit.apk'), zipBuffer);
 console.log('Created ' + backendPublicApk + ' (' + zipBuffer.length + ' bytes)');

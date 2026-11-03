@@ -385,8 +385,8 @@ export default function RouteDetailsScreen() {
       const deepLink = `college-bus://passenger/${encodeURIComponent(route.data.routeNo)}`;
 
       await Share.share({
-        title: `VBIT College Bus Route ${route.data.routeNo}`,
-        message: `🚌 VBIT College Bus — Route ${route.data.routeNo} (${route.data.name})\n\n⏰ Schedule:\n${stopList}\n\n📲 Open in App:\n${deepLink}\n\n🌐 Don't have the app yet? Download directly to your mobile here:\n${downloadUrl}`,
+        title: `Campus Wheels — Route ${route.data.routeNo}`,
+        message: `🚌 Campus Wheels — Route ${route.data.routeNo} (${route.data.name})\n\n⏰ Schedule:\n${stopList}\n\n📲 Open in App:\n${deepLink}\n\n🌐 Don't have the app yet? Download directly to your mobile here:\n${downloadUrl}`,
         url: downloadUrl,
       });
     } catch {
@@ -585,7 +585,7 @@ export default function RouteDetailsScreen() {
       ) : (
         <View style={styles.directionPendingBar}>
           <Text style={styles.directionPendingText}>
-            🚍 Daily College Transit Service • Morning Inbound & Evening Return
+            🚍 Campus Wheels Service • Morning Inbound & Evening Return
           </Text>
         </View>
       )}
