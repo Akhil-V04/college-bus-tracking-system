@@ -164,7 +164,7 @@ export default function RouteDetailsScreen() {
   const [reminderFrequency, setReminderFrequency] = useState<ReminderFrequency>('TODAY');
   const [savedReminder, setSavedReminder] = useState<SavedReminder | null>(null);
 
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<any>(null);
 
   // Fetch route details with direction (defaults to MORNING in backend)
   const route = useQuery({

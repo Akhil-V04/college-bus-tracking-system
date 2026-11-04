@@ -57,6 +57,7 @@ import {
   DriverTrip,
   NearbyBus,
   NearbyBusesResponse,
+  RouteDetail,
 } from '@/types/api';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -267,9 +268,56 @@ export default function DriverConsoleScreen() {
     };
   }, [stops, driverCurrentCoords]);
 
+  // Fetch assigned route details for off-trip Google Map preview
+  const assignedRouteNo = profile.data?.assignedRoute?.routeNo;
+  const assignedRouteDetail = useQuery({
+    queryKey: ['driver-assigned-route', assignedRouteNo, selectedDirection],
+    queryFn: () =>
+      apiRequest<RouteDetail>(
+        `/passenger/routes/${encodeURIComponent(assignedRouteNo!)}?direction=${selectedDirection === 'TO_COLLEGE' ? 'MORNING' : 'EVENING'}`
+      ),
+    enabled: Boolean(assignedRouteNo),
+    staleTime: 60_000,
+  });
+
+  const offTripStops = useMemo(() => {
+    return assignedRouteDetail.data?.schedule?.stops || [];
+  }, [assignedRouteDetail.data?.schedule?.stops]);
+
+  const offTripPolyline = useMemo(() => {
+    const rawPoly = assignedRouteDetail.data?.schedule?.geometryPolyline;
+    if (rawPoly) {
+      const decoded = decodePolyline(rawPoly);
+      if (decoded.length > 0) return decoded;
+    }
+    return offTripStops.map((s) => ({ latitude: s.stop.latitude, longitude: s.stop.longitude }));
+  }, [assignedRouteDetail.data?.schedule?.geometryPolyline, offTripStops]);
+
+  const offTripInitialRegion = useMemo(() => {
+    if (offTripStops.length === 0) {
+      return {
+        latitude: 17.4705,
+        longitude: 78.7255,
+        latitudeDelta: 0.1,
+        longitudeDelta: 0.1,
+      };
+    }
+    const lats = offTripStops.map((s) => s.stop.latitude);
+    const lngs = offTripStops.map((s) => s.stop.longitude);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.max(0.02, (maxLat - minLat) * 1.35),
+      longitudeDelta: Math.max(0.02, (maxLng - minLng) * 1.35),
+    };
+  }, [offTripStops]);
+
   // Continuous immediate location watcher for real-time driver map display
   useEffect(() => {
-    if (!trip) return undefined;
     let subscription: Location.LocationSubscription | null = null;
     let mounted = true;
 
@@ -279,7 +327,7 @@ export default function DriverConsoleScreen() {
         const services = await Location.hasServicesEnabledAsync().catch(() => false);
         if (services) {
           const pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.High,
+            accuracy: Location.Accuracy.Balanced,
           });
           if (mounted && pos?.coords) {
             setDriverCurrentCoords({
@@ -291,6 +339,8 @@ export default function DriverConsoleScreen() {
       } catch {}
     };
     void fetchImmediatePos();
+
+    if (!trip) return () => { mounted = false; };
 
     // High-frequency watcher for smooth map marker updates (2s polling)
     Location.watchPositionAsync(
@@ -1092,6 +1142,77 @@ export default function DriverConsoleScreen() {
               />
             )}
           </Card>
+
+          {/* Assigned Route Map & Pinned Stops Preview */}
+          {driver.assignedRoute && (
+            <Card style={{ padding: 0, overflow: 'hidden' }}>
+              <View style={{ padding: 16, paddingBottom: 10 }}>
+                <SectionTitle>Assigned Route Map & Stops</SectionTitle>
+                <Text style={styles.help}>
+                  Route {driver.assignedRoute.routeNo} • {offTripStops.length} stops pinned on Google Maps. Review your route before departure.
+                </Text>
+              </View>
+
+              <View style={{ height: 280, width: '100%', backgroundColor: '#0B1118' }}>
+                {assignedRouteDetail.isPending ? (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <ActivityIndicator size="small" color="#EA580C" />
+                    <Text style={{ color: '#94A3B8', fontSize: 12, marginTop: 8 }}>Loading route map...</Text>
+                  </View>
+                ) : (
+                  <CampusMap
+                    initialRegion={offTripInitialRegion}
+                    style={{ flex: 1 }}
+                  >
+                    {offTripPolyline.length > 0 && (
+                      <Polyline
+                        coordinates={offTripPolyline}
+                        strokeColor="#EA580C"
+                        strokeWidth={4.5}
+                      />
+                    )}
+                    {offTripStops.map((entry, idx) => (
+                      <Marker
+                        key={`driver-offtrip-${entry.stop.id}-${idx}`}
+                        coordinate={{
+                          latitude: entry.stop.latitude,
+                          longitude: entry.stop.longitude,
+                        }}
+                        title={entry.stop.name}
+                        description={`Stop #${entry.sequenceOrder} • Scheduled: ${entry.scheduledTime}`}
+                        pinColor={idx === offTripStops.length - 1 ? '#10B981' : idx === 0 ? '#8B5CF6' : '#EA580C'}
+                      />
+                    ))}
+                    {driverCurrentCoords && (
+                      <Marker
+                        coordinate={driverCurrentCoords}
+                        title="Your Location"
+                        description="Driver GPS"
+                        pinColor="#3B82F6"
+                      />
+                    )}
+                  </CampusMap>
+                )}
+              </View>
+
+              <View
+                style={{
+                  padding: 12,
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  backgroundColor: isDark ? '#1E293B' : '#F1F5F9',
+                }}
+              >
+                <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
+                  📍 {offTripStops.length} Stops ({offTripStops[0]?.stop.name || 'Start'} → {offTripStops[offTripStops.length - 1]?.stop.name || 'VBIT'})
+                </Text>
+                <Text style={{ fontSize: 12, color: '#EA580C', fontWeight: '700' }}>
+                  {selectedDirection === 'TO_COLLEGE' ? '🌅 Morning Pickup' : '🌆 Evening Return'}
+                </Text>
+              </View>
+            </Card>
+          )}
 
           {activeTrip.isError && (
             <Notice tone="danger" title="Trip status unavailable" message={activeTrip.error.message} />
