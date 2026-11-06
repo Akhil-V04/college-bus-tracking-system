@@ -1,279 +1,235 @@
-# College Bus Tracking System
+# 🚌 Campus Wheels — Real-Time College Transit & Fleet Intelligence Platform
 
-A comprehensive, full-stack college bus tracking system built to manage transport operations for colleges. It provides a real-time passenger dashboard, an administrative panel for staff, and a dedicated backend for data management, routing, and notifications.
+[![Live Website](https://img.shields.io/badge/Live%20Website-Hero%20Page-FF6B00?style=for-the-badge&logo=vercel&logoColor=white)](https://college-bus-tracking-system-pi.vercel.app/)
+[![Download APK](https://img.shields.io/badge/Download%20APK-Campus%20Wheels%20v4.0-10B981?style=for-the-badge&logo=android&logoColor=white)](https://college-bus-tracking-system-pi.vercel.app/campus-wheels.apk)
+[![Backend Status](https://img.shields.io/badge/Backend%20API-Render%20Live-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://college-bus-tracking-api-2fi5.onrender.com/api/v1/health)
+[![PostgreSQL](https://img.shields.io/badge/Database-Supabase%20PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
 
-## Project Overview
+---
 
-The application solves the problem of tracking college buses, managing driver/passenger rosters, and providing real-time ETA updates. It is used by passengers (students, faculty), bus drivers, and college transport administrators.
-Main features include real-time bus tracking, emergency accident reporting, passenger feedback/issue reporting, driver login to broadcast locations, and an admin panel to manage routes, buses, stops, and schedules. The current project is functional with core architecture across three connected modules: mobile app, backend, and admin web panel.
+## 🌟 Live Published Deployments
 
-## Technology Stack
+| Component | Production URL | Description |
+| :--- | :--- | :--- |
+| 🚀 **Official Hero & Download Page** | [**https://college-bus-tracking-system-pi.vercel.app/**](https://college-bus-tracking-system-pi.vercel.app/) | Official web landing page with live app mockups, feature tour, and direct mobile APK download. |
+| 📲 **Android Mobile APK (Direct Download)** | [**Download `campus-wheels.apk`**](https://college-bus-tracking-system-pi.vercel.app/campus-wheels.apk) | Standalone release APK (~43 MB) for Android devices with dual-role Passenger and Driver support. |
+| 🛡️ **Administrator Web Portal** | [**Admin Portal Login**](https://college-bus-tracking-system-pi.vercel.app/admin/login) | Staff dashboard for route creation, fleet GPS tracking, Excel/CSV student rosters, and emergency reports. |
+| ⚙️ **Cloud Backend API** | [**Render API Base**](https://college-bus-tracking-api-2fi5.onrender.com/api/v1) | Persistent Node.js + Express REST API and Socket.IO real-time WSS gateway. |
+| 🗄️ **Database Cluster** | **Supabase PostgreSQL** | High-concurrency PostgreSQL cluster with Prisma ORM and Supavisor connection pooling. |
 
-**Frontend (Mobile App):**
-- React Native
-- Expo
-- Expo Router
-- TypeScript
+---
 
-**Frontend (Admin Panel):**
-- React
-- Vite
-- TailwindCSS
+## 📖 About Campus Wheels
 
-**Backend:**
-- Node.js
-- Express
-- Prisma (ORM)
-- Socket.io (Real-time tracking)
-- Zod (Validation)
+**Campus Wheels** is a high-availability, full-stack transit management and vehicle tracking platform engineered for college bus operations. It bridges the gap between students, faculty, bus drivers, and campus administration through sub-second GPS tracking, explainable arrival forecasting, and proactive late-arrival notifications.
 
-**Database:**
-- PostgreSQL (via Prisma)
+### Why Campus Wheels?
+- **Zero-Friction Passenger Access:** Students and faculty do not need to register, create accounts, or remember passwords. Simply tap **Passenger**, select a route, and instantly track the bus on Google Maps.
+- **Dual-Role Single Binary:** Both passengers and verified drivers share a single unified Android application with an intuitive role selection landing screen.
+- **Interactive Google Maps WebView:** High-performance slippy tile engine rendering real Google Maps (Roadmap & Satellite modes) without Google Cloud API key restrictions or billing failures.
+- **Explainable ETAs:** Progression-aware arrival estimation that accounts for rolling speeds and scheduled windows without ever showing confusing negative ETAs.
+- **Comprehensive Fleet Scope:** Supports all **31 college bus routes**. Routes with active GPS (e.g. Route 08 and DEMO) provide real-time location streaming, while pending routes present tentative pickup timings and direct contact with the Transport In-Charge.
+- **Clockwise Rotating Globe & Transit Bus:** Modern 3D-styled animated road and globe loading screen for smooth transitions.
 
-**Authentication:**
-- Custom JWT (Driver & Admin)
-- Secure session cookies
+---
 
-## Architecture
-
-> 📖 **Deep Dive Reference:** For detailed mathematical formulations, algorithms, security standards, and viva cheat sheet, see [TECHNICAL_ARCHITECTURE_AND_ALGORITHMS.md](./TECHNICAL_ARCHITECTURE_AND_ALGORITHMS.md).
+## 🏗️ System Architecture
 
 ```text
-       Passengers / Drivers
-               |
-               v
-     Expo / React Native App
-               |
-    [ REST API & WebSockets ]
-               |
-               v
-   Backend API (Express/Node.js) <---- [ REST API ] ---- Admin Panel (React/Vite)
-               |
-               v
-     PostgreSQL Database (Prisma)
+                  +-----------------------------------+
+                  |        Students & Faculty         |
+                  |     (Zero-login Passengers)       |
+                  +-----------------+-----------------+
+                                    |
+                                    v
++-----------------------+   +-----------------------+   +-----------------------+
+|  Driver GPS Console   |   |   Passenger Mobile    |   |     Admin Web App     |
+| (Expo / React Native) |   | (Expo / React Native) |   |  (React 19 + Vite 8)  |
++-----------+-----------+   +-----------+-----------+   +-----------+-----------+
+            |                           |                           |
+            | [ WSS / Location Stream ] | [ REST / Live WSS ]       | [ HTTPS / Cookies ]
+            \---------------------+-----/                           |
+                                  |                                 |
+                                  v                                 v
+                  +-------------------------------------------------+
+                  |      Campus Wheels Express.js Backend Core      |
+                  |           (Node.js + Socket.IO + Zod)           |
+                  +-----------------------+-------------------------+
+                                          |
+                                          | [ Prisma ORM 5.x ]
+                                          v
+                  +-------------------------------------------------+
+                  |          Supabase PostgreSQL Database           |
+                  |       (Pooled Connections via Supavisor)        |
+                  +-------------------------------------------------+
 ```
 
-**Mobile App:** Provides passengers with tracking features and allows drivers to update GPS.
-**Backend:** Handles business logic, socket real-time routing, role-based auth, and rate-limiting.
-**Admin Panel:** A web dashboard for staff to add routes, manage rosters, and view reported issues.
-**Database:** Stores persistent data including routes, issues, users, and audit logs.
+> 📖 **Deep Dive Reference:** For detailed mathematical formulas, Kalman filter smoothing, ETA algorithms, security standards, and viva cheat sheet, consult [TECHNICAL_ARCHITECTURE_AND_ALGORITHMS.md](./TECHNICAL_ARCHITECTURE_AND_ALGORITHMS.md).
 
-## Project Structure
+---
+
+## 📱 Mobile App Highlights (`app/`)
+
+- **Instant Dual-Role Entry:** Choose between **Passenger** and **Driver** from the launch screen.
+- **Interactive Live Map:**
+  - Pinned route stops with numbered badges (`1` .. `N`) and destination star (`★`).
+  - Pulsing live bus marker (`🚌`) with glowing radar halo.
+  - Route polyline connecting every corridor stop.
+  - **🗺️ Satellite / Roadmap** layer toggle button.
+  - **↻ Re-center** control to auto-fit the full route on screen.
+- **Smart Route Discovery:**
+  - **Live Routes (Route 08 & DEMO):** Live GPS coordinates, active trip status, and stop-by-stop passenger rosters.
+  - **Tentative Routes (Routes 01–07, 09–31):** Dedicated "Route Not Published Yet" card displaying tentative morning pickup timings, driver info, and one-tap calling to Transport In-Charge (Mr. P. Venu Gopal: `+91 7993453629`).
+- **Driver Navigation HUD:**
+  - Pre-trip route overview card displaying the assigned route map and pinned stops prior to starting.
+  - One-tap trip initiation with background GPS broadcasting.
+  - Resilient offline GPS queue with automatic re-sync when network connectivity drops.
+- **Animated Loading Experience:** Custom CSS/Canvas rotating globe, transit bus, and animated road on app launch and route transitions.
+
+---
+
+## 💻 Administrator Portal (`admin-panel/`)
+
+- **Fleet Overview & Live Tracking:** Real-time map displaying all active trips across campus corridors.
+- **Route & Stop Management:** Configure 31 routes, add pickup stops, arrival windows, and polyline coordinates.
+- **Roster Management:** Bulk import and export student and faculty rosters via Excel (`.xlsx`) or CSV, segmented by academic year.
+- **Driver Credential Provisioning:** Generate secure driver codes (`DRV01` .. `DRV31`) and assign routes.
+- **Safety & Incident Management:** Review passenger-submitted issues and emergency/delay reports.
+- **Public APK Distribution:** Distributes production Android APK directly from `/campus-wheels.apk`.
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technologies |
+| :--- | :--- |
+| **Mobile App** | React Native 0.86, Expo SDK 52, Expo Router, TypeScript, React Native WebView, Leaflet |
+| **Admin Panel** | React 19, Vite 8, TailwindCSS v4, React Router 7, Leaflet, Axios |
+| **Backend API** | Node.js (v20+), Express.js, Socket.IO 4.8, Prisma ORM 5.x, Zod, BCrypt |
+| **Database** | PostgreSQL hosted on Supabase (with transaction connection pooling) |
+| **Real-Time Layer** | WebSockets (Socket.IO) over persistent WSS |
+| **Deployment** | Vercel (Frontend & APK Hosting), Render (Backend API), GitHub Actions CI/CD |
+
+---
+
+## 📁 Repository Structure
 
 ```text
 bus-tracking-system/
-├── admin-panel/          # React web app for administrators
-├── app/                  # React Native mobile application for passengers/drivers
-├── backend/              # Node.js Express server + Prisma Database
-├── .env.example          # Aggregated environment variables example
-├── README.md             # This file
-└── .gitignore            # Ignored files
+├── admin-panel/              # React 19 + Vite web portal & public landing website
+│   ├── public/               # Public assets and release campus-wheels.apk
+│   └── src/
+│       ├── screens/          # HeroLandingPage, Dashboard, Routes, Rosters, etc.
+│       └── components/       # Reusable UI widgets and map views
+├── app/                      # React Native / Expo mobile application
+│   ├── android/              # Native Android project configuration
+│   └── src/
+│       ├── app/              # Expo Router screens (index, passenger, driver)
+│       └── components/map/   # CampusMap WebView Google Maps component
+├── backend/                  # Node.js + Express backend service
+│   ├── prisma/               # Database schema & migrations
+│   └── src/
+│       ├── routes/           # REST endpoints (auth, routes, trips, rosters, etc.)
+│       └── lib/              # Socket.IO handlers, ETA algorithms, security
+├── PRD_updated.md            # Comprehensive Product Requirements Document (v4.0)
+├── TECHNICAL_ARCHITECTURE... # Complete mathematical and algorithmic specification
+└── README.md                 # Project documentation (this file)
 ```
 
-## Application Screens / Routes
+---
 
-**Mobile App:**
-- `/passenger` - Passenger dashboard showing active routes, ETA, and emergency contacts.
-- `/passenger/report-issue` - Dynamic form for reporting bus or app issues.
-- `/passenger/emergency` - Report an accident or major delay.
-- `/passenger/search` - Look up bus stops and view route information.
-- `/driver/login` - Secure login exclusively for assigned drivers.
-- `/driver` - Driver console for starting trips and broadcasting location.
+## 🚀 Local Development Setup
 
-**Admin Panel:**
-- Dashboard - General statistics and reports.
-- Routes / Stops / Rosters - Data grids to manage transport lists and bus configurations.
+### 1. Prerequisites
+- **Node.js:** v18.x or v20.x recommended
+- **npm:** v9.x or higher
+- **Git**
+- **Android Studio / JDK 17:** (Optional, only required for building native Android APK locally)
+- **Expo Go App:** Available on Google Play Store for testing on physical devices.
 
-## Core Features
-
-- Real-time bus tracking (GPS via WebSockets)
-- Emergency / Accident reporting
-- Issue and feedback submission
-- Driver authentication and trip broadcasting
-- Dedicated Admin Web Panel for transport staff
-- AI Assistant embedded in the mobile app for policy queries
-
-## Data Flow
-
-1. **Driver** logs in and starts a trip -> The mobile app continuously sends GPS points via WebSocket to the Backend.
-2. **Passenger** opens the app -> App fetches active routes via REST API from Backend.
-3. **Passenger** views map -> App establishes a WebSocket connection to receive real-time driver coordinates.
-4. **Admin** views the web panel -> Panel fetches database records (reports, trips, routes) from the Backend via protected REST APIs.
-
-## Environment Variables
-
-The repository uses environment variables for configuration.
-1. Copy `.env.example` to `.env` in the root (or directly inside `app/`, `backend/`, `admin-panel/`).
-2. Fill in the required values (e.g., `DATABASE_URL`, `JWT_SECRET`, `VITE_API_URL`, `EXPO_PUBLIC_API_URL`).
-3. **Never commit `.env` containing real credentials.**
-
-*Note: Public variables usually start with `EXPO_PUBLIC_` or `VITE_`. Backend database strings and secrets are strictly server-side.*
-
-## Prerequisites
-
-- Windows 10/11 (or macOS/Linux)
-- Git
-- Node.js (v18 or higher recommended)
-- npm
-- Expo Go app on your physical iOS/Android device
-- A PostgreSQL database (can be local or hosted, e.g. Supabase)
-
-## Setup on a New PC
-
+### 2. Clone the Repository
 ```bash
-# 1. Clone the repository
-git clone <YOUR_GITHUB_REPOSITORY_URL>
-cd bus-tracking-system
+git clone https://github.com/Akhil-V04/college-bus-tracking-system.git
+cd college-bus-tracking-system
+```
 
-# 2. Start the Backend
+### 3. Setup and Start Backend
+```bash
 cd backend
 npm install
 copy .env.example .env
-# Fill in DATABASE_URL and secrets in backend/.env
-# Setup Database schema
+# Configure DATABASE_URL (Supabase or local PostgreSQL) and JWT_SECRET in .env
 npx prisma db push
 npm run dev
+# Backend starts at http://localhost:4000
+```
 
-# 3. Start the Admin Panel
+### 4. Setup and Start Admin Panel (with Hero Landing Page)
+```bash
 cd ../admin-panel
 npm install
 copy .env.example .env
-# Ensure VITE_API_URL points to the backend
 npm run dev
+# Web application starts at http://localhost:5173
+```
+Visit `http://localhost:5173` to explore the **Hero Landing Page** or `http://localhost:5173/admin/login` for the admin portal.
 
-# 4. Start the Mobile App
+### 5. Setup and Start Mobile App
+```bash
 cd ../app
 npm install
 copy .env.example .env
-# Ensure EXPO_PUBLIC_API_URL points to the backend
+# Set EXPO_PUBLIC_API_URL to your backend (use LAN IP for physical phones, e.g., http://192.168.1.X:4000/api/v1)
 npx expo start
 ```
+Scan the displayed QR code with the **Expo Go** app on your Android device.
 
-For the mobile app, scan the QR code with **Expo Go** on an Android phone. If your phone and PC cannot connect over the same Wi-Fi, start the app with:
+---
+
+## 🔑 Demo & Test Credentials
+
+### Driver Access (Mobile App)
+| Driver Code | Password | Assigned Route | Notes |
+| :--- | :--- | :--- | :--- |
+| `DRV08` | *Standard driver pass* | **Route 08** | Full stop timetable with active GPS broadcasting |
+| `DRVDEMO` | *Standard driver pass* | **DEMO Route** | Fast-cycle test route for end-to-end verification |
+
+### Administrator Access (Web Portal)
+- **Login Portal:** [https://college-bus-tracking-system-pi.vercel.app/admin/login](https://college-bus-tracking-system-pi.vercel.app/admin/login)
+- Authenticates securely via HttpOnly session cookies and authorization tokens.
+
+---
+
+## 🧪 Testing & Validation
+
+Run the automated backend test suites:
 ```bash
-npx expo start --tunnel
-```
-
-## Running the Application
-
-- **Backend:** Runs on port 4000 (usually `http://localhost:4000`).
-- **Admin Panel:** Runs via Vite (usually `http://localhost:5173`). Open this URL in your web browser.
-- **Mobile App:** Runs via Expo. Use Expo Go on your mobile device to test.
-
-## Development Workflow
-
-1. Git pull the latest changes.
-2. Install any new dependencies across the three folders (`npm install`).
-3. Make sure your `.env` variables match `.env.example`.
-4. Run `npm run dev` / `npx expo start` in the required modules.
-5. Save files to automatically trigger Hot Reload / Fast Refresh.
-6. Commit changes systematically.
-
-## Git Workflow
-
-```bash
-git checkout -b feature/my-new-feature
-git add .
-git commit -m "Add my new feature"
-git push origin feature/my-new-feature
-```
-Always pull from the main branch before creating a new feature branch.
-
-## API / Backend Configuration
-
-The backend is an Express.js API located in the `backend/` folder.
-- Base URL is `/api/v1`
-- JWT is used for Driver authentication; secure HttpOnly cookies are used for Admin authentication.
-- Endpoints are defined in `backend/src/routes`.
-
-## Database
-
-- **Technology:** PostgreSQL
-- **ORM:** Prisma
-- **Location:** Configured via `DATABASE_URL` in `backend/.env`.
-The schema defines entities like `Route`, `Driver`, `FeedbackReport`, and `AdminSession`. All models are strictly managed through Prisma migrations or `prisma db push`.
-
-## Authentication
-
-- **Driver:** Logs in using a unique code/username and password via the Mobile App. The backend issues a JWT token saved locally on the device.
-- **Admin:** Logs in via the Admin Panel. The backend uses secure HttpOnly cookies for session management.
-
-## Testing
-
-Automated testing is configured in the backend utilizing Node's native test runner (`node --test`) and Supertest.
-Run tests from the `backend/` directory:
-```bash
+cd backend
 npm test
 npm run validate
 ```
-*(Automated tests are not currently configured for the React Native app or Admin Panel)*
 
-## Build / Deployment
-
-The React Native application is configured for Expo EAS builds (`eas.json` is present in the `app` folder).
-Production build configuration for the backend is partially configured via Render (`render.yaml`) and Docker Compose (`compose.production.example.yml`).
-To deploy the mobile app with EAS:
+Run TypeScript verification in the mobile app:
 ```bash
-eas build --profile production --platform android
+cd app
+npm run typecheck
 ```
 
-## Troubleshooting
+---
 
-1. **Expo cannot connect to phone**
-   - Ensure PC and phone are on the exact same Wi-Fi network.
-   - Use `npx expo start --tunnel` to bypass local network restrictions.
-2. **Dependencies problem**
-   - Delete `node_modules` and run `npm install` again.
-3. **Database connection failed**
-   - Verify `DATABASE_URL` in `backend/.env` is accessible and properly formatted.
-4. **App cannot fetch data**
-   - Make sure `EXPO_PUBLIC_API_URL` uses your local IP address (e.g. `http://192.168.1.5:4000/api/v1`) instead of `localhost` if testing on a physical phone.
+## 📦 Building the Production Android APK
 
-## Known Issues
-
-- The AI assistant requires a valid Gemini API key (`AI_API_KEY`) for generating document embeddings, and a Groq API key (`GROQ_API_KEY`) for chat responses. If either is missing, it will hang or error out.
-
-## Important Development Rules
-
-- **Don't commit secrets:** Always review `git status` before committing.
-- **API Contracts:** Check backend routing and validation (Zod schemas) before changing API payloads.
-- **Database:** Don't change database structure without checking `Prisma` dependencies and running migrations.
-- **Preserve navigation structure:** Do not alter the core bottom tab navigation without thorough testing.
-
-## AI Coding Agent Instructions
-
-If you are an AI coding agent (like Google Antigravity) assigned to work on this repository, please:
-1. **Read this README.md first.**
-2. Inspect the repository structure (`app`, `backend`, `admin-panel`) before modifying code.
-3. Understand the architecture: this is a monorepo-style structure but without a root package manager.
-4. Never expose or request secrets unnecessarily.
-5. Never overwrite working functionality without checking dependencies.
-6. Follow existing coding patterns (e.g., using `components/ui` for UI components).
-7. Check `package.json` before installing new packages.
-8. Check environment variables before changing API configuration.
-9. Run appropriate validation (`tsc --noEmit` in `app`, `npm test` in `backend`) after modifications.
-10. Explain which files were changed and why.
-11. **Never fabricate APIs, routes, database tables, or configuration.**
-
-## Quick Start
-
+To compile the standalone release APK locally using Android Gradle:
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
-cd bus-tracking-system
-
-# Install and configure backend
-cd backend
-npm install
-copy .env.example .env
-# Edit backend/.env to include your PostgreSQL connection URL
-npx prisma db push
-npm run dev
-
-# Open new terminal, configure app
-cd ../app
-npm install
-copy .env.example .env
-# Edit app/.env to point EXPO_PUBLIC_API_URL to your backend
-npx expo start
-# Scan the QR code with Expo Go!
+cd app/android
+./gradlew.bat assembleRelease --no-daemon
 ```
+The output APK will be generated at:
+`app/android/app/build/outputs/apk/release/app-release.apk`
+
+---
+
+## 📄 License & Attribution
+
+Developed for college transport operations. All rights reserved.  
+For operational queries or route additions, contact the College Transport Department.
